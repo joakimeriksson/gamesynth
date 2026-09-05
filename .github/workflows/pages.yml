@@ -1,4 +1,4 @@
-name: Deploy Engine Dyno to GitHub Pages
+name: Deploy Sound Lab to GitHub Pages
 
 on:
   push:

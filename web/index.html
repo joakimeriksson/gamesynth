@@ -3,93 +3,74 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GameSynth Engine Dyno</title>
-<meta name="description" content="Procedural jet engine for a Wipeout-style racer, running the Rust gamesynth engine as WebAssembly in your browser. Drive throttle, boost, speed and damage; tune and export JSON for Godot.">
-<meta property="og:title" content="GameSynth Engine Dyno">
-<meta property="og:description" content="Rust jet-engine synth, compiled to WebAssembly. Spool it up in your browser.">
+<title>GameSynth Sound Lab</title>
+<meta name="description" content="Procedural game audio for a Wipeout-style racer: jet engines, sfxr-style sound effects and a playable synth, all running the Rust gamesynth engine as WebAssembly in your browser. Tune and export JSON for Godot.">
+<meta property="og:title" content="GameSynth Sound Lab">
+<meta property="og:description" content="Rust game-audio synth compiled to WebAssembly: engines, sound effects, instruments.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
-    --ground: #0F141B;
-    --panel: #161D27;
-    --panel-2: #1C2532;
-    --line: #2A3542;
-    --line-soft: #202936;
-    --text: #E8ECF1;
-    --muted: #8593A5;
-    --readout: #BFD8E6;
-    --accent: #FF6A1F;
-    --accent-dim: #7A3A18;
-    --accent-glow: rgba(255, 106, 31, 0.28);
-    --ok: #7BC67E;
-    --warn: #E0B341;
+    --ground: #0F141B; --panel: #161D27; --panel-2: #1C2532; --line: #2A3542; --line-soft: #202936;
+    --text: #E8ECF1; --muted: #8593A5; --readout: #BFD8E6;
+    --accent: #FF6A1F; --accent-dim: #7A3A18; --accent-glow: rgba(255,106,31,0.28);
+    --sfx: #5BD1C8; --sfx-dim: rgba(91,209,200,0.18); --inst: #C9A0FF; --inst-dim: rgba(201,160,255,0.18);
+    --ok: #7BC67E; --warn: #E0B341;
     --display: "Saira Condensed", "Barlow Condensed", "Arial Narrow", sans-serif;
     --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
     --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--ground);
-    color: var(--text);
-    font-family: var(--body);
-    font-size: 14px;
-    line-height: 1.45;
-    min-height: 100vh;
-  }
+  body { margin: 0; background: var(--ground); color: var(--text); font-family: var(--body); font-size: 14px; line-height: 1.45; min-height: 100vh; }
   button, input, select { font: inherit; color: inherit; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  code { font-family: var(--mono); font-size: 11px; color: var(--readout); }
 
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 56px; display: flex; flex-direction: column; gap: 18px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 16px 20px 56px; display: flex; flex-direction: column; gap: 16px; }
 
-  /* ---- top bar ---- */
-  .bar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
-  .brand { display: flex; align-items: baseline; gap: 12px; }
-  .brand h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 30px; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1; }
-  .brand .sub { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+  /* ---- top bar + tabs ---- */
+  .bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: baseline; gap: 12px; margin-right: 8px; }
+  .brand h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 28px; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1; }
+  .brand .sub { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .tabs { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 3px; }
+  .tab-btn { border: 0; background: transparent; border-radius: 4px; padding: 7px 16px; cursor: pointer; color: var(--muted);
+    font-family: var(--display); font-size: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+  .tab-btn::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--line); }
+  .tab-btn[data-k="engines"]::before { background: var(--accent-dim); } .tab-btn[data-k="sfx"]::before { background: var(--sfx-dim); } .tab-btn[data-k="inst"]::before { background: var(--inst-dim); }
+  .tab-btn[aria-selected="true"] { background: var(--panel-2); color: var(--text); }
+  .tab-btn[aria-selected="true"][data-k="engines"]::before { background: var(--accent); }
+  .tab-btn[aria-selected="true"][data-k="sfx"]::before { background: var(--sfx); }
+  .tab-btn[aria-selected="true"][data-k="inst"]::before { background: var(--inst); }
   .bar .spacer { flex: 1; }
   .field { display: flex; align-items: center; gap: 8px; }
-  .field label { color: var(--muted); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
-  select {
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 7px 30px 7px 10px;
-    appearance: none; -webkit-appearance: none;
+  .field label, .lbl { color: var(--muted); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+  select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 6px 28px 6px 10px; appearance: none; -webkit-appearance: none;
     background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-    background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%; background-size: 5px 5px; background-repeat: no-repeat;
-    font-family: var(--display); font-size: 16px; letter-spacing: 0.04em; text-transform: uppercase;
-  }
-  .btn {
-    border: 1px solid var(--line); background: var(--panel-2); border-radius: 4px; padding: 8px 14px; cursor: pointer;
-    font-family: var(--display); font-size: 16px; letter-spacing: 0.08em; text-transform: uppercase;
-    transition: background 120ms, border-color 120ms, box-shadow 120ms;
-  }
+    background-position: calc(100% - 13px) 55%, calc(100% - 8px) 55%; background-size: 5px 5px; background-repeat: no-repeat;
+    font-family: var(--display); font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; }
+  select.small { font: 12px var(--body); text-transform: none; letter-spacing: 0; padding: 3px 24px 3px 8px; }
+  .btn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 4px; padding: 7px 14px; cursor: pointer;
+    font-family: var(--display); font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; transition: background 120ms, border-color 120ms, box-shadow 120ms; }
   .btn:hover { border-color: var(--muted); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #140A04; font-weight: 700; padding: 9px 22px; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #140A04; font-weight: 700; padding: 8px 20px; }
   .btn.primary:hover { box-shadow: 0 0 0 4px var(--accent-glow); }
   .btn.primary[data-running="true"] { background: var(--panel-2); color: var(--text); border-color: var(--line); font-weight: 600; }
   .btn.primary[data-running="true"]::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 8px; vertical-align: 1px; }
+  .btn.small { padding: 4px 10px; font-size: 13px; }
 
-  /* ---- hero: gauge + spectrum + drive controls ---- */
-  .hero { display: grid; grid-template-columns: 300px 1fr 300px; gap: 14px; align-items: stretch; }
   .panel { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 14px 16px; }
   .panel h2 { margin: 0 0 10px; font-family: var(--display); font-size: 13px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
-  .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
   canvas { display: block; width: 100%; }
-  #gauge { width: 260px; height: 180px; }
-  .rpm-digits { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 34px; line-height: 1; color: var(--readout); letter-spacing: -0.01em; }
-  .rpm-digits small { font-size: 14px; color: var(--muted); margin-left: 4px; }
-  .rpm-digits[data-redline="true"] { color: var(--accent); }
-  .state-line { display: flex; gap: 14px; margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .state-line b { color: var(--text); font-weight: 500; }
-  #spectrum { height: 240px; border-radius: 3px; background: var(--ground); border: 1px solid var(--line-soft); }
+  .scope { height: 240px; border-radius: 3px; background: var(--ground); border: 1px solid var(--line-soft); }
   .scope-foot { display: flex; justify-content: space-between; margin-top: 6px; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.06em; }
+  .readout { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  .readout b { color: var(--text); font-weight: 500; }
+  .keys { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); line-height: 1.8; }
+  kbd { font-family: var(--mono); font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 5px; color: var(--text); }
 
-  .drive { display: flex; flex-direction: column; gap: 12px; }
-  .ctl { display: grid; grid-template-columns: 74px 1fr 48px; gap: 10px; align-items: center; }
-  .ctl .name { font-family: var(--display); font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-  .ctl .name small { display: block; font-family: var(--body); font-size: 10px; font-weight: 400; letter-spacing: 0.04em; color: var(--muted); text-transform: none; }
-  .ctl .val { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--readout); font-variant-numeric: tabular-nums; }
-  .ctl.boost .val[data-on="true"] { color: var(--accent); }
   input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; margin: 0; cursor: pointer; }
   input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: var(--line); border-radius: 2px; }
   input[type="range"]::-moz-range-track { height: 4px; background: var(--line); border-radius: 2px; }
@@ -97,15 +78,58 @@
   input[type="range"]::-moz-range-thumb { width: 12px; height: 20px; background: var(--readout); border-radius: 2px; border: 0; }
   .ctl.boost input[type="range"]::-webkit-slider-thumb { background: var(--accent); }
   .ctl.boost input[type="range"]::-moz-range-thumb { background: var(--accent); }
-  .drive .opt { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; margin-top: 2px; }
-  .drive .opt input { accent-color: var(--accent); }
-  .keys { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); line-height: 1.7; }
-  kbd { font-family: var(--mono); font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 5px; color: var(--text); }
+  input[type="number"] { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; width: 92px; font-family: var(--mono); font-size: 13px; }
+  input[type="checkbox"] { accent-color: var(--accent); }
+
+  /* ---- engines ---- */
+  .hero { display: grid; grid-template-columns: 300px 1fr 300px; gap: 14px; align-items: stretch; }
+  .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  #gauge { width: 260px; height: 180px; }
+  .rpm-digits { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 34px; line-height: 1; color: var(--readout); }
+  .rpm-digits small { font-size: 14px; color: var(--muted); margin-left: 4px; }
+  .rpm-digits[data-redline="true"] { color: var(--accent); }
+  .drive { display: flex; flex-direction: column; gap: 12px; }
+  .ctl { display: grid; grid-template-columns: 74px 1fr 48px; gap: 10px; align-items: center; }
+  .ctl .name { font-family: var(--display); font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .ctl .name small { display: block; font-family: var(--body); font-size: 10px; font-weight: 400; letter-spacing: 0.04em; color: var(--muted); text-transform: none; }
+  .ctl .val { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--readout); font-variant-numeric: tabular-nums; }
+  .ctl.boost .val[data-on="true"] { color: var(--accent); }
+  .opt { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+
+  /* ---- sfx ---- */
+  .sfx-grid { display: grid; grid-template-columns: 320px 1fr 260px; gap: 14px; align-items: stretch; }
+  .preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pbtn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 5px; padding: 14px 10px 12px; cursor: pointer; text-align: left; position: relative; overflow: hidden;
+    font-family: var(--display); font-size: 19px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; transition: border-color 120ms, transform 80ms; }
+  .pbtn small { display: block; font-family: var(--body); font-size: 10px; font-weight: 400; letter-spacing: 0.02em; text-transform: none; color: var(--muted); margin-top: 2px; }
+  .pbtn:hover { border-color: var(--sfx); }
+  .pbtn:active { transform: translateY(1px); }
+  .pbtn[data-active="true"] { border-color: var(--sfx); box-shadow: inset 3px 0 0 var(--sfx); }
+  .pbtn .flash { position: absolute; inset: 0; background: var(--sfx); opacity: 0; pointer-events: none; }
+  .pbtn.fire .flash { animation: flash 260ms ease-out; }
+  @keyframes flash { from { opacity: 0.35; } to { opacity: 0; } }
+  .seedrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .wave { height: 200px; border-radius: 3px; background: var(--ground); border: 1px solid var(--line-soft); }
+  .recent { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; min-height: 26px; }
+  .chip { border: 1px solid var(--line); background: var(--panel-2); border-radius: 12px; padding: 2px 10px; font-family: var(--mono); font-size: 11px; cursor: pointer; color: var(--muted); }
+  .chip:hover { color: var(--text); border-color: var(--sfx); }
+  .export { display: flex; flex-direction: column; gap: 10px; }
+  .export .btn { text-align: left; }
+  .export p { margin: 0; font-size: 12px; color: var(--muted); }
+  pre.snip { margin: 0; background: var(--ground); border: 1px solid var(--line-soft); border-radius: 4px; padding: 8px 10px; font-family: var(--mono); font-size: 11px; color: var(--readout); white-space: pre-wrap; word-break: break-all; }
+
+  /* ---- instrument ---- */
+  .inst-top { display: grid; grid-template-columns: 1fr 300px; gap: 14px; }
+  #keyboard { height: 170px; border-radius: 3px; cursor: pointer; touch-action: none; user-select: none; }
+  .inst-ctl { display: flex; flex-direction: column; gap: 10px; }
+  .inst-ctl .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .bend { display: grid; grid-template-columns: 60px 1fr 44px; gap: 8px; align-items: center; }
+  .bend .val { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--readout); }
 
   /* ---- tuning ---- */
   .tune-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .tune-head h2 { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-  .tune-head p { margin: 0; color: var(--muted); font-size: 12px; max-width: 60ch; }
+  .tune-head p { margin: 0; color: var(--muted); font-size: 12px; max-width: 64ch; }
   .tune-head .spacer { flex: 1; }
   .groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
   .group { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 12px 14px 8px; }
@@ -113,284 +137,530 @@
   .prm { display: grid; grid-template-columns: 96px 1fr 62px; gap: 8px; align-items: center; padding: 3px 0; }
   .prm label { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .prm .val { font-family: var(--mono); font-size: 11px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
-  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px); opacity: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 8px 14px; font-size: 13px; transition: opacity 160ms, transform 160ms; pointer-events: none; }
+  .prm select { grid-column: 2 / 4; }
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px); opacity: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 8px 14px; font-size: 13px; transition: opacity 160ms, transform 160ms; pointer-events: none; z-index: 10; }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .note { color: var(--muted); font-size: 12px; }
-  .note code { font-family: var(--mono); font-size: 11px; color: var(--readout); }
 
   @media (max-width: 960px) {
-    .hero { grid-template-columns: 1fr 1fr; }
-    .hero .scope { grid-column: 1 / -1; order: 3; }
+    .hero, .sfx-grid { grid-template-columns: 1fr 1fr; }
+    .hero .scope-panel, .sfx-grid .wave-panel { grid-column: 1 / -1; order: 3; }
+    .inst-top { grid-template-columns: 1fr; }
   }
-  @media (max-width: 600px) {
-    .hero { grid-template-columns: 1fr; }
-    .brand h1 { font-size: 24px; }
+  @media (max-width: 620px) {
+    .hero, .sfx-grid { grid-template-columns: 1fr; }
+    .brand h1 { font-size: 22px; }
+    .tab-btn { padding: 7px 10px; font-size: 14px; }
   }
-  @media (prefers-reduced-motion: reduce) { .btn, .toast { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .btn, .toast, .pbtn { transition: none; } .pbtn.fire .flash { animation: none; } }
 </style>
 </head>
 <body>
-
 <div class="wrap">
   <header class="bar">
-    <div class="brand">
-      <h1>Engine Dyno</h1>
-      <span class="sub">GameSynth · procedural jet engine · Rust → WebAssembly</span>
+    <div class="brand"><h1>Sound Lab</h1><span class="sub">GameSynth · Rust → WebAssembly</span></div>
+    <div class="tabs" role="tablist" aria-label="Sound categories">
+      <button class="tab-btn" role="tab" data-k="engines" aria-selected="true" aria-controls="tab-engines">Engines</button>
+      <button class="tab-btn" role="tab" data-k="sfx" aria-selected="false" aria-controls="tab-sfx">Sound FX</button>
+      <button class="tab-btn" role="tab" data-k="inst" aria-selected="false" aria-controls="tab-inst">Instrument</button>
     </div>
     <div class="spacer"></div>
-    <div class="field">
-      <label for="preset">Preset</label>
-      <select id="preset"></select>
-    </div>
-    <div class="field">
-      <label for="volume">Vol</label>
-      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" style="width:90px" aria-label="Master volume">
-    </div>
-    <button id="start" class="btn primary" data-running="false" disabled>Loading…</button>
+    <div class="field"><label for="volume">Vol</label><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" style="width:90px" aria-label="Master volume"></div>
+    <button id="audio" class="btn primary" data-running="false" disabled>Loading…</button>
   </header>
 
-  <section class="hero">
-    <div class="panel gauge-wrap">
-      <h2 style="align-self:flex-start">Turbine</h2>
-      <canvas id="gauge" width="520" height="360"></canvas>
-      <div class="rpm-digits" id="rpm" data-redline="false">28<small>% RPM</small></div>
-      <div class="state-line"><span>whine <b id="s-whine">–</b></span><span>roar lp <b id="s-roar">–</b></span><span>tube <b id="s-tube">–</b></span></div>
-    </div>
-
-    <div class="panel scope">
-      <h2>Spectrum</h2>
-      <canvas id="spectrum" width="1100" height="480"></canvas>
-      <div class="scope-foot"><span>50 Hz</span><span>200</span><span>1k</span><span>5k</span><span>16 kHz</span></div>
-    </div>
-
-    <div class="panel drive">
-      <h2>Drive</h2>
-      <div class="ctl"><div class="name">Throttle<small>hold ↑ / ↓</small></div><input id="throttle" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-throttle">0%</div></div>
-      <div class="ctl boost"><div class="name">Boost<small>hold Shift</small></div><input id="boost" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-boost" data-on="false">0%</div></div>
-      <div class="ctl"><div class="name">Speed<small>airspeed → wind</small></div><input id="speed" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-speed">0%</div></div>
-      <div class="ctl"><div class="name">Damage<small>sputter</small></div><input id="damage" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-damage">0%</div></div>
-      <label class="opt"><input id="autospeed" type="checkbox" checked> speed follows throttle, like a ship would</label>
-      <div class="keys">
-        <kbd>↑</kbd> <kbd>↓</kbd> throttle &nbsp; <kbd>Shift</kbd> afterburner &nbsp; <kbd>1</kbd>–<kbd>4</kbd> presets &nbsp; <kbd>Space</kbd> snap RPM<br>
-        Godot: <code style="font-family:var(--mono);font-size:11px;color:var(--readout)">pb.set_state(throttle, boost, speed, damage)</code>
+  <!-- ============================ ENGINES ============================ -->
+  <section id="tab-engines" class="tab" role="tabpanel">
+    <div class="hero">
+      <div class="panel gauge-wrap">
+        <h2 style="align-self:flex-start">Turbine · <select id="preset" class="small" aria-label="Engine preset"></select></h2>
+        <canvas id="gauge" width="520" height="360"></canvas>
+        <div class="rpm-digits" id="rpm" data-redline="false">28<small>% RPM</small></div>
+        <div class="readout"><span>whine <b id="s-whine">–</b></span><span>roar lp <b id="s-roar">–</b></span><span>tube <b id="s-tube">–</b></span></div>
+      </div>
+      <div class="panel scope-panel">
+        <h2>Spectrum</h2>
+        <canvas id="spectrum" class="scope" width="1100" height="480"></canvas>
+        <div class="scope-foot"><span>50 Hz</span><span>200</span><span>1k</span><span>5k</span><span>16 kHz</span></div>
+      </div>
+      <div class="panel drive">
+        <h2>Drive</h2>
+        <div class="ctl"><div class="name">Throttle<small>hold ↑ / ↓</small></div><input id="throttle" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-throttle">0%</div></div>
+        <div class="ctl boost"><div class="name">Boost<small>hold Shift</small></div><input id="boost" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-boost" data-on="false">0%</div></div>
+        <div class="ctl"><div class="name">Speed<small>airspeed → wind</small></div><input id="speed" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-speed">0%</div></div>
+        <div class="ctl"><div class="name">Damage<small>sputter</small></div><input id="damage" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-damage">0%</div></div>
+        <label class="opt"><input id="autospeed" type="checkbox" checked> speed follows throttle, like a ship would</label>
+        <div class="keys"><kbd>↑</kbd> <kbd>↓</kbd> throttle &nbsp; <kbd>Shift</kbd> afterburner &nbsp; <kbd>1</kbd>–<kbd>4</kbd> presets &nbsp; <kbd>Space</kbd> snap RPM<br>Godot: <code>pb.set_state(throttle, boost, speed, damage)</code></div>
       </div>
     </div>
+    <div class="tune-head" style="margin-top:16px">
+      <h2>Engine tuning</h2>
+      <p>Same names and ranges as <code>JetEnginePatch</code>. Copy the JSON into <code>patch.from_json(...)</code> or a <code>.tres</code>.</p>
+      <div class="spacer"></div>
+      <button id="jet-reset" class="btn">Reset to preset</button>
+      <button id="jet-copy" class="btn">Copy JSON for Godot</button>
+    </div>
+    <div class="groups" id="jet-groups" style="margin-top:12px"></div>
   </section>
 
-  <section class="tune-head">
-    <h2>Tuning</h2>
-    <p>Same parameter names and ranges as <code style="font-family:var(--mono);font-size:11px">JetEnginePatch</code>. Copy the JSON and paste it into <code style="font-family:var(--mono);font-size:11px">patch.from_json(...)</code> or a <code style="font-family:var(--mono);font-size:11px">.tres</code>.</p>
-    <div class="spacer"></div>
-    <button id="reset" class="btn">Reset to preset</button>
-    <button id="copy" class="btn">Copy JSON for Godot</button>
+  <!-- ============================ SOUND FX ============================ -->
+  <section id="tab-sfx" class="tab" role="tabpanel" hidden>
+    <div class="sfx-grid">
+      <div class="panel">
+        <h2>Presets · press to fire</h2>
+        <div class="preset-grid" id="sfx-presets"></div>
+        <div class="seedrow">
+          <span class="lbl">Seed</span><input id="sfx-seed" type="number" min="0" max="99999" step="1" value="0" aria-label="Seed">
+          <label class="opt"><input id="sfx-newseed" type="checkbox" checked> new seed each press</label>
+        </div>
+        <div class="seedrow">
+          <button id="sfx-replay" class="btn small">Replay <kbd style="margin-left:4px">Space</kbd></button>
+          <button id="sfx-mutate" class="btn small">Mutate</button>
+          <input id="sfx-mutamt" type="range" min="0.05" max="1" step="0.01" value="0.3" style="width:90px" aria-label="Mutation amount" title="Mutation amount">
+        </div>
+      </div>
+      <div class="panel wave-panel">
+        <h2>Waveform</h2>
+        <canvas id="wave" class="wave" width="1100" height="400"></canvas>
+        <div class="readout" style="margin-top:8px"><span><b id="w-name">–</b></span><span>seed <b id="w-seed">–</b></span><span>length <b id="w-len">–</b></span><span>peak <b id="w-peak">–</b></span><span id="w-mod" hidden>edited</span></div>
+        <div class="recent" id="sfx-recent"></div>
+      </div>
+      <div class="panel export">
+        <h2>Use in Godot</h2>
+        <p id="sfx-hint">Unmodified preset + seed: two lines of GDScript, no data to store.</p>
+        <pre class="snip" id="sfx-snip"></pre>
+        <button id="sfx-copy-gd" class="btn small">Copy GDScript</button>
+        <button id="sfx-copy" class="btn small">Copy patch JSON (SynthPatch.from_json)</button>
+        <button id="sfx-wav" class="btn small">Download WAV</button>
+        <p>Keys <kbd>1</kbd>–<kbd>8</kbd> fire presets, <kbd>M</kbd> mutates.</p>
+      </div>
+    </div>
+    <div class="tune-head" style="margin-top:16px">
+      <h2>Patch tuning</h2>
+      <p>Every parameter of the sound. Changes re-render the waveform and play live.</p>
+      <div class="spacer"></div>
+      <button id="sfx-reset" class="btn">Regenerate from seed</button>
+    </div>
+    <div class="groups" id="sfx-groups" style="margin-top:12px"></div>
   </section>
-  <section class="groups" id="groups"></section>
+
+  <!-- ============================ INSTRUMENT ============================ -->
+  <section id="tab-inst" class="tab" role="tabpanel" hidden>
+    <div class="inst-top">
+      <div class="panel">
+        <h2>Keyboard · <select id="inst-preset" class="small" aria-label="Instrument preset"></select></h2>
+        <canvas id="keyboard" width="1100" height="340"></canvas>
+        <div class="readout" style="margin-top:8px"><span>octave <b id="i-oct">4</b></span><span>voices <b id="i-voices">0</b></span><span>peak <b id="i-peak">0.00</b></span><span>keys <kbd>A</kbd>–<kbd>K</kbd> white, <kbd>W E T Y U O P</kbd> black, <kbd>Z</kbd>/<kbd>X</kbd> octave</span></div>
+      </div>
+      <div class="panel inst-ctl">
+        <h2>Spectrum</h2>
+        <canvas id="inst-spectrum" class="scope" width="600" height="300" style="height:150px"></canvas>
+        <div class="bend"><span class="lbl">Bend</span><input id="bend" type="range" min="-1" max="1" step="0.001" value="0"><div class="val" id="v-bend">0.00</div></div>
+        <div class="row">
+          <button id="oct-down" class="btn small">Oct −</button><button id="oct-up" class="btn small">Oct +</button>
+          <button id="inst-panic" class="btn small">Panic</button>
+        </div>
+        <div class="row"><button id="inst-copy" class="btn small">Copy patch JSON</button><button id="inst-reset" class="btn small">Reload preset</button></div>
+        <p class="note" style="margin:0">Godot: <code>pb.note_on(60, 0.8)</code> · <code>pb.note_off(60)</code> on <code>SynthStream</code> with <code>one_shot = false</code>.</p>
+      </div>
+    </div>
+    <div class="tune-head" style="margin-top:16px"><h2>Patch tuning</h2><p>Edits apply while you play.</p></div>
+    <div class="groups" id="inst-groups" style="margin-top:12px"></div>
+  </section>
+
   <p class="note" id="foot">Loading engine…</p>
 </div>
 <div class="toast" id="toast"></div>
 
-
 <script>
 (() => {
+  "use strict";
   const $ = id => document.getElementById(id);
   const WASM_URL = "./pkg/gamesynth_wasm.wasm";
-  const state = { throttle: 0, boost: 0, speed: 0, damage: 0 };
-  let meta = null, mirror = null, mirrorEngine = 0;   // main-thread instance: metadata + JSON, never renders
-  let module = null, ctx = null, node = null, analyser = null, gainNode = null, fb = null;
-  let presetIndex = 0, running = false;
-  let telemetry = { rpm: 0.28, peak: 0 };
-  const readStr = (w, len) => new TextDecoder().decode(new Uint8Array(w.memory.buffer, w.gs_str_ptr(), len));
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  let toastTimer;
+  const toast = msg => { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2200); };
+  const copy = async (text, msg) => { try { await navigator.clipboard.writeText(text); toast(msg); } catch { window.prompt("Copy:", text); } };
 
-  // ---- load the engine ----
-  (async () => {
-    try {
-      const resp = await fetch(WASM_URL);
-      if (!resp.ok) throw new Error(resp.status + " " + resp.statusText + " for " + WASM_URL);
-      module = await WebAssembly.compile(await resp.arrayBuffer());
-      mirror = (await WebAssembly.instantiate(module, {})).exports;
-      meta = JSON.parse(readStr(mirror, mirror.gs_meta_json()));
-      mirrorEngine = mirror.jet_new(48000, presetIndex);
-      buildUi();
-      $("start").disabled = false; $("start").textContent = "Engine start";
-      $("foot").innerHTML = 'Running <code>gamesynth-core ' + meta.version + '</code> compiled to WebAssembly, inside an AudioWorklet at your device\'s sample rate. Source: <code>crates/gamesynth-core/src/jet.rs</code>.';
-    } catch (err) {
-      console.error(err);
-      $("start").textContent = "Engine unavailable";
-      $("foot").textContent = "Could not load the engine module (" + err.message + "). If you are viewing this from a local file, serve the folder over http.";
+  // ================================================================== engine host
+  // One wasm instance on the main thread mirrors every tab's parameters (metadata, JSON,
+  // waveform previews). Each tab renders audio in its own AudioWorklet node.
+  const host = { module: null, w: null, meta: null, ctx: null, master: null, nodes: {}, active: "engines" };
+  const readStr = len => new TextDecoder().decode(new Uint8Array(host.w.memory.buffer, host.w.gs_str_ptr(), len));
+  const withJson = (json, fn) => { const w = host.w, b = new TextEncoder().encode(json), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); const r = fn(p, b.length); w.gs_free_u8(p, b.length); return r; };
+
+  async function ensureAudio() {
+    if (!host.module) return false;
+    if (!host.ctx) {
+      const ctx = host.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+      host.master = ctx.createGain(); host.master.gain.value = +$("volume").value; host.master.connect(ctx.destination);
+      try { await ctx.audioWorklet.addModule("./jet-worklet.js"); host.worklet = true; }
+      catch (err) { console.warn("[lab] AudioWorklet unavailable:", err); host.worklet = false; }
+      for (const t of Object.values(tabs)) await t.attach();
+      $("audio").dataset.running = "true"; $("audio").textContent = "Audio on · mute";
+      setActive(host.active);
     }
-  })();
+    if (host.ctx.state !== "running") await host.ctx.resume();
+    return true;
+  }
+  // Create an audio node for `kind` ("jet" | "synth"); returns { send, analyser, tele }.
+  async function makeNode(kind, opts) {
+    const ctx = host.ctx, gain = ctx.createGain(); gain.gain.value = 0;
+    const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.8;
+    const h = { kind, gain, analyser, tele: {}, send() {} };
+    if (host.worklet) {
+      const node = new AudioWorkletNode(ctx, "gs-engine", { outputChannelCount: [2], processorOptions: { module: host.module, kind, ...opts } });
+      node.port.onmessage = e => { if (e.data.ready) h.onready && h.onready(); else h.tele = e.data; };
+      h.send = m => node.port.postMessage(m);
+      node.connect(gain);
+    } else {
+      // ScriptProcessor fallback: render on the main thread with a private engine.
+      const w = (await WebAssembly.instantiate(host.module, {})).exports;
+      const e = kind === "jet" ? w.jet_new(ctx.sampleRate, opts.preset | 0) : w.synth_new(ctx.sampleRate), buf = w.gs_alloc_f32(4096);
+      const str = len => new TextDecoder().decode(new Uint8Array(w.memory.buffer, w.gs_str_ptr(), len));
+      h.send = m => {
+        const J = (json, fn) => { const b = new TextEncoder().encode(json), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); fn(p, b.length); w.gs_free_u8(p, b.length); };
+        if (kind === "jet") { ({ ctl: () => w.jet_set_controls(e, m.throttle, m.boost, m.speed, m.damage), preset: () => w.jet_set_preset(e, m.index), param: () => w.jet_set_param(e, m.index, m.value), snap: () => w.jet_snap_rpm(e), gain: () => w.jet_set_master_gain(e, m.gain), json: () => J(m.json, (p, n) => w.jet_from_json(e, p, n)) })[m.t]?.(); }
+        else { ({ trigger: () => w.synth_trigger(e), noteon: () => w.synth_note_on(e, m.note, m.velocity ?? 1), noteoff: () => w.synth_note_off(e, m.note), play: () => w.synth_play(e, m.note, m.velocity ?? 1, m.duration || 0), alloff: () => w.synth_all_notes_off(e), panic: () => w.synth_panic(e), sfx: () => w.synth_load_sfx(e, m.preset, m.seed >>> 0), mutate: () => w.synth_mutate(e, m.amount, m.seed >>> 0), reset: () => w.synth_reset_patch(e), param: () => w.synth_set_param(e, m.index, m.value), bend: () => w.synth_set_pitch_bend(e, m.bend), gain: () => w.synth_set_master_gain(e, m.gain), json: () => J(m.json, (p, n) => w.synth_from_json(e, p, n)) })[m.t]?.(); }
+      };
+      const sp = ctx.createScriptProcessor(2048, 0, 2);
+      sp.onaudioprocess = ev => { const l = ev.outputBuffer.getChannelData(0); if (kind === "jet") w.jet_render(e, buf, l.length); else w.synth_render(e, buf, l.length); l.set(new Float32Array(w.memory.buffer, buf, l.length)); ev.outputBuffer.getChannelData(1).set(l); h.tele = kind === "jet" ? { rpm: w.jet_rpm(e), peak: w.jet_peak(e) } : { peak: w.synth_peak(e), voices: w.synth_active_voices(e) }; };
+      sp.connect(gain); void str;
+      setTimeout(() => h.onready && h.onready(), 0);
+    }
+    gain.connect(analyser); analyser.connect(host.master);
+    return h;
+  }
 
-  // ---- UI from Rust metadata ----
-  const prm = {};   // index -> { input, val, p }
-  const GROUP_LABEL = { spool: "Spool", whine: "Turbine whine", roar: "Core roar", tube: "Tube resonance", hiss: "Intake hiss", burner: "Afterburner", wind: "Wind", master: "Master" };
+  // ================================================================== tuning UI
+  const GROUP_LABEL = { spool: "Spool", whine: "Turbine whine", roar: "Core roar", tube: "Tube resonance", hiss: "Intake hiss", burner: "Afterburner", wind: "Wind", master: "Master",
+    osc1: "Oscillator 1", osc2: "Oscillator 2", osc3: "Oscillator 3", amp_env: "Amp envelope", filter: "Filter", filter_env: "Filter envelope", lfo: "LFO", pitch: "Pitch", fx: "Effects" };
   const toSlider = (p, v) => p.kind === "exp" ? Math.log(v / p.min) / Math.log(p.max / p.min) : (v - p.min) / (p.max - p.min);
   const fromSlider = (p, t) => p.kind === "exp" ? p.min * Math.pow(p.max / p.min, t) : p.min + (p.max - p.min) * t;
-  const fmt = (p, v) => { if (p.name.endsWith("hz")) return v >= 1000 ? (v / 1000).toFixed(2) + " k" : v.toFixed(v < 10 ? 2 : 0); if (p.name.endsWith("ms")) return v.toFixed(2) + " ms"; if (p.name.startsWith("spool/") && !p.name.includes("rpm")) return v.toFixed(2) + " s"; return v.toFixed(v < 10 ? 3 : 1); };
-  const current = i => mirror.jet_get_param(mirrorEngine, i);
-  function buildUi() {
-    const sel = $("preset"); sel.innerHTML = "";
-    meta.presets.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; sel.appendChild(o); });
-    sel.value = presetIndex;
-    const groups = {}; meta.params.forEach(p => { const g = p.name.split("/")[0]; (groups[g] ||= []).push(p); });
-    const root = $("groups"); root.innerHTML = "";
+  const fmt = (p, v) => {
+    if (p.kind === "enum") return p.names[Math.round(v)] || v;
+    if (p.kind === "int") return String(Math.round(v));
+    if (p.name.endsWith("hz")) return v >= 1000 ? (v / 1000).toFixed(2) + " k" : v.toFixed(v < 10 ? 2 : 0);
+    if (p.name.endsWith("_ms") || p.name.endsWith("/ms")) return v.toFixed(2) + " ms";
+    if (/attack|decay|release|glide|time|fade_in|duration|spool\/(up|down)/.test(p.name)) return v.toFixed(3) + " s";
+    if (p.name.includes("cents")) return v.toFixed(1) + " ¢";
+    return v.toFixed(Math.abs(v) < 10 ? 3 : 1);
+  };
+  // Build slider groups for a parameter table. `get(i)` reads the mirror, `set(i, v)` writes mirror + audio.
+  function buildTuning(root, params, get, set) {
+    root.innerHTML = "";
+    const rows = [];
+    const groups = {}; params.forEach(p => { const g = p.name.split("/")[0]; (groups[g] ||= []).push(p); });
     for (const g in groups) {
       const box = document.createElement("div"); box.className = "group";
       const h = document.createElement("h3"); h.textContent = GROUP_LABEL[g] || g; box.appendChild(h);
       for (const p of groups[g]) {
         const row = document.createElement("div"); row.className = "prm";
-        const label = document.createElement("label"); label.textContent = p.name.split("/")[1]; label.htmlFor = "p" + p.index; label.title = p.name;
-        const input = document.createElement("input"); input.type = "range"; input.min = "0"; input.max = "1"; input.step = "0.001"; input.id = "p" + p.index; input.value = toSlider(p, current(p.index));
-        const val = document.createElement("div"); val.className = "val"; val.textContent = fmt(p, current(p.index));
-        input.addEventListener("input", () => { const v = fromSlider(p, +input.value); mirror.jet_set_param(mirrorEngine, p.index, v); val.textContent = fmt(p, current(p.index)); send({ t: "param", index: p.index, value: v }); });
-        row.append(label, input, val); box.appendChild(row);
-        prm[p.index] = { input, val, p };
+        const label = document.createElement("label"); label.textContent = p.name.split("/")[1]; label.title = p.name;
+        let input, val;
+        if (p.kind === "enum") {
+          input = document.createElement("select"); input.className = "small";
+          p.names.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; input.appendChild(o); });
+          input.value = Math.round(get(p.index));
+          input.addEventListener("change", () => set(p.index, +input.value));
+          row.append(label, input);
+          rows.push({ p, refresh: () => { input.value = Math.round(get(p.index)); } });
+        } else {
+          input = document.createElement("input"); input.type = "range"; input.min = "0"; input.max = "1"; input.step = p.kind === "int" ? String(1 / (p.max - p.min)) : "0.001";
+          val = document.createElement("div"); val.className = "val";
+          const show = () => { input.value = toSlider(p, get(p.index)); val.textContent = fmt(p, get(p.index)); };
+          show();
+          input.addEventListener("input", () => { set(p.index, fromSlider(p, +input.value)); val.textContent = fmt(p, get(p.index)); });
+          row.append(label, input, val);
+          rows.push({ p, refresh: show });
+        }
+        box.appendChild(row);
       }
       root.appendChild(box);
     }
+    return () => rows.forEach(r => r.refresh());
   }
-  const refreshTuning = () => { for (const i in prm) { const { input, val, p } = prm[i]; input.value = toSlider(p, current(p.index)); val.textContent = fmt(p, current(p.index)); } };
-
-  // ---- audio ----
-  const send = m => { if (node) node.port.postMessage(m); else if (fb) fb.handle(m); };
-  async function start() {
-    if (running) { await ctx.suspend(); running = false; $("start").dataset.running = "false"; $("start").textContent = "Engine start"; return; }
-    if (!ctx) {
-      ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
-      gainNode = ctx.createGain(); gainNode.gain.value = +$("volume").value;
-      analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.82;
-      let source;
-      try {
-        await ctx.audioWorklet.addModule("./jet-worklet.js");
-        node = new AudioWorkletNode(ctx, "gs-jet", { outputChannelCount: [2], processorOptions: { module, preset: presetIndex } });
-        node.port.onmessage = e => { if (e.data.ready) { syncAll(); } else telemetry = e.data; };
-        source = node;
-        console.log("[dyno] AudioWorklet + wasm");
-      } catch (err) {
-        console.warn("[dyno] AudioWorklet unavailable, falling back to ScriptProcessor:", err);
-        const w = (await WebAssembly.instantiate(module, {})).exports;
-        const e = w.jet_new(ctx.sampleRate, presetIndex), buf = w.gs_alloc_f32(4096);
-        fb = { handle(m) { if (m.t === "ctl") w.jet_set_controls(e, m.throttle, m.boost, m.speed, m.damage); else if (m.t === "preset") w.jet_set_preset(e, m.index); else if (m.t === "param") w.jet_set_param(e, m.index, m.value); else if (m.t === "snap") w.jet_snap_rpm(e); else if (m.t === "gain") w.jet_set_master_gain(e, m.gain); } };
-        const sp = ctx.createScriptProcessor(2048, 0, 2);
-        sp.onaudioprocess = ev => { const l = ev.outputBuffer.getChannelData(0); w.jet_render(e, buf, l.length); l.set(new Float32Array(w.memory.buffer, buf, l.length)); ev.outputBuffer.getChannelData(1).set(l); telemetry = { rpm: w.jet_rpm(e), peak: w.jet_peak(e) }; };
-        source = sp; syncAll();
-      }
-      source.connect(gainNode); gainNode.connect(analyser); analyser.connect(ctx.destination);
-    }
-    await ctx.resume();
-    running = true; $("start").dataset.running = "true"; $("start").textContent = "Running · stop";
-    pushCtl();
-  }
-  // Push the mirror's full state (preset + any edits) to the renderer.
-  function syncAll() { send({ t: "json", json: readStr(mirror, mirror.jet_to_json(mirrorEngine)) }); pushCtl(); }
-  $("start").addEventListener("click", () => start().catch(e => { console.error(e); toast("Could not start audio: " + e.message); }));
-  $("volume").addEventListener("input", () => { if (gainNode) gainNode.gain.setTargetAtTime(+$("volume").value, ctx.currentTime, 0.02); });
-
-  // ---- drive controls ----
-  const ctlEls = { throttle: $("throttle"), boost: $("boost"), speed: $("speed"), damage: $("damage") };
-  const pct = v => Math.round(v * 100) + "%";
-  const showCtl = () => { for (const k in ctlEls) { ctlEls[k].value = state[k]; $("v-" + k).textContent = pct(state[k]); } $("v-boost").dataset.on = state.boost > 0.05; };
-  const pushCtl = () => send({ t: "ctl", ...state });
-  const keys = { up: false, down: false, shift: false, boostByKey: false };
-  for (const k in ctlEls) ctlEls[k].addEventListener("input", () => { state[k] = +ctlEls[k].value; if (k === "boost") keys.boostByKey = false; showCtl(); pushCtl(); });
-  window.addEventListener("keydown", e => {
-    if ((e.target.tagName === "INPUT" && e.target.type !== "range") || e.target.tagName === "SELECT") return;
-    if (e.key === "ArrowUp") { keys.up = true; e.preventDefault(); }
-    else if (e.key === "ArrowDown") { keys.down = true; e.preventDefault(); }
-    else if (e.key === "Shift") keys.shift = true;
-    else if (e.key === " ") { send({ t: "snap" }); e.preventDefault(); }
-    else if (meta && e.key >= "1" && e.key <= String(meta.presets.length)) { $("preset").value = +e.key - 1; loadPreset(+e.key - 1); }
-  });
-  window.addEventListener("keyup", e => { if (e.key === "ArrowUp") keys.up = false; else if (e.key === "ArrowDown") keys.down = false; else if (e.key === "Shift") keys.shift = false; });
-  window.addEventListener("blur", () => { keys.up = keys.down = keys.shift = false; });
-
-  function loadPreset(i) { presetIndex = i; mirror.jet_set_preset(mirrorEngine, i); refreshTuning(); send({ t: "preset", index: i }); toast(meta.presets[i] + " loaded"); }
-  $("preset").addEventListener("change", e => loadPreset(+e.target.value));
-  $("reset").addEventListener("click", () => loadPreset(presetIndex));
-  $("copy").addEventListener("click", async () => {
-    const json = readStr(mirror, mirror.jet_to_json(mirrorEngine));
-    try { await navigator.clipboard.writeText(json); toast("JSON copied — paste into JetEnginePatch.from_json()"); }
-    catch { window.prompt("Copy the JSON:", json); }
-  });
-  let toastTimer;
-  function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2200); }
-
-  // ---- gauge + spectrum ----
-  const gauge = $("gauge"), gctx = gauge.getContext("2d");
-  const spec = $("spectrum"), sctx = spec.getContext("2d");
-  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const specData = new Uint8Array(1024);
-  const byName = n => meta && meta.params.find(p => p.name === n);
-  // Derived readouts (same formulas as jet.rs, from the current params and RPM).
-  const derived = () => {
-    if (!mirror) return {};
-    const r = telemetry.rpm || 0, g = n => current(byName(n).index);
-    return { f0: g("whine/hz") * r, roarCut: g("roar/hz") * Math.pow(2, 2 * (r - 1)), tubeMs: g("tube/ms") / (0.6 + 0.4 * Math.min(r, 1.5)) };
-  };
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min((now - last) / 1000, 0.1); last = now;
-    let changed = false;
-    if (keys.up) { state.throttle = Math.min(state.throttle + dt * 1.2, 1); changed = true; }
-    if (keys.down) { state.throttle = Math.max(state.throttle - dt * 1.2, 0); changed = true; }
-    if (keys.shift) { keys.boostByKey = true; if (state.boost < 1) { state.boost = Math.min(state.boost + dt * 4, 1); changed = true; } }
-    else if (keys.boostByKey && state.boost > 0) { state.boost = Math.max(state.boost - dt * 2, 0); changed = true; if (state.boost === 0) keys.boostByKey = false; }
-    if ($("autospeed").checked) { const target = Math.min(state.throttle * (1 + 0.3 * state.boost), 1); const ns = state.speed + Math.sign(target - state.speed) * Math.min(Math.abs(target - state.speed), dt * 0.3); if (ns !== state.speed) { state.speed = ns; changed = true; } }
-    if (changed) { showCtl(); if (running) pushCtl(); }
-    drawGauge(); drawSpectrum();
-    requestAnimationFrame(frame);
-  }
-  function drawGauge() {
-    const w = gauge.width, h = gauge.height, cx = w / 2, cy = h * 0.86, R = w * 0.42;
-    const a0 = Math.PI * 1.08, a1 = Math.PI * 1.92, maxRpm = 1.4, ang = v => a0 + (a1 - a0) * Math.min(v / maxRpm, 1);
-    gctx.clearRect(0, 0, w, h); gctx.lineCap = "butt";
-    gctx.lineWidth = 14; gctx.strokeStyle = css("--line"); gctx.beginPath(); gctx.arc(cx, cy, R, a0, a1); gctx.stroke();
-    gctx.strokeStyle = css("--accent-dim"); gctx.beginPath(); gctx.arc(cx, cy, R, ang(1), a1); gctx.stroke();
-    const rpm = telemetry.rpm || 0;
-    gctx.strokeStyle = rpm > 1 ? css("--accent") : css("--readout"); gctx.beginPath(); gctx.arc(cx, cy, R, a0, ang(rpm)); gctx.stroke();
-    gctx.lineWidth = 2; gctx.strokeStyle = css("--muted"); gctx.fillStyle = css("--muted");
-    gctx.font = `600 ${Math.round(w * 0.05)}px ${css("--display")}`; gctx.textAlign = "center"; gctx.textBaseline = "middle";
-    for (let v = 0; v <= maxRpm + 1e-6; v += 0.2) {
-      const a = ang(v), major = Math.abs(v * 5 - Math.round(v * 5)) < 1e-6;
-      gctx.beginPath(); gctx.moveTo(cx + Math.cos(a) * (R - 14), cy + Math.sin(a) * (R - 14)); gctx.lineTo(cx + Math.cos(a) * (R - 22), cy + Math.sin(a) * (R - 22)); gctx.stroke();
-      if (major) gctx.fillText(String(Math.round(v * 100)), cx + Math.cos(a) * (R - 40), cy + Math.sin(a) * (R - 40));
-    }
-    const a = ang(rpm);
-    gctx.strokeStyle = rpm > 1 ? css("--accent") : css("--text"); gctx.lineWidth = 3; gctx.lineCap = "round";
-    gctx.beginPath(); gctx.moveTo(cx, cy); gctx.lineTo(cx + Math.cos(a) * (R - 26), cy + Math.sin(a) * (R - 26)); gctx.stroke();
-    gctx.fillStyle = css("--panel-2"); gctx.beginPath(); gctx.arc(cx, cy, 9, 0, Math.PI * 2); gctx.fill();
-    gctx.strokeStyle = css("--line"); gctx.lineWidth = 2; gctx.stroke();
-    const el = $("rpm"); el.innerHTML = Math.round(rpm * 100) + "<small>% RPM</small>"; el.dataset.redline = rpm > 1;
-    const d = derived();
-    $("s-whine").textContent = d.f0 ? (d.f0 >= 1000 ? (d.f0 / 1000).toFixed(2) + " kHz" : Math.round(d.f0) + " Hz") : "–";
-    $("s-roar").textContent = d.roarCut ? Math.round(d.roarCut) + " Hz" : "–";
-    $("s-tube").textContent = d.tubeMs ? d.tubeMs.toFixed(2) + " ms" : "–";
-  }
-  function drawSpectrum() {
-    const w = spec.width, h = spec.height;
-    sctx.clearRect(0, 0, w, h);
+  // Log-frequency spectrum plot shared by tabs.
+  function drawSpectrum(canvas, analyser, color, marker) {
+    const c = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
+    c.clearRect(0, 0, w, h);
     const fMin = 50, fMax = 16000, xOf = f => Math.log(f / fMin) / Math.log(fMax / fMin) * w;
-    sctx.strokeStyle = css("--line-soft"); sctx.lineWidth = 1;
-    for (const f of [100, 200, 500, 1000, 2000, 5000, 10000]) { const x = Math.round(xOf(f)) + 0.5; sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, h); sctx.stroke(); }
-    for (let i = 1; i < 4; i++) { const y = Math.round(h * i / 4) + 0.5; sctx.beginPath(); sctx.moveTo(0, y); sctx.lineTo(w, y); sctx.stroke(); }
-    if (!analyser) { sctx.fillStyle = css("--muted"); sctx.font = `500 ${Math.round(h * 0.07)}px ${css("--display")}`; sctx.textAlign = "center"; sctx.fillText(module ? "PRESS ENGINE START" : "LOADING ENGINE", w / 2, h / 2); return; }
-    analyser.getByteFrequencyData(specData);
-    const binHz = ctx.sampleRate / analyser.fftSize, boosted = state.boost > 0.3;
-    sctx.beginPath(); sctx.moveTo(0, h);
-    let prevX = -1;
-    for (let i = 1; i < specData.length; i++) {
-      const f = i * binHz; if (f < fMin) continue; if (f > fMax) break;
-      const x = xOf(f); if (x - prevX < 1.5) continue; prevX = x;
-      sctx.lineTo(x, h - (specData[i] / 255) * h * 0.96);
-    }
-    sctx.lineTo(w, h); sctx.closePath();
-    const grad = sctx.createLinearGradient(0, 0, 0, h), top = boosted ? css("--accent") : css("--readout");
-    grad.addColorStop(0, top); grad.addColorStop(1, boosted ? "rgba(255,106,31,0.05)" : "rgba(191,216,230,0.04)");
-    sctx.fillStyle = grad; sctx.globalAlpha = 0.85; sctx.fill(); sctx.globalAlpha = 1;
-    sctx.strokeStyle = top; sctx.lineWidth = 2; sctx.stroke();
-    const f0 = derived().f0; if (f0 && f0 > fMin && f0 < fMax) { const x = xOf(f0); sctx.strokeStyle = css("--warn"); sctx.setLineDash([4, 6]); sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, h); sctx.stroke(); sctx.setLineDash([]); }
+    c.strokeStyle = css("--line-soft"); c.lineWidth = 1;
+    for (const f of [100, 200, 500, 1000, 2000, 5000, 10000]) { const x = Math.round(xOf(f)) + 0.5; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); }
+    for (let i = 1; i < 4; i++) { const y = Math.round(h * i / 4) + 0.5; c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
+    if (!analyser) { c.fillStyle = css("--muted"); c.font = `500 ${Math.round(h * 0.07)}px ${css("--display")}`; c.textAlign = "center"; c.fillText(host.module ? "AUDIO OFF · CLICK ANY CONTROL" : "LOADING ENGINE", w / 2, h / 2); return; }
+    const data = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(data);
+    const binHz = host.ctx.sampleRate / analyser.fftSize;
+    c.beginPath(); c.moveTo(0, h); let prevX = -1;
+    for (let i = 1; i < data.length; i++) { const f = i * binHz; if (f < fMin) continue; if (f > fMax) break; const x = xOf(f); if (x - prevX < 1.5) continue; prevX = x; c.lineTo(x, h - (data[i] / 255) * h * 0.96); }
+    c.lineTo(w, h); c.closePath();
+    const grad = c.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, color); grad.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = grad; c.globalAlpha = 0.8; c.fill(); c.globalAlpha = 1; c.strokeStyle = color; c.lineWidth = 2; c.stroke();
+    if (marker && marker > fMin && marker < fMax) { const x = xOf(marker); c.strokeStyle = css("--warn"); c.setLineDash([4, 6]); c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); c.setLineDash([]); }
   }
-  showCtl();
-  requestAnimationFrame(frame);
+
+  const tabs = {};
+
+  // ================================================================== ENGINES tab
+  tabs.engines = (() => {
+    const state = { throttle: 0, boost: 0, speed: 0, damage: 0 };
+    const keys = { up: false, down: false, shift: false, boostByKey: false };
+    let mirror = 0, presetIndex = 0, node = null, refresh = () => {};
+    const send = m => node && node.send(m);
+    const P = () => host.meta.params, current = i => host.w.jet_get_param(mirror, i);
+    const byName = n => P().find(p => p.name === n);
+    const derived = () => { if (!mirror) return {}; const r = node?.tele.rpm ?? host.w.jet_rpm(mirror), g = n => current(byName(n).index); return { rpm: r, f0: g("whine/hz") * r, roarCut: g("roar/hz") * Math.pow(2, 2 * (r - 1)), tubeMs: g("tube/ms") / (0.6 + 0.4 * Math.min(r, 1.5)) }; };
+    const ctlEls = { throttle: $("throttle"), boost: $("boost"), speed: $("speed"), damage: $("damage") };
+    const pct = v => Math.round(v * 100) + "%";
+    const showCtl = () => { for (const k in ctlEls) { ctlEls[k].value = state[k]; $("v-" + k).textContent = pct(state[k]); } $("v-boost").dataset.on = state.boost > 0.05; };
+    const pushCtl = () => send({ t: "ctl", ...state });
+    const syncAll = () => { send({ t: "json", json: readStr(host.w.jet_to_json(mirror)) }); pushCtl(); };
+    function loadPreset(i) { presetIndex = i; host.w.jet_set_preset(mirror, i); refresh(); send({ t: "preset", index: i }); toast(host.meta.presets[i] + " engine loaded"); }
+
+    function init() {
+      mirror = host.w.jet_new(48000, 0);
+      const sel = $("preset"); host.meta.presets.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; sel.appendChild(o); });
+      sel.addEventListener("change", e => loadPreset(+e.target.value));
+      refresh = buildTuning($("jet-groups"), P(), current, (i, v) => { host.w.jet_set_param(mirror, i, v); send({ t: "param", index: i, value: v }); });
+      for (const k in ctlEls) ctlEls[k].addEventListener("input", () => { state[k] = +ctlEls[k].value; if (k === "boost") keys.boostByKey = false; showCtl(); pushCtl(); ensureAudio(); });
+      $("jet-reset").addEventListener("click", () => loadPreset(presetIndex));
+      $("jet-copy").addEventListener("click", () => copy(readStr(host.w.jet_to_json(mirror)), "Engine JSON copied — paste into JetEnginePatch.from_json()"));
+      showCtl();
+    }
+    async function attach() { node = await makeNode("jet", { preset: presetIndex }); node.onready = syncAll; }
+    function key(e, down) {
+      if (e.key === "ArrowUp") { keys.up = down; return true; }
+      if (e.key === "ArrowDown") { keys.down = down; return true; }
+      if (e.key === "Shift") { keys.shift = down; return false; }
+      if (!down) return false;
+      if (e.key === " ") { send({ t: "snap" }); return true; }
+      if (e.key >= "1" && e.key <= String(host.meta.presets.length)) { $("preset").value = +e.key - 1; loadPreset(+e.key - 1); return true; }
+      return false;
+    }
+    function frame(dt) {
+      let changed = false;
+      if (keys.up) { state.throttle = Math.min(state.throttle + dt * 1.2, 1); changed = true; }
+      if (keys.down) { state.throttle = Math.max(state.throttle - dt * 1.2, 0); changed = true; }
+      if (keys.shift) { keys.boostByKey = true; if (state.boost < 1) { state.boost = Math.min(state.boost + dt * 4, 1); changed = true; } }
+      else if (keys.boostByKey && state.boost > 0) { state.boost = Math.max(state.boost - dt * 2, 0); changed = true; if (state.boost === 0) keys.boostByKey = false; }
+      if ($("autospeed").checked) { const target = Math.min(state.throttle * (1 + 0.3 * state.boost), 1); const ns = state.speed + Math.sign(target - state.speed) * Math.min(Math.abs(target - state.speed), dt * 0.3); if (ns !== state.speed) { state.speed = ns; changed = true; } }
+      if (changed) { showCtl(); pushCtl(); if (keys.up || keys.shift) ensureAudio(); }
+      drawGauge(); drawSpectrum($("spectrum"), node && node.analyser, state.boost > 0.3 ? css("--accent") : css("--readout"), derived().f0);
+    }
+    function drawGauge() {
+      const g = $("gauge"), c = g.getContext("2d"), w = g.width, h = g.height, cx = w / 2, cy = h * 0.86, R = w * 0.42;
+      const a0 = Math.PI * 1.08, a1 = Math.PI * 1.92, maxRpm = 1.4, ang = v => a0 + (a1 - a0) * Math.min(v / maxRpm, 1);
+      const d = derived(), rpm = d.rpm || 0;
+      c.clearRect(0, 0, w, h); c.lineCap = "butt";
+      c.lineWidth = 14; c.strokeStyle = css("--line"); c.beginPath(); c.arc(cx, cy, R, a0, a1); c.stroke();
+      c.strokeStyle = css("--accent-dim"); c.beginPath(); c.arc(cx, cy, R, ang(1), a1); c.stroke();
+      c.strokeStyle = rpm > 1 ? css("--accent") : css("--readout"); c.beginPath(); c.arc(cx, cy, R, a0, ang(rpm)); c.stroke();
+      c.lineWidth = 2; c.strokeStyle = css("--muted"); c.fillStyle = css("--muted"); c.font = `600 ${Math.round(w * 0.05)}px ${css("--display")}`; c.textAlign = "center"; c.textBaseline = "middle";
+      for (let v = 0; v <= maxRpm + 1e-6; v += 0.2) { const a = ang(v), major = Math.abs(v * 5 - Math.round(v * 5)) < 1e-6; c.beginPath(); c.moveTo(cx + Math.cos(a) * (R - 14), cy + Math.sin(a) * (R - 14)); c.lineTo(cx + Math.cos(a) * (R - 22), cy + Math.sin(a) * (R - 22)); c.stroke(); if (major) c.fillText(String(Math.round(v * 100)), cx + Math.cos(a) * (R - 40), cy + Math.sin(a) * (R - 40)); }
+      const a = ang(rpm); c.strokeStyle = rpm > 1 ? css("--accent") : css("--text"); c.lineWidth = 3; c.lineCap = "round";
+      c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(a) * (R - 26), cy + Math.sin(a) * (R - 26)); c.stroke();
+      c.fillStyle = css("--panel-2"); c.beginPath(); c.arc(cx, cy, 9, 0, Math.PI * 2); c.fill(); c.strokeStyle = css("--line"); c.lineWidth = 2; c.stroke();
+      const el = $("rpm"); el.innerHTML = Math.round(rpm * 100) + "<small>% RPM</small>"; el.dataset.redline = rpm > 1;
+      $("s-whine").textContent = d.f0 ? (d.f0 >= 1000 ? (d.f0 / 1000).toFixed(2) + " kHz" : Math.round(d.f0) + " Hz") : "–";
+      $("s-roar").textContent = d.roarCut ? Math.round(d.roarCut) + " Hz" : "–";
+      $("s-tube").textContent = d.tubeMs ? d.tubeMs.toFixed(2) + " ms" : "–";
+    }
+    return { init, attach, key, frame, node: () => node };
+  })();
+
+  // ================================================================== SOUND FX tab
+  tabs.sfx = (() => {
+    let mirror = 0, node = null, refresh = () => {};
+    let cur = { preset: 0, seed: 0, modified: false }, recent = [], previewBuf = 0, preview = { data: new Float32Array(0), peak: 0 };
+    const PREVIEW_MAX = 48000 * 6, PREVIEW_SR = 48000;
+    const send = m => node && node.send(m);
+    const P = () => host.meta.synth_params, current = i => host.w.synth_get_param(mirror, i);
+    const names = () => host.meta.sfx_presets;
+    const HINT = { Pickup: "coins, gems, ammo", Laser: "shots, zaps", Explosion: "booms, crashes", PowerUp: "boosts, shields", Hit: "impacts, damage", Jump: "hops, launches", Blip: "UI, menus", Random: "anything goes" };
+    const gd = () => cur.modified ? `var stream := SynthStream.new()\nstream.patch = SynthPatch.from_json_string(json)  # paste the patch JSON\nplayer.stream = stream\nplayer.play()` : `player.stream = SynthStream.from_preset("${names()[cur.preset]}", ${cur.seed})\nplayer.play()`;
+
+    function renderPreview() {
+      const n = host.w.synth_preview(mirror, previewBuf, PREVIEW_MAX);
+      preview.data = new Float32Array(host.w.memory.buffer, previewBuf, n).slice();
+      let pk = 0; for (const x of preview.data) pk = Math.max(pk, Math.abs(x)); preview.peak = pk;
+      $("w-name").textContent = names()[cur.preset]; $("w-seed").textContent = cur.seed; $("w-len").textContent = (n / PREVIEW_SR).toFixed(2) + " s"; $("w-peak").textContent = pk.toFixed(2);
+      $("w-mod").hidden = !cur.modified; $("sfx-snip").textContent = gd();
+      $("sfx-hint").textContent = cur.modified ? "Edited sound: store the patch JSON in a SynthPatch resource." : "Unmodified preset + seed: two lines of GDScript, no data to store.";
+      drawWave();
+    }
+    function drawWave() {
+      const cv = $("wave"), c = cv.getContext("2d"), w = cv.width, h = cv.height, d = preview.data;
+      c.clearRect(0, 0, w, h);
+      c.strokeStyle = css("--line-soft"); c.lineWidth = 1; c.beginPath(); c.moveTo(0, h / 2 + 0.5); c.lineTo(w, h / 2 + 0.5); c.stroke();
+      const secs = d.length / PREVIEW_SR; c.fillStyle = css("--muted"); c.font = `500 ${Math.round(h * 0.05)}px ${css("--mono")}`; c.textAlign = "left";
+      for (let t = 0.1; t < secs; t += 0.1) { const x = Math.round(t / secs * w) + 0.5; c.strokeStyle = css("--line-soft"); c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); if (Math.round(t * 10) % 5 === 0) c.fillText(t.toFixed(1) + "s", x + 4, h - 8); }
+      if (!d.length) return;
+      const col = css("--sfx"), step = Math.max(1, Math.floor(d.length / w));
+      c.fillStyle = col; c.globalAlpha = 0.85;
+      for (let x = 0; x < w; x++) { const i0 = Math.floor(x / w * d.length), i1 = Math.min(d.length, i0 + step); let lo = 0, hi = 0; for (let i = i0; i < i1; i++) { if (d[i] < lo) lo = d[i]; if (d[i] > hi) hi = d[i]; } c.fillRect(x, h / 2 - hi * h * 0.48, 1, Math.max(1, (hi - lo) * h * 0.48)); }
+      c.globalAlpha = 1;
+    }
+    function load(preset, seed, play) {
+      cur = { preset, seed, modified: false };
+      host.w.synth_load_sfx(mirror, preset, seed); refresh(); renderPreview();
+      send({ t: "sfx", preset, seed });
+      document.querySelectorAll("#sfx-presets .pbtn").forEach((b, i) => b.dataset.active = i === preset);
+      $("sfx-seed").value = seed;
+      if (play) fire();
+      const key = preset + ":" + seed; recent = [key, ...recent.filter(k => k !== key)].slice(0, 10); drawRecent();
+    }
+    async function fire() {
+      if (!(await ensureAudio())) return;
+      send({ t: "trigger" });
+      const b = document.querySelectorAll("#sfx-presets .pbtn")[cur.preset]; if (b) { b.classList.remove("fire"); void b.offsetWidth; b.classList.add("fire"); }
+    }
+    function press(i) { load(i, $("sfx-newseed").checked ? Math.floor(Math.random() * 100000) : Math.max(0, +$("sfx-seed").value | 0), true); }
+    function drawRecent() {
+      const r = $("sfx-recent"); r.innerHTML = "";
+      for (const k of recent) { const [p, s] = k.split(":").map(Number); const c = document.createElement("button"); c.className = "chip"; c.textContent = names()[p] + " · " + s; c.addEventListener("click", () => load(p, s, true)); r.appendChild(c); }
+    }
+    function mutate() { const seed = Math.floor(Math.random() * 1e9); host.w.synth_mutate(mirror, +$("sfx-mutamt").value, seed); send({ t: "mutate", amount: +$("sfx-mutamt").value, seed }); cur.modified = true; refresh(); renderPreview(); fire(); }
+    function wav() {
+      const d = preview.data, n = d.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+      const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+      str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE"); str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, PREVIEW_SR, true); v.setUint32(28, PREVIEW_SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, n * 2, true);
+      for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d[i])) * 32767, true);
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([buf], { type: "audio/wav" })); a.download = `${names()[cur.preset].toLowerCase()}_${cur.seed}${cur.modified ? "_edit" : ""}.wav`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }
+    function init() {
+      mirror = host.w.synth_new(PREVIEW_SR); previewBuf = host.w.gs_alloc_f32(PREVIEW_MAX);
+      const grid = $("sfx-presets");
+      names().forEach((n, i) => { const b = document.createElement("button"); b.className = "pbtn"; b.innerHTML = `${n}<small>${HINT[n] || ""}</small><span class="flash"></span>`; b.addEventListener("click", () => press(i)); grid.appendChild(b); });
+      refresh = buildTuning($("sfx-groups"), P(), current, (i, v) => { host.w.synth_set_param(mirror, i, v); send({ t: "param", index: i, value: v }); cur.modified = true; schedulePreview(); });
+      $("sfx-replay").addEventListener("click", fire);
+      $("sfx-mutate").addEventListener("click", mutate);
+      $("sfx-reset").addEventListener("click", () => load(cur.preset, cur.seed, true));
+      $("sfx-seed").addEventListener("change", () => load(cur.preset, Math.max(0, +$("sfx-seed").value | 0), true));
+      $("sfx-copy").addEventListener("click", () => copy(readStr(host.w.synth_to_json(mirror)), "Patch JSON copied — paste into SynthPatch.from_json()"));
+      $("sfx-copy-gd").addEventListener("click", () => copy(gd(), "GDScript copied"));
+      $("sfx-wav").addEventListener("click", wav);
+      load(0, 0, false);
+    }
+    let previewTimer; const schedulePreview = () => { clearTimeout(previewTimer); previewTimer = setTimeout(renderPreview, 60); };
+    async function attach() { node = await makeNode("synth", { preset: cur.preset, seed: cur.seed }); node.onready = () => send({ t: "json", json: readStr(host.w.synth_to_json(mirror)) }); }
+    function key(e, down) {
+      if (!down) return false;
+      if (e.key === " ") { fire(); return true; }
+      if (e.key.toLowerCase() === "m") { mutate(); return true; }
+      if (e.key >= "1" && e.key <= String(names().length)) { press(+e.key - 1); return true; }
+      return false;
+    }
+    function frame() {}
+    return { init, attach, key, frame, node: () => node };
+  })();
+
+  // ================================================================== INSTRUMENT tab
+  tabs.inst = (() => {
+    const PRESETS = {
+      Lead: { osc: [{ wave: "Saw", level: 1 }, { wave: "Saw", level: 0.6, detune_cents: 12 }, { level: 0 }], amp_env: { attack: 0.005, decay: 0.2, sustain: 0.8, release: 0.4 }, filter: { mode: "LowPass", cutoff_hz: 900, resonance: 0.4, env_amount: 3 }, filter_env: { attack: 0, decay: 0.4, sustain: 0, release: 0.3 }, fx: { delay_time: 0.3, delay_feedback: 0.35, delay_mix: 0.25 }, gain: 0.45, polyphony: 8 },
+      Bass: { osc: [{ wave: "Square", level: 1 }, { wave: "Saw", level: 0.5, semitones: -12 }, { level: 0 }], amp_env: { attack: 0.002, decay: 0.2, sustain: 0.6, release: 0.15 }, filter: { mode: "LowPass", cutoff_hz: 400, resonance: 0.5, env_amount: 2.5 }, filter_env: { attack: 0, decay: 0.25, sustain: 0, release: 0.2 }, pitch: { glide: 0.06 }, fx: { drive: 0.3 }, gain: 0.5, polyphony: 1 },
+      Pad: { osc: [{ wave: "Saw", level: 0.8 }, { wave: "Saw", level: 0.8, detune_cents: -9 }, { wave: "Pulse", level: 0.5, detune_cents: 7, pulse_width: 0.35 }], amp_env: { attack: 0.6, decay: 1, sustain: 0.8, release: 1.5 }, filter: { mode: "LowPass", cutoff_hz: 1800, resonance: 0.2 }, lfo: { wave: "Sine", rate_hz: 0.3, cutoff: 0.6, pulse_width: 0.15 }, fx: { delay_time: 0.45, delay_feedback: 0.4, delay_mix: 0.35 }, gain: 0.32, polyphony: 8 },
+      Pluck: { osc: [{ wave: "Triangle", level: 1 }, { wave: "Pulse", level: 0.4, pulse_width: 0.3 }, { level: 0 }], amp_env: { attack: 0, decay: 0.35, sustain: 0, release: 0.2 }, filter: { mode: "LowPass", cutoff_hz: 3000, resonance: 0.3, env_amount: 3 }, filter_env: { attack: 0, decay: 0.12, sustain: 0, release: 0.1 }, fx: { delay_time: 0.25, delay_feedback: 0.35, delay_mix: 0.25 }, gain: 0.5, polyphony: 8 },
+      Init: {},
+    };
+    const KEYMAP = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ";": 16, "'": 17 };
+    let mirror = 0, node = null, refresh = () => {}, octave = 4, presetName = "Lead";
+    const held = new Map(); // key -> note
+    const send = m => node && node.send(m);
+    const P = () => host.meta.synth_params, current = i => host.w.synth_get_param(mirror, i);
+    const json = () => readStr(host.w.synth_to_json(mirror));
+    function loadPreset(n) { presetName = n; host.w.synth_reset_patch(mirror); withJson(JSON.stringify(PRESETS[n]), (p, l) => host.w.synth_from_json(mirror, p, l)); refresh(); send({ t: "reset" }); send({ t: "json", json: json() }); toast(n + " loaded"); }
+    async function noteOn(id, note) { if (held.has(id)) return; held.set(id, note); if (!(await ensureAudio())) return; send({ t: "noteon", note, velocity: 0.9 }); }
+    function noteOff(id) { const n = held.get(id); if (n == null) return; held.delete(id); send({ t: "noteoff", note: n }); }
+    function allOff() { for (const id of [...held.keys()]) noteOff(id); }
+
+    // ---- on-screen keyboard: 2 octaves + top C from (octave)C ----
+    const kb = $("keyboard"); const WHITE = [0, 2, 4, 5, 7, 9, 11], BLACK = { 1: 0, 3: 1, 6: 3, 8: 4, 10: 5 };
+    const layout = () => { const w = kb.width, h = kb.height, nw = 15, ww = w / nw; const keys = [];
+      for (let i = 0; i < nw; i++) { const oct = Math.floor(i / 7), deg = WHITE[i % 7]; keys.push({ note: (octave + 1) * 12 + oct * 12 + deg, x: i * ww, y: 0, w: ww, h, black: false }); }
+      for (let i = 0; i < nw; i++) { const oct = Math.floor(i / 7), semis = WHITE[i % 7] + 1; if (BLACK[semis % 12] == null || i % 7 === 6 || i % 7 === 2 || i === nw - 1) continue; keys.push({ note: (octave + 1) * 12 + oct * 12 + semis, x: (i + 1) * ww - ww * 0.3, y: 0, w: ww * 0.6, h: h * 0.62, black: true }); }
+      return keys; };
+    const hit = (px, py) => { const r = kb.getBoundingClientRect(), x = (px - r.left) / r.width * kb.width, y = (py - r.top) / r.height * kb.height, ks = layout(); return ks.filter(k => k.black).find(k => x >= k.x && x < k.x + k.w && y < k.h) || ks.find(k => !k.black && x >= k.x && x < k.x + k.w); };
+    function drawKeyboard() {
+      const c = kb.getContext("2d"), w = kb.width, h = kb.height, ks = layout(), on = new Set(held.values());
+      c.clearRect(0, 0, w, h);
+      for (const k of ks.filter(k => !k.black)) { c.fillStyle = on.has(k.note) ? css("--inst") : "#E4E8EE"; c.fillRect(k.x + 1, k.y, k.w - 2, k.h - 2); if (k.note % 12 === 0) { c.fillStyle = "#4A5568"; c.font = `500 ${Math.round(w * 0.012)}px ${css("--mono")}`; c.textAlign = "center"; c.fillText("C" + (k.note / 12 - 1), k.x + k.w / 2, h - 12); } }
+      for (const k of ks.filter(k => k.black)) { c.fillStyle = on.has(k.note) ? css("--inst") : "#1A2029"; c.fillRect(k.x, k.y, k.w, k.h); }
+    }
+    let pointerId = null, pointerKey = null;
+    kb.addEventListener("pointerdown", e => { kb.setPointerCapture(e.pointerId); pointerId = e.pointerId; const k = hit(e.clientX, e.clientY); if (k) { pointerKey = k.note; noteOn("ptr", k.note); } });
+    kb.addEventListener("pointermove", e => { if (e.pointerId !== pointerId) return; const k = hit(e.clientX, e.clientY); if (k && k.note !== pointerKey) { noteOff("ptr"); pointerKey = k.note; noteOn("ptr", k.note); } });
+    const up = e => { if (e.pointerId !== pointerId) return; noteOff("ptr"); pointerId = null; pointerKey = null; };
+    kb.addEventListener("pointerup", up); kb.addEventListener("pointercancel", up);
+
+    function init() {
+      mirror = host.w.synth_new(48000);
+      const sel = $("inst-preset"); Object.keys(PRESETS).forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o); });
+      sel.addEventListener("change", e => loadPreset(e.target.value));
+      refresh = buildTuning($("inst-groups"), P(), current, (i, v) => { host.w.synth_set_param(mirror, i, v); send({ t: "param", index: i, value: v }); });
+      host.w.synth_reset_patch(mirror); withJson(JSON.stringify(PRESETS.Lead), (p, l) => host.w.synth_from_json(mirror, p, l)); refresh();
+      $("oct-down").addEventListener("click", () => { allOff(); octave = Math.max(1, octave - 1); $("i-oct").textContent = octave; });
+      $("oct-up").addEventListener("click", () => { allOff(); octave = Math.min(7, octave + 1); $("i-oct").textContent = octave; });
+      $("inst-panic").addEventListener("click", () => { held.clear(); send({ t: "panic" }); });
+      $("inst-copy").addEventListener("click", () => copy(json(), "Patch JSON copied — paste into SynthPatch.from_json()"));
+      $("inst-reset").addEventListener("click", () => loadPreset(presetName));
+      const bend = $("bend"); const showBend = () => { $("v-bend").textContent = (+bend.value).toFixed(2); send({ t: "bend", bend: +bend.value }); };
+      bend.addEventListener("input", showBend);
+      const release = () => { bend.value = 0; showBend(); }; bend.addEventListener("pointerup", release); bend.addEventListener("pointercancel", release); bend.addEventListener("keyup", release);
+    }
+    async function attach() { node = await makeNode("synth", {}); node.onready = () => send({ t: "json", json: json() }); }
+    function key(e, down) {
+      const k = e.key.toLowerCase();
+      if (down && !e.repeat && k === "z") { allOff(); octave = Math.max(1, octave - 1); $("i-oct").textContent = octave; return true; }
+      if (down && !e.repeat && k === "x") { allOff(); octave = Math.min(7, octave + 1); $("i-oct").textContent = octave; return true; }
+      if (KEYMAP[k] == null) return false;
+      if (down) { if (!e.repeat) noteOn("k" + k, (octave + 1) * 12 + KEYMAP[k]); } else noteOff("k" + k);
+      return true;
+    }
+    function frame() { drawKeyboard(); drawSpectrum($("inst-spectrum"), node && node.analyser, css("--inst")); if (node) { $("i-voices").textContent = node.tele.voices ?? 0; $("i-peak").textContent = (node.tele.peak ?? 0).toFixed(2); } }
+    return { init, attach, key, frame, node: () => node, allOff };
+  })();
+
+  // ================================================================== tabs + boot
+  function setActive(k) {
+    host.active = k;
+    document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", b.dataset.k === k));
+    for (const t of ["engines", "sfx", "inst"]) { $("tab-" + t).hidden = t !== k; const n = tabs[t].node(); if (n && host.ctx) n.gain.gain.setTargetAtTime(t === k ? 1 : 0, host.ctx.currentTime, 0.02); }
+    try { localStorage.setItem("gs-lab-tab", k); } catch {}
+  }
+  document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => { if (host.active === "inst") tabs.inst.allOff(); setActive(b.dataset.k); }));
+  $("audio").addEventListener("click", async () => {
+    if (!host.ctx) { await ensureAudio(); return; }
+    if (host.ctx.state === "running") { await host.ctx.suspend(); $("audio").dataset.running = "false"; $("audio").textContent = "Audio off · resume"; }
+    else { await host.ctx.resume(); $("audio").dataset.running = "true"; $("audio").textContent = "Audio on · mute"; }
+  });
+  $("volume").addEventListener("input", () => { if (host.master) host.master.gain.setTargetAtTime(+$("volume").value, host.ctx.currentTime, 0.02); });
+  window.addEventListener("keydown", e => { if (e.metaKey || e.ctrlKey || e.altKey) return; const t = e.target; if ((t.tagName === "INPUT" && t.type !== "range") || t.tagName === "SELECT" || t.tagName === "TEXTAREA") return; if (host.meta && tabs[host.active].key(e, true)) e.preventDefault(); });
+  window.addEventListener("keyup", e => { if (host.meta) tabs[host.active].key(e, false); });
+  window.addEventListener("blur", () => { if (host.meta) { tabs.inst.allOff(); tabs.engines.key({ key: "ArrowUp" }, false); tabs.engines.key({ key: "ArrowDown" }, false); tabs.engines.key({ key: "Shift" }, false); } });
+
+  let last = performance.now();
+  function loop(now) { const dt = Math.min((now - last) / 1000, 0.1); last = now; if (host.meta) tabs[host.active].frame(dt); requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+
+  (async () => {
+    try {
+      const resp = await fetch(WASM_URL); if (!resp.ok) throw new Error(resp.status + " " + resp.statusText + " for " + WASM_URL);
+      host.module = await WebAssembly.compile(await resp.arrayBuffer());
+      host.w = (await WebAssembly.instantiate(host.module, {})).exports;
+      host.meta = JSON.parse(readStr(host.w.gs_meta_json()));
+      for (const t of Object.values(tabs)) t.init();
+      // ?tab=sfx deep-links a tab; otherwise the last used tab is remembered per browser.
+      let saved = new URLSearchParams(location.search).get("tab"); try { saved = saved || localStorage.getItem("gs-lab-tab"); } catch {}
+      setActive(tabs[saved] ? saved : "engines");
+      $("audio").disabled = false; $("audio").textContent = "Start audio";
+      $("foot").innerHTML = `Running <code>gamesynth-core ${host.meta.version}</code> compiled to WebAssembly inside an AudioWorklet at your device's sample rate. Every sound here is generated in real time; nothing is sampled. Source: <code>crates/gamesynth-core</code>.`;
+    } catch (err) {
+      console.error(err); $("audio").textContent = "Engine unavailable";
+      $("foot").textContent = "Could not load the engine module (" + err.message + "). If you opened this as a local file, serve the folder over http.";
+    }
+  })();
 })();
 </script>
 </body>

@@ -9,7 +9,7 @@ crates/gamesynth-core    pure Rust DSP (synth voice, SFX presets, jet engine), #
 crates/gamesynth-godot   GDExtension: SynthPatch (Resource), SynthStream (AudioStream)
 crates/gamesynth-wasm    C-ABI WebAssembly build of the jet engine (no bindgen)
 godot/                   demo project
-web/                     Engine Dyno: browser test stand running the wasm build (GitHub Pages)
+web/                     Sound Lab: browser test stand running the wasm build (GitHub Pages)
 ```
 
 ## Engine
@@ -135,28 +135,36 @@ renders an idle → full → boost → damaged spool-down sequence per preset.
 SFX presets: `Pickup`, `Laser`, `Explosion`, `PowerUp`, `Hit`, `Jump`, `Blip`, `Random`.
 Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.
 
-## Web: Engine Dyno (WebAssembly)
+## Web: Sound Lab (WebAssembly)
 
-`web/` is a static page that runs the *same* Rust jet engine compiled to WebAssembly inside
-an AudioWorklet: drive throttle / boost / speed / damage, switch presets, tune every
-parameter and copy JSON that `JetEnginePatch.from_json()` accepts.
+Live at **https://joakimeriksson.github.io/gamesynth/**. `web/` is a static page that runs
+the *same* Rust engine compiled to WebAssembly inside an AudioWorklet, in three tabs:
+
+| Tab | What it does | Godot counterpart |
+|---|---|---|
+| **Engines** | Jet engine dyno: throttle / boost / speed / damage, RPM gauge, spectrum, presets, tuning | `JetEngineStream` + `pb.set_state(...)` |
+| **Sound FX** | sfxr-style presets fired with a seed, mutate, waveform preview, recent list, WAV download | `SynthStream.from_preset(name, seed)` |
+| **Instrument** | Playable keyboard (mouse/touch/computer keys), pitch bend, Lead/Bass/Pad/Pluck patches | `SynthStream` with `one_shot = false` |
+
+Every tab has a tuning section generated from the engine's own parameter table and a
+**Copy JSON** button whose output `JetEnginePatch.from_json()` / `SynthPatch.from_json()`
+accept unchanged. `?tab=sfx` deep-links a tab.
 
 ```
 rustup target add wasm32-unknown-unknown     # once
-./web/build.sh                               # -> web/pkg/gamesynth_wasm.wasm (~140 KB)
+./web/build.sh                               # -> web/pkg/gamesynth_wasm.wasm (~220 KB)
 python3 -m http.server -d web 8000           # open http://localhost:8000
 ```
 
 If your day-to-day `cargo` is Homebrew's (no wasm target) and rustup is the keg-only
 formula: `CARGO=/opt/homebrew/opt/rustup/bin/cargo ./web/build.sh`.
 
-`crates/gamesynth-wasm` exposes a plain C ABI (`jet_new`, `jet_set_controls`,
-`jet_render`, `jet_to_json`, `gs_meta_json`, …), so the page has no bindgen glue and the
-module has zero imports; `web/jet-worklet.js` instantiates it on the audio thread.
+`crates/gamesynth-wasm` exposes a plain C ABI (`jet_*`, `synth_*`, `gs_meta_json`, …), so
+the page has no bindgen glue and the module has zero imports; `web/jet-worklet.js`
+instantiates it on the audio thread, one node per tab.
 
 **GitHub Pages:** `.github/workflows/pages.yml` builds the wasm and deploys `web/` on every
-push to `main`/`master`. Enable it once in the repo settings: *Settings → Pages → Source:
-GitHub Actions*. The site then lives at `https://<user>.github.io/<repo>/`.
+push to `main` (it enables Pages itself on the first run).
 
 ## Tests
 
