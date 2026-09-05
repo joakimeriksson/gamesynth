@@ -26,6 +26,8 @@ jobs:
       - name: Build engine to WebAssembly
         run: ./web/build.sh
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true   # create the Pages site on first run; no manual settings step
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
