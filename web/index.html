@@ -232,7 +232,7 @@
         <button id="sfx-copy-gd" class="btn small">Copy GDScript</button>
         <button id="sfx-copy" class="btn small">Copy patch JSON (SynthPatch.from_json)</button>
         <button id="sfx-wav" class="btn small">Download WAV</button>
-        <p>Keys <kbd>1</kbd>–<kbd>8</kbd> fire presets, <kbd>M</kbd> mutates.</p>
+        <p>Keys <kbd>1</kbd>–<kbd>9</kbd> fire presets, <kbd>M</kbd> mutates.</p>
       </div>
     </div>
     <div class="tune-head" style="margin-top:16px">
@@ -476,7 +476,7 @@
     const send = m => node && node.send(m);
     const P = () => host.meta.synth_params, current = i => host.w.synth_get_param(mirror, i);
     const names = () => host.meta.sfx_presets;
-    const HINT = { Pickup: "coins, gems, ammo", Laser: "shots, zaps", Explosion: "booms, crashes", PowerUp: "boosts, shields", Hit: "impacts, damage", Jump: "hops, launches", Blip: "UI, menus", Random: "anything goes" };
+    const HINT = { Pickup: "coins, gems, ammo", Laser: "beams, zaps", Explosion: "booms, crashes", PowerUp: "boosts, shields", Hit: "impacts, damage", Jump: "hops, launches", Blip: "UI, menus", Arrow: "bows, darts, thwips", Shoot: "guns, cannons", Throw: "whoosh, swings, throws", Random: "anything goes" };
     const gd = () => cur.modified ? `var stream := SynthStream.new()\nstream.patch = SynthPatch.from_json_string(json)  # paste the patch JSON\nplayer.stream = stream\nplayer.play()` : `player.stream = SynthStream.from_preset("${names()[cur.preset]}", ${cur.seed})\nplayer.play()`;
 
     function renderPreview() {
@@ -548,7 +548,7 @@
       if (!down) return false;
       if (e.key === " ") { fire(); return true; }
       if (e.key.toLowerCase() === "m") { mutate(); return true; }
-      if (e.key >= "1" && e.key <= String(names().length)) { press(+e.key - 1); return true; }
+      const n = parseInt(e.key, 10); if (n >= 1 && n <= Math.min(9, names().length)) { press(n - 1); return true; }
       return false;
     }
     function frame() {}

@@ -44,7 +44,8 @@ impl SynthPatch {
 #[godot_api]
 impl SynthPatch {
     /// Create a patch from a sound effect preset name (`Pickup`, `Laser`, `Explosion`,
-    /// `PowerUp`, `Hit`, `Jump`, `Blip`, `Random`) and a seed. Same inputs give the same sound.
+    /// `PowerUp`, `Hit`, `Jump`, `Blip`, `Arrow`, `Shoot`, `Throw`, `Random`) and a seed.
+    /// Same inputs give the same sound.
     #[func]
     pub fn from_preset(preset: GString, seed: i64) -> Gd<SynthPatch> {
         let preset = SfxPreset::from_name(&preset.to_string()).unwrap_or_else(|| {

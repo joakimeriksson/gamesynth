@@ -3,6 +3,7 @@
 //! Each preset returns a randomised [`Patch`] for a given seed; the same seed always yields
 //! the same sound, so games can store just `(preset, seed)`.
 
+use crate::env::AdsrParams;
 use crate::filter::FilterMode;
 use crate::math::Rng;
 use crate::osc::Waveform;
@@ -19,11 +20,14 @@ pub enum SfxPreset {
     Hit = 4,
     Jump = 5,
     Blip = 6,
-    Random = 7,
+    Arrow = 7,
+    Shoot = 8,
+    Throw = 9,
+    Random = 10,
 }
 
 impl SfxPreset {
-    pub const ALL: [SfxPreset; 8] = [
+    pub const ALL: [SfxPreset; 11] = [
         SfxPreset::Pickup,
         SfxPreset::Laser,
         SfxPreset::Explosion,
@@ -31,10 +35,13 @@ impl SfxPreset {
         SfxPreset::Hit,
         SfxPreset::Jump,
         SfxPreset::Blip,
+        SfxPreset::Arrow,
+        SfxPreset::Shoot,
+        SfxPreset::Throw,
         SfxPreset::Random,
     ];
-    pub const NAMES: [&'static str; 8] =
-        ["Pickup", "Laser", "Explosion", "PowerUp", "Hit", "Jump", "Blip", "Random"];
+    pub const NAMES: [&'static str; 11] =
+        ["Pickup", "Laser", "Explosion", "PowerUp", "Hit", "Jump", "Blip", "Arrow", "Shoot", "Throw", "Random"];
 
     pub fn from_index(i: usize) -> SfxPreset {
         Self::ALL[i.min(Self::ALL.len() - 1)]
@@ -59,6 +66,9 @@ impl SfxPreset {
             SfxPreset::Hit => hit(&mut rng),
             SfxPreset::Jump => jump(&mut rng),
             SfxPreset::Blip => blip(&mut rng),
+            SfxPreset::Arrow => arrow(&mut rng),
+            SfxPreset::Shoot => shoot(&mut rng),
+            SfxPreset::Throw => throw(&mut rng),
             SfxPreset::Random => random(&mut rng),
         }
     }
@@ -213,6 +223,77 @@ fn blip(rng: &mut Rng) -> Patch {
     p.set_sfx_envelope(0.0, rng.range(0.01, 0.08), rng.range(0.02, 0.1));
     p.filter.mode = FilterMode::HighPass;
     p.filter.cutoff_hz = rng.range(100.0, 400.0);
+    p
+}
+
+/// Bow release: a fast-falling "thwip" of noise through a resonant band-pass, with a short
+/// plucked-string transient whose pitch drops like a released string.
+fn arrow(rng: &mut Rng) -> Patch {
+    let mut p = base(Waveform::WhiteNoise, rng.range(74.0, 88.0));
+    p.osc[1].wave = if rng.chance(0.5) { Waveform::Triangle } else { Waveform::Square };
+    p.osc[1].level = rng.range(0.25, 0.6);
+    p.osc[1].semitones = -rng.range(12.0, 24.0);
+    p.pitch.slide = -rng.range(150.0, 400.0);
+    p.set_sfx_envelope(0.0, rng.range(0.02, 0.06), rng.range(0.12, 0.3));
+    p.filter.mode = FilterMode::BandPass;
+    p.filter.cutoff_hz = rng.range(1800.0, 4500.0);
+    p.filter.resonance = rng.range(0.55, 0.85);
+    p.filter.sweep = -rng.range(6.0, 14.0);
+    if rng.chance(0.3) {
+        // Slight flutter, like fletching in flight.
+        p.lfo.amp = rng.range(0.2, 0.5);
+        p.lfo.rate_hz = rng.range(25.0, 45.0);
+    }
+    p.gain = 0.75;
+    p
+}
+
+/// Ballistic shot: a hard noise crack whose low-pass slams shut, over a dropping sub thump.
+/// Shorter and brighter than `Explosion`, noisier than `Laser`.
+fn shoot(rng: &mut Rng) -> Patch {
+    let mut p = base(Waveform::WhiteNoise, rng.range(36.0, 52.0));
+    p.osc[1].wave = Waveform::Sine;
+    p.osc[1].level = rng.range(0.4, 0.9);
+    p.pitch.slide = -rng.range(100.0, 250.0);
+    p.set_sfx_envelope(0.0, rng.range(0.01, 0.05), rng.range(0.08, 0.3));
+    p.filter.mode = FilterMode::LowPass;
+    p.filter.cutoff_hz = rng.range(3000.0, 9000.0);
+    p.filter.resonance = rng.range(0.1, 0.5);
+    p.filter.sweep = -rng.range(10.0, 24.0);
+    p.fx.drive = rng.range(0.3, 0.8);
+    if rng.chance(0.35) {
+        p.fx.bit_depth = rng.range(5.0, 9.0).round();
+    }
+    if rng.chance(0.3) {
+        p.fx.downsample = rng.range(1.5, 4.0);
+    }
+    if rng.chance(0.4) {
+        // Mechanical click on top: a tiny square blip an octave up.
+        p.osc[2].wave = Waveform::Square;
+        p.osc[2].level = rng.range(0.15, 0.35);
+        p.osc[2].semitones = rng.range(24.0, 36.0);
+    }
+    p.gain = 0.7;
+    p
+}
+
+/// Whoosh: pink noise through a resonant band-pass that swells up in pitch and level, then
+/// falls away, like something swung or thrown past the listener.
+fn throw(rng: &mut Rng) -> Patch {
+    let mut p = base(Waveform::PinkNoise, 60.0);
+    if rng.chance(0.4) {
+        p.osc[1].wave = Waveform::WhiteNoise;
+        p.osc[1].level = rng.range(0.2, 0.5);
+    }
+    let rise = rng.range(0.06, 0.18);
+    p.set_sfx_envelope(rise, rng.range(0.02, 0.08), rng.range(0.15, 0.4));
+    p.filter.mode = FilterMode::BandPass;
+    p.filter.cutoff_hz = rng.range(250.0, 700.0);
+    p.filter.resonance = rng.range(0.5, 0.85);
+    p.filter_env = AdsrParams::new(rise * rng.range(0.8, 1.4), rng.range(0.15, 0.4), 0.0, 0.2);
+    p.filter.env_amount = rng.range(2.0, 4.0);
+    // Band-passed noise carries little energy; compensate so it sits with the other presets.
+    p.gain = 2.0;
     p
 }
 

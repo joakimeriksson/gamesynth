@@ -132,7 +132,7 @@ renders an idle → full → boost → damaged spool-down sequence per preset.
 | `JetEngineStream` | `AudioStream` | `patch`, `initial_throttle`, `start_spooled`; `from_preset(name)` |
 | `JetEnginePlayback` | `AudioStreamPlayback` | `set_throttle`, `set_boost`, `set_speed`, `set_damage`, `set_state`, `snap_rpm`, `set_param`, `set_patch`, `set_master_gain`, `get_rpm`, `get_peak` |
 
-SFX presets: `Pickup`, `Laser`, `Explosion`, `PowerUp`, `Hit`, `Jump`, `Blip`, `Random`.
+SFX presets: `Pickup`, `Laser`, `Explosion`, `PowerUp`, `Hit`, `Jump`, `Blip`, `Arrow`, `Shoot`, `Throw`, `Random`.
 Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.
 
 ## Web: Sound Lab (WebAssembly)
