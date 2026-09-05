@@ -1,0 +1,5 @@
+/target
+*.wav
+godot/.godot/
+godot/addons/gamesynth/bin/
+web/pkg/

@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GameSynth Engine Dyno</title>
+<meta name="description" content="Procedural jet engine for a Wipeout-style racer, running the Rust gamesynth engine as WebAssembly in your browser. Drive throttle, boost, speed and damage; tune and export JSON for Godot.">
+<meta property="og:title" content="GameSynth Engine Dyno">
+<meta property="og:description" content="Rust jet-engine synth, compiled to WebAssembly. Spool it up in your browser.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #0F141B;
+    --panel: #161D27;
+    --panel-2: #1C2532;
+    --line: #2A3542;
+    --line-soft: #202936;
+    --text: #E8ECF1;
+    --muted: #8593A5;
+    --readout: #BFD8E6;
+    --accent: #FF6A1F;
+    --accent-dim: #7A3A18;
+    --accent-glow: rgba(255, 106, 31, 0.28);
+    --ok: #7BC67E;
+    --warn: #E0B341;
+    --display: "Saira Condensed", "Barlow Condensed", "Arial Narrow", sans-serif;
+    --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 14px;
+    line-height: 1.45;
+    min-height: 100vh;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 56px; display: flex; flex-direction: column; gap: 18px; }
+
+  /* ---- top bar ---- */
+  .bar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 30px; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1; }
+  .brand .sub { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .bar .spacer { flex: 1; }
+  .field { display: flex; align-items: center; gap: 8px; }
+  .field label { color: var(--muted); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+  select {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 7px 30px 7px 10px;
+    appearance: none; -webkit-appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%; background-size: 5px 5px; background-repeat: no-repeat;
+    font-family: var(--display); font-size: 16px; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel-2); border-radius: 4px; padding: 8px 14px; cursor: pointer;
+    font-family: var(--display); font-size: 16px; letter-spacing: 0.08em; text-transform: uppercase;
+    transition: background 120ms, border-color 120ms, box-shadow 120ms;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #140A04; font-weight: 700; padding: 9px 22px; }
+  .btn.primary:hover { box-shadow: 0 0 0 4px var(--accent-glow); }
+  .btn.primary[data-running="true"] { background: var(--panel-2); color: var(--text); border-color: var(--line); font-weight: 600; }
+  .btn.primary[data-running="true"]::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 8px; vertical-align: 1px; }
+
+  /* ---- hero: gauge + spectrum + drive controls ---- */
+  .hero { display: grid; grid-template-columns: 300px 1fr 300px; gap: 14px; align-items: stretch; }
+  .panel { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 14px 16px; }
+  .panel h2 { margin: 0 0 10px; font-family: var(--display); font-size: 13px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  canvas { display: block; width: 100%; }
+  #gauge { width: 260px; height: 180px; }
+  .rpm-digits { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 34px; line-height: 1; color: var(--readout); letter-spacing: -0.01em; }
+  .rpm-digits small { font-size: 14px; color: var(--muted); margin-left: 4px; }
+  .rpm-digits[data-redline="true"] { color: var(--accent); }
+  .state-line { display: flex; gap: 14px; margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .state-line b { color: var(--text); font-weight: 500; }
+  #spectrum { height: 240px; border-radius: 3px; background: var(--ground); border: 1px solid var(--line-soft); }
+  .scope-foot { display: flex; justify-content: space-between; margin-top: 6px; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.06em; }
+
+  .drive { display: flex; flex-direction: column; gap: 12px; }
+  .ctl { display: grid; grid-template-columns: 74px 1fr 48px; gap: 10px; align-items: center; }
+  .ctl .name { font-family: var(--display); font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .ctl .name small { display: block; font-family: var(--body); font-size: 10px; font-weight: 400; letter-spacing: 0.04em; color: var(--muted); text-transform: none; }
+  .ctl .val { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--readout); font-variant-numeric: tabular-nums; }
+  .ctl.boost .val[data-on="true"] { color: var(--accent); }
+  input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; margin: 0; cursor: pointer; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: var(--line); border-radius: 2px; }
+  input[type="range"]::-moz-range-track { height: 4px; background: var(--line); border-radius: 2px; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 20px; margin-top: -8px; background: var(--readout); border-radius: 2px; border: 0; }
+  input[type="range"]::-moz-range-thumb { width: 12px; height: 20px; background: var(--readout); border-radius: 2px; border: 0; }
+  .ctl.boost input[type="range"]::-webkit-slider-thumb { background: var(--accent); }
+  .ctl.boost input[type="range"]::-moz-range-thumb { background: var(--accent); }
+  .drive .opt { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .drive .opt input { accent-color: var(--accent); }
+  .keys { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); line-height: 1.7; }
+  kbd { font-family: var(--mono); font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 5px; color: var(--text); }
+
+  /* ---- tuning ---- */
+  .tune-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .tune-head h2 { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .tune-head p { margin: 0; color: var(--muted); font-size: 12px; max-width: 60ch; }
+  .tune-head .spacer { flex: 1; }
+  .groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .group { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 12px 14px 8px; }
+  .group h3 { margin: 0 0 6px; font-family: var(--display); font-size: 14px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--readout); }
+  .prm { display: grid; grid-template-columns: 96px 1fr 62px; gap: 8px; align-items: center; padding: 3px 0; }
+  .prm label { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prm .val { font-family: var(--mono); font-size: 11px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px); opacity: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 8px 14px; font-size: 13px; transition: opacity 160ms, transform 160ms; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .note { color: var(--muted); font-size: 12px; }
+  .note code { font-family: var(--mono); font-size: 11px; color: var(--readout); }
+
+  @media (max-width: 960px) {
+    .hero { grid-template-columns: 1fr 1fr; }
+    .hero .scope { grid-column: 1 / -1; order: 3; }
+  }
+  @media (max-width: 600px) {
+    .hero { grid-template-columns: 1fr; }
+    .brand h1 { font-size: 24px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .btn, .toast { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="bar">
+    <div class="brand">
+      <h1>Engine Dyno</h1>
+      <span class="sub">GameSynth · procedural jet engine · Rust → WebAssembly</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="field">
+      <label for="preset">Preset</label>
+      <select id="preset"></select>
+    </div>
+    <div class="field">
+      <label for="volume">Vol</label>
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" style="width:90px" aria-label="Master volume">
+    </div>
+    <button id="start" class="btn primary" data-running="false" disabled>Loading…</button>
+  </header>
+
+  <section class="hero">
+    <div class="panel gauge-wrap">
+      <h2 style="align-self:flex-start">Turbine</h2>
+      <canvas id="gauge" width="520" height="360"></canvas>
+      <div class="rpm-digits" id="rpm" data-redline="false">28<small>% RPM</small></div>
+      <div class="state-line"><span>whine <b id="s-whine">–</b></span><span>roar lp <b id="s-roar">–</b></span><span>tube <b id="s-tube">–</b></span></div>
+    </div>
+
+    <div class="panel scope">
+      <h2>Spectrum</h2>
+      <canvas id="spectrum" width="1100" height="480"></canvas>
+      <div class="scope-foot"><span>50 Hz</span><span>200</span><span>1k</span><span>5k</span><span>16 kHz</span></div>
+    </div>
+
+    <div class="panel drive">
+      <h2>Drive</h2>
+      <div class="ctl"><div class="name">Throttle<small>hold ↑ / ↓</small></div><input id="throttle" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-throttle">0%</div></div>
+      <div class="ctl boost"><div class="name">Boost<small>hold Shift</small></div><input id="boost" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-boost" data-on="false">0%</div></div>
+      <div class="ctl"><div class="name">Speed<small>airspeed → wind</small></div><input id="speed" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-speed">0%</div></div>
+      <div class="ctl"><div class="name">Damage<small>sputter</small></div><input id="damage" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-damage">0%</div></div>
+      <label class="opt"><input id="autospeed" type="checkbox" checked> speed follows throttle, like a ship would</label>
+      <div class="keys">
+        <kbd>↑</kbd> <kbd>↓</kbd> throttle &nbsp; <kbd>Shift</kbd> afterburner &nbsp; <kbd>1</kbd>–<kbd>4</kbd> presets &nbsp; <kbd>Space</kbd> snap RPM<br>
+        Godot: <code style="font-family:var(--mono);font-size:11px;color:var(--readout)">pb.set_state(throttle, boost, speed, damage)</code>
+      </div>
+    </div>
+  </section>
+
+  <section class="tune-head">
+    <h2>Tuning</h2>
+    <p>Same parameter names and ranges as <code style="font-family:var(--mono);font-size:11px">JetEnginePatch</code>. Copy the JSON and paste it into <code style="font-family:var(--mono);font-size:11px">patch.from_json(...)</code> or a <code style="font-family:var(--mono);font-size:11px">.tres</code>.</p>
+    <div class="spacer"></div>
+    <button id="reset" class="btn">Reset to preset</button>
+    <button id="copy" class="btn">Copy JSON for Godot</button>
+  </section>
+  <section class="groups" id="groups"></section>
+  <p class="note" id="foot">Loading engine…</p>
+</div>
+<div class="toast" id="toast"></div>
+
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const WASM_URL = "./pkg/gamesynth_wasm.wasm";
+  const state = { throttle: 0, boost: 0, speed: 0, damage: 0 };
+  let meta = null, mirror = null, mirrorEngine = 0;   // main-thread instance: metadata + JSON, never renders
+  let module = null, ctx = null, node = null, analyser = null, gainNode = null, fb = null;
+  let presetIndex = 0, running = false;
+  let telemetry = { rpm: 0.28, peak: 0 };
+  const readStr = (w, len) => new TextDecoder().decode(new Uint8Array(w.memory.buffer, w.gs_str_ptr(), len));
+
+  // ---- load the engine ----
+  (async () => {
+    try {
+      const resp = await fetch(WASM_URL);
+      if (!resp.ok) throw new Error(resp.status + " " + resp.statusText + " for " + WASM_URL);
+      module = await WebAssembly.compile(await resp.arrayBuffer());
+      mirror = (await WebAssembly.instantiate(module, {})).exports;
+      meta = JSON.parse(readStr(mirror, mirror.gs_meta_json()));
+      mirrorEngine = mirror.jet_new(48000, presetIndex);
+      buildUi();
+      $("start").disabled = false; $("start").textContent = "Engine start";
+      $("foot").innerHTML = 'Running <code>gamesynth-core ' + meta.version + '</code> compiled to WebAssembly, inside an AudioWorklet at your device\'s sample rate. Source: <code>crates/gamesynth-core/src/jet.rs</code>.';
+    } catch (err) {
+      console.error(err);
+      $("start").textContent = "Engine unavailable";
+      $("foot").textContent = "Could not load the engine module (" + err.message + "). If you are viewing this from a local file, serve the folder over http.";
+    }
+  })();
+
+  // ---- UI from Rust metadata ----
+  const prm = {};   // index -> { input, val, p }
+  const GROUP_LABEL = { spool: "Spool", whine: "Turbine whine", roar: "Core roar", tube: "Tube resonance", hiss: "Intake hiss", burner: "Afterburner", wind: "Wind", master: "Master" };
+  const toSlider = (p, v) => p.kind === "exp" ? Math.log(v / p.min) / Math.log(p.max / p.min) : (v - p.min) / (p.max - p.min);
+  const fromSlider = (p, t) => p.kind === "exp" ? p.min * Math.pow(p.max / p.min, t) : p.min + (p.max - p.min) * t;
+  const fmt = (p, v) => { if (p.name.endsWith("hz")) return v >= 1000 ? (v / 1000).toFixed(2) + " k" : v.toFixed(v < 10 ? 2 : 0); if (p.name.endsWith("ms")) return v.toFixed(2) + " ms"; if (p.name.startsWith("spool/") && !p.name.includes("rpm")) return v.toFixed(2) + " s"; return v.toFixed(v < 10 ? 3 : 1); };
+  const current = i => mirror.jet_get_param(mirrorEngine, i);
+  function buildUi() {
+    const sel = $("preset"); sel.innerHTML = "";
+    meta.presets.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; sel.appendChild(o); });
+    sel.value = presetIndex;
+    const groups = {}; meta.params.forEach(p => { const g = p.name.split("/")[0]; (groups[g] ||= []).push(p); });
+    const root = $("groups"); root.innerHTML = "";
+    for (const g in groups) {
+      const box = document.createElement("div"); box.className = "group";
+      const h = document.createElement("h3"); h.textContent = GROUP_LABEL[g] || g; box.appendChild(h);
+      for (const p of groups[g]) {
+        const row = document.createElement("div"); row.className = "prm";
+        const label = document.createElement("label"); label.textContent = p.name.split("/")[1]; label.htmlFor = "p" + p.index; label.title = p.name;
+        const input = document.createElement("input"); input.type = "range"; input.min = "0"; input.max = "1"; input.step = "0.001"; input.id = "p" + p.index; input.value = toSlider(p, current(p.index));
+        const val = document.createElement("div"); val.className = "val"; val.textContent = fmt(p, current(p.index));
+        input.addEventListener("input", () => { const v = fromSlider(p, +input.value); mirror.jet_set_param(mirrorEngine, p.index, v); val.textContent = fmt(p, current(p.index)); send({ t: "param", index: p.index, value: v }); });
+        row.append(label, input, val); box.appendChild(row);
+        prm[p.index] = { input, val, p };
+      }
+      root.appendChild(box);
+    }
+  }
+  const refreshTuning = () => { for (const i in prm) { const { input, val, p } = prm[i]; input.value = toSlider(p, current(p.index)); val.textContent = fmt(p, current(p.index)); } };
+
+  // ---- audio ----
+  const send = m => { if (node) node.port.postMessage(m); else if (fb) fb.handle(m); };
+  async function start() {
+    if (running) { await ctx.suspend(); running = false; $("start").dataset.running = "false"; $("start").textContent = "Engine start"; return; }
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+      gainNode = ctx.createGain(); gainNode.gain.value = +$("volume").value;
+      analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.82;
+      let source;
+      try {
+        await ctx.audioWorklet.addModule("./jet-worklet.js");
+        node = new AudioWorkletNode(ctx, "gs-jet", { outputChannelCount: [2], processorOptions: { module, preset: presetIndex } });
+        node.port.onmessage = e => { if (e.data.ready) { syncAll(); } else telemetry = e.data; };
+        source = node;
+        console.log("[dyno] AudioWorklet + wasm");
+      } catch (err) {
+        console.warn("[dyno] AudioWorklet unavailable, falling back to ScriptProcessor:", err);
+        const w = (await WebAssembly.instantiate(module, {})).exports;
+        const e = w.jet_new(ctx.sampleRate, presetIndex), buf = w.gs_alloc_f32(4096);
+        fb = { handle(m) { if (m.t === "ctl") w.jet_set_controls(e, m.throttle, m.boost, m.speed, m.damage); else if (m.t === "preset") w.jet_set_preset(e, m.index); else if (m.t === "param") w.jet_set_param(e, m.index, m.value); else if (m.t === "snap") w.jet_snap_rpm(e); else if (m.t === "gain") w.jet_set_master_gain(e, m.gain); } };
+        const sp = ctx.createScriptProcessor(2048, 0, 2);
+        sp.onaudioprocess = ev => { const l = ev.outputBuffer.getChannelData(0); w.jet_render(e, buf, l.length); l.set(new Float32Array(w.memory.buffer, buf, l.length)); ev.outputBuffer.getChannelData(1).set(l); telemetry = { rpm: w.jet_rpm(e), peak: w.jet_peak(e) }; };
+        source = sp; syncAll();
+      }
+      source.connect(gainNode); gainNode.connect(analyser); analyser.connect(ctx.destination);
+    }
+    await ctx.resume();
+    running = true; $("start").dataset.running = "true"; $("start").textContent = "Running · stop";
+    pushCtl();
+  }
+  // Push the mirror's full state (preset + any edits) to the renderer.
+  function syncAll() { send({ t: "json", json: readStr(mirror, mirror.jet_to_json(mirrorEngine)) }); pushCtl(); }
+  $("start").addEventListener("click", () => start().catch(e => { console.error(e); toast("Could not start audio: " + e.message); }));
+  $("volume").addEventListener("input", () => { if (gainNode) gainNode.gain.setTargetAtTime(+$("volume").value, ctx.currentTime, 0.02); });
+
+  // ---- drive controls ----
+  const ctlEls = { throttle: $("throttle"), boost: $("boost"), speed: $("speed"), damage: $("damage") };
+  const pct = v => Math.round(v * 100) + "%";
+  const showCtl = () => { for (const k in ctlEls) { ctlEls[k].value = state[k]; $("v-" + k).textContent = pct(state[k]); } $("v-boost").dataset.on = state.boost > 0.05; };
+  const pushCtl = () => send({ t: "ctl", ...state });
+  const keys = { up: false, down: false, shift: false, boostByKey: false };
+  for (const k in ctlEls) ctlEls[k].addEventListener("input", () => { state[k] = +ctlEls[k].value; if (k === "boost") keys.boostByKey = false; showCtl(); pushCtl(); });
+  window.addEventListener("keydown", e => {
+    if ((e.target.tagName === "INPUT" && e.target.type !== "range") || e.target.tagName === "SELECT") return;
+    if (e.key === "ArrowUp") { keys.up = true; e.preventDefault(); }
+    else if (e.key === "ArrowDown") { keys.down = true; e.preventDefault(); }
+    else if (e.key === "Shift") keys.shift = true;
+    else if (e.key === " ") { send({ t: "snap" }); e.preventDefault(); }
+    else if (meta && e.key >= "1" && e.key <= String(meta.presets.length)) { $("preset").value = +e.key - 1; loadPreset(+e.key - 1); }
+  });
+  window.addEventListener("keyup", e => { if (e.key === "ArrowUp") keys.up = false; else if (e.key === "ArrowDown") keys.down = false; else if (e.key === "Shift") keys.shift = false; });
+  window.addEventListener("blur", () => { keys.up = keys.down = keys.shift = false; });
+
+  function loadPreset(i) { presetIndex = i; mirror.jet_set_preset(mirrorEngine, i); refreshTuning(); send({ t: "preset", index: i }); toast(meta.presets[i] + " loaded"); }
+  $("preset").addEventListener("change", e => loadPreset(+e.target.value));
+  $("reset").addEventListener("click", () => loadPreset(presetIndex));
+  $("copy").addEventListener("click", async () => {
+    const json = readStr(mirror, mirror.jet_to_json(mirrorEngine));
+    try { await navigator.clipboard.writeText(json); toast("JSON copied — paste into JetEnginePatch.from_json()"); }
+    catch { window.prompt("Copy the JSON:", json); }
+  });
+  let toastTimer;
+  function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2200); }
+
+  // ---- gauge + spectrum ----
+  const gauge = $("gauge"), gctx = gauge.getContext("2d");
+  const spec = $("spectrum"), sctx = spec.getContext("2d");
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const specData = new Uint8Array(1024);
+  const byName = n => meta && meta.params.find(p => p.name === n);
+  // Derived readouts (same formulas as jet.rs, from the current params and RPM).
+  const derived = () => {
+    if (!mirror) return {};
+    const r = telemetry.rpm || 0, g = n => current(byName(n).index);
+    return { f0: g("whine/hz") * r, roarCut: g("roar/hz") * Math.pow(2, 2 * (r - 1)), tubeMs: g("tube/ms") / (0.6 + 0.4 * Math.min(r, 1.5)) };
+  };
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.1); last = now;
+    let changed = false;
+    if (keys.up) { state.throttle = Math.min(state.throttle + dt * 1.2, 1); changed = true; }
+    if (keys.down) { state.throttle = Math.max(state.throttle - dt * 1.2, 0); changed = true; }
+    if (keys.shift) { keys.boostByKey = true; if (state.boost < 1) { state.boost = Math.min(state.boost + dt * 4, 1); changed = true; } }
+    else if (keys.boostByKey && state.boost > 0) { state.boost = Math.max(state.boost - dt * 2, 0); changed = true; if (state.boost === 0) keys.boostByKey = false; }
+    if ($("autospeed").checked) { const target = Math.min(state.throttle * (1 + 0.3 * state.boost), 1); const ns = state.speed + Math.sign(target - state.speed) * Math.min(Math.abs(target - state.speed), dt * 0.3); if (ns !== state.speed) { state.speed = ns; changed = true; } }
+    if (changed) { showCtl(); if (running) pushCtl(); }
+    drawGauge(); drawSpectrum();
+    requestAnimationFrame(frame);
+  }
+  function drawGauge() {
+    const w = gauge.width, h = gauge.height, cx = w / 2, cy = h * 0.86, R = w * 0.42;
+    const a0 = Math.PI * 1.08, a1 = Math.PI * 1.92, maxRpm = 1.4, ang = v => a0 + (a1 - a0) * Math.min(v / maxRpm, 1);
+    gctx.clearRect(0, 0, w, h); gctx.lineCap = "butt";
+    gctx.lineWidth = 14; gctx.strokeStyle = css("--line"); gctx.beginPath(); gctx.arc(cx, cy, R, a0, a1); gctx.stroke();
+    gctx.strokeStyle = css("--accent-dim"); gctx.beginPath(); gctx.arc(cx, cy, R, ang(1), a1); gctx.stroke();
+    const rpm = telemetry.rpm || 0;
+    gctx.strokeStyle = rpm > 1 ? css("--accent") : css("--readout"); gctx.beginPath(); gctx.arc(cx, cy, R, a0, ang(rpm)); gctx.stroke();
+    gctx.lineWidth = 2; gctx.strokeStyle = css("--muted"); gctx.fillStyle = css("--muted");
+    gctx.font = `600 ${Math.round(w * 0.05)}px ${css("--display")}`; gctx.textAlign = "center"; gctx.textBaseline = "middle";
+    for (let v = 0; v <= maxRpm + 1e-6; v += 0.2) {
+      const a = ang(v), major = Math.abs(v * 5 - Math.round(v * 5)) < 1e-6;
+      gctx.beginPath(); gctx.moveTo(cx + Math.cos(a) * (R - 14), cy + Math.sin(a) * (R - 14)); gctx.lineTo(cx + Math.cos(a) * (R - 22), cy + Math.sin(a) * (R - 22)); gctx.stroke();
+      if (major) gctx.fillText(String(Math.round(v * 100)), cx + Math.cos(a) * (R - 40), cy + Math.sin(a) * (R - 40));
+    }
+    const a = ang(rpm);
+    gctx.strokeStyle = rpm > 1 ? css("--accent") : css("--text"); gctx.lineWidth = 3; gctx.lineCap = "round";
+    gctx.beginPath(); gctx.moveTo(cx, cy); gctx.lineTo(cx + Math.cos(a) * (R - 26), cy + Math.sin(a) * (R - 26)); gctx.stroke();
+    gctx.fillStyle = css("--panel-2"); gctx.beginPath(); gctx.arc(cx, cy, 9, 0, Math.PI * 2); gctx.fill();
+    gctx.strokeStyle = css("--line"); gctx.lineWidth = 2; gctx.stroke();
+    const el = $("rpm"); el.innerHTML = Math.round(rpm * 100) + "<small>% RPM</small>"; el.dataset.redline = rpm > 1;
+    const d = derived();
+    $("s-whine").textContent = d.f0 ? (d.f0 >= 1000 ? (d.f0 / 1000).toFixed(2) + " kHz" : Math.round(d.f0) + " Hz") : "–";
+    $("s-roar").textContent = d.roarCut ? Math.round(d.roarCut) + " Hz" : "–";
+    $("s-tube").textContent = d.tubeMs ? d.tubeMs.toFixed(2) + " ms" : "–";
+  }
+  function drawSpectrum() {
+    const w = spec.width, h = spec.height;
+    sctx.clearRect(0, 0, w, h);
+    const fMin = 50, fMax = 16000, xOf = f => Math.log(f / fMin) / Math.log(fMax / fMin) * w;
+    sctx.strokeStyle = css("--line-soft"); sctx.lineWidth = 1;
+    for (const f of [100, 200, 500, 1000, 2000, 5000, 10000]) { const x = Math.round(xOf(f)) + 0.5; sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, h); sctx.stroke(); }
+    for (let i = 1; i < 4; i++) { const y = Math.round(h * i / 4) + 0.5; sctx.beginPath(); sctx.moveTo(0, y); sctx.lineTo(w, y); sctx.stroke(); }
+    if (!analyser) { sctx.fillStyle = css("--muted"); sctx.font = `500 ${Math.round(h * 0.07)}px ${css("--display")}`; sctx.textAlign = "center"; sctx.fillText(module ? "PRESS ENGINE START" : "LOADING ENGINE", w / 2, h / 2); return; }
+    analyser.getByteFrequencyData(specData);
+    const binHz = ctx.sampleRate / analyser.fftSize, boosted = state.boost > 0.3;
+    sctx.beginPath(); sctx.moveTo(0, h);
+    let prevX = -1;
+    for (let i = 1; i < specData.length; i++) {
+      const f = i * binHz; if (f < fMin) continue; if (f > fMax) break;
+      const x = xOf(f); if (x - prevX < 1.5) continue; prevX = x;
+      sctx.lineTo(x, h - (specData[i] / 255) * h * 0.96);
+    }
+    sctx.lineTo(w, h); sctx.closePath();
+    const grad = sctx.createLinearGradient(0, 0, 0, h), top = boosted ? css("--accent") : css("--readout");
+    grad.addColorStop(0, top); grad.addColorStop(1, boosted ? "rgba(255,106,31,0.05)" : "rgba(191,216,230,0.04)");
+    sctx.fillStyle = grad; sctx.globalAlpha = 0.85; sctx.fill(); sctx.globalAlpha = 1;
+    sctx.strokeStyle = top; sctx.lineWidth = 2; sctx.stroke();
+    const f0 = derived().f0; if (f0 && f0 > fMin && f0 < fMax) { const x = xOf(f0); sctx.strokeStyle = css("--warn"); sctx.setLineDash([4, 6]); sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, h); sctx.stroke(); sctx.setLineDash([]); }
+  }
+  showCtl();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

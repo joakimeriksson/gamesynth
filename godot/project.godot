@@ -1,0 +1,20 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+
+config_version=5
+
+[application]
+
+config/name="GameSynth Demo"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7")
+
+[audio]
+
+driver/output_latency=10
+
+[display]
+
+window/size/viewport_width=900
+window/size/viewport_height=560

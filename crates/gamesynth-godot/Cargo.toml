@@ -1,0 +1,21 @@
+[package]
+name = "gamesynth-godot"
+description = "Godot 4 GDExtension exposing gamesynth-core as AudioStream / SynthPatch resources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gamesynth-core = { path = "../gamesynth-core" }
+# experimental-threads makes GdCell block (instead of panic) when the audio thread and the
+# main thread touch the same playback object, which is exactly the AudioStreamPlayback case.
+godot = { version = "0.5.5", features = ["api-4-7", "experimental-threads", "register-docs"] }
+# Only for `godot_core::meta::RawPtr`, which the `godot` facade does not re-export (0.5.5)
+# but which appears in the `IAudioStreamPlayback::mix_rawptr` signature.
+godot-core = "0.5.5"
+rtrb = "0.3"
+serde_json = "1"

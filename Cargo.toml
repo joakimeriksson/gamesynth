@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = ["crates/gamesynth-core", "crates/gamesynth-godot", "crates/gamesynth-wasm"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = ""
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+# Audio DSP is unusable at opt-level 0; keep dev builds fast enough to play.
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 3
+
+# WebAssembly build of the engine for the web dyno (web/). Separate profile so the
+# panic strategy and size optimisation do not affect the Godot extension.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+panic = "abort"
+lto = "fat"
+codegen-units = 1
