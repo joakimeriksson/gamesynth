@@ -1,0 +1,13 @@
+# Web (WebAssembly) build of the GDExtension, single-threaded, matching Godot's nothreads web
+# template. Build with (see tools/build-wasm.sh):
+#   cargo build -p gamesynth-godot --no-default-features --features nothreads -Zbuild-std --target wasm32-unknown-emscripten --release
+# Panics abort immediately: Rust's Wasm exception handling can't link into Godot's module and
+# recent nightlies removed the flag that used to disable it.
+[target.wasm32-unknown-emscripten]
+rustflags = [
+    "-C", "link-args=-sSIDE_MODULE=2",
+    "-C", "llvm-args=-enable-emscripten-cxx-exceptions=0",
+    "-Z", "emscripten-wasm-eh=false",
+    "-Z", "default-visibility=hidden",
+    "-Z", "link-native-libraries=no",
+]

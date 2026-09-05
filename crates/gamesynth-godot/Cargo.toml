@@ -13,9 +13,18 @@ crate-type = ["cdylib"]
 gamesynth-core = { path = "../gamesynth-core" }
 # experimental-threads makes GdCell block (instead of panic) when the audio thread and the
 # main thread touch the same playback object, which is exactly the AudioStreamPlayback case.
-godot = { version = "0.5.5", features = ["api-4-7", "experimental-threads", "register-docs"] }
+godot = { version = "0.5.5", features = ["api-4-7"] }
 # Only for `godot_core::meta::RawPtr`, which the `godot` facade does not re-export (0.5.5)
 # but which appears in the `IAudioStreamPlayback::mix_rawptr` signature.
 godot-core = "0.5.5"
 rtrb = "0.3"
 serde_json = "1"
+
+[features]
+default = ["threads"]
+# Native builds: experimental-threads makes GdCell block (instead of panic) when the audio
+# thread and the main thread touch the same playback object.
+threads = ["godot/experimental-threads", "godot/register-docs"]
+# Single-threaded WebAssembly build (Godot "nothreads" web template); incompatible with
+# `threads`, so build with --no-default-features --features nothreads. See tools/build-wasm.sh.
+nothreads = ["godot/experimental-wasm", "godot/experimental-wasm-nothreads", "godot/lazy-function-tables"]
