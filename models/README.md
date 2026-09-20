@@ -75,7 +75,7 @@ signals, plus `sr`, `pi`, `tau`.
 | `lowpass` `highpass` | **cutoff** | gentle 6 dB/oct |
 | `comb` | **ms**, feedback (0.5), mix (1), `max_ms` (50) | tube/pipe resonance, flanging |
 | `delay` | **ms**, feedback (0.3), mix (0.3), `max_ms` (1000) | echo |
-| `resonators` | `freqs = [..]`, resonance (0.95), scale (1), `route` = all \| random | ringing bank; `random` sends each impulse to one resonator |
+| `resonators` | `freqs = [..]`, resonance (0.95), scale (1), `route` = all \| random, `spread` (0) | ringing bank; `random` sends each impulse to one resonator, detuned by up to ±`spread` octaves so drops never sound like a chime |
 | `decay` | ms (5) | impulses → decaying envelope |
 | `mul` | `by = [..]` | `sum(in) * sum(by)`: envelopes, tremolo, ring mod |
 | `drive` | amount (0.5) | soft saturation |

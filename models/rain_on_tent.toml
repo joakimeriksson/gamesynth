@@ -22,15 +22,15 @@ flap = "0.5 + 0.5 * noise(0.7 + 3 * wind)"
 [graph]
 nodes = [
   { id = "drops", type = "dust", rate = "rate" },
-  { id = "ping", type = "resonators", in = ["drops"], freqs = [0.62, 1.0, 1.37, 1.9], scale = "drop_hz", resonance = 0.93, route = "random" },
+  { id = "ping", type = "resonators", in = ["drops"], freqs = [1, 1, 1, 1, 1, 1], scale = "drop_hz", resonance = 0.88, route = "random", spread = 0.7 },
   { id = "patter", type = "dust", rate = "rate * 0.25" },
-  { id = "fabric", type = "resonators", in = ["patter"], freqs = [1.0, 1.62, 2.4], scale = "fabric_hz", resonance = 0.9, route = "random" },
+  { id = "fabric", type = "resonators", in = ["patter"], freqs = [1.0, 1.62, 2.4], scale = "fabric_hz", resonance = 0.9, route = "random", spread = 0.25 },
   { id = "pink", type = "noise", color = "pink" },
   { id = "bed", type = "svf", mode = "bandpass", in = ["pink"], cutoff = 2200, resonance = 0.15 },
   { id = "muffle", type = "lowpass", in = [{ from = "ping", gain = 2.0 }, { from = "bed", gain = "bed_level * pow(intensity, 1.5) * 0.6" }], cutoff = 3500 },
   { id = "brown", type = "noise", color = "brown" },
   { id = "canvas", type = "svf", mode = "lowpass", in = ["brown"], cutoff = "120 + 300 * wind", resonance = 0.3 },
-  { id = "out", type = "gain", gain = "gain * 1.8", in = ["muffle", { from = "fabric", gain = "fabric_level * 4" }, { from = "canvas", gain = "wind * flap * 1.5" }] },
+  { id = "out", type = "gain", gain = "gain * 1.8", in = ["muffle", { from = "fabric", gain = "fabric_level * 4" }, { from = "canvas", gain = "wind * flap * 0.4" }] },
 ]
 out = "out"
 

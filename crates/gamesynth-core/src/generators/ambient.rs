@@ -275,7 +275,8 @@ impl Generator for Crowd {
         for k in 0..VOICES {
             let spot = k as f32 / (VOICES - 1) as f32;
             let rate = p.syllable_hz * (0.7 + 0.6 * spot) * (1.0 + ex);
-            let talking = self.talk[k].advance(rate, dt).max(0.0).powf(1.5);
+            let t = 0.5 + 0.5 * self.talk[k].advance(rate, dt);
+            let talking = 0.12 + 0.88 * t * t;
             // Voices join one by one as the crowd grows.
             let joined = (size * VOICES as f32 - k as f32 + 2.0).clamp(0.0, 1.0);
             amp[k] = talking * joined;
@@ -286,7 +287,7 @@ impl Generator for Crowd {
         self.roar.set(FilterMode::LowPass, 400.0, 0.1, sr);
         let cheer_gain = p.cheer_level * ex * ex * (0.7 + 0.3 * self.cheer_swell.advance(0.6, dt)) * 0.8;
         let roar_gain = p.roar_level * ex * 2.0;
-        let murmur_gain = p.murmur_level * 6.0 / (1.0 + 2.0 * size);
+        let murmur_gain = p.murmur_level * 4.5 / (1.0 + 2.0 * size);
         let level = (0.4 + 0.6 * size) * p.gain;
         for o in out.iter_mut() {
             let (w, pk) = (self.noise.white(), self.noise.pink());
@@ -313,7 +314,7 @@ model_params! {
         whistle_hz: "whistle/hz" = 1800.0, exp(200.0, 6000.0);
         whistle_level: "whistle/level" = 0.25, UNIT;
         drift: "whistle/drift_hz" = 0.3, exp(0.02, 5.0);
-        hum_level: "hum/level" = 0.15, UNIT;
+        hum_level: "hum/level" = 0.08, UNIT;
         gain: "master/gain" = 1.0, GAIN;
     }
 }
@@ -367,8 +368,8 @@ impl Generator for Radio {
         let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
         let (inter, activity) = (x[0], x[1]);
         self.hiss.set(FilterMode::BandPass, p.hiss_hz, 0.2, sr);
-        self.tick.set(FilterMode::BandPass, 2500.0, 0.6, sr);
-        let hiss_gain = p.hiss_level * (0.15 + 0.85 * inter) * (0.7 + 0.3 * self.swell.advance(1.5, dt)) * 0.8;
+        self.tick.set(FilterMode::BandPass, 2500.0, 0.9, sr);
+        let hiss_gain = p.hiss_level * (0.15 + 0.85 * inter) * (0.7 + 0.3 * self.swell.advance(1.5, dt)) * 1.6;
         let click_p = p.click_rate * activity * activity / sr;
         let whistle_inc = p.whistle_hz * (0.7 * self.tune.advance(p.drift, dt)).exp2() / sr;
         let whistle_gain = p.whistle_level * inter * self.fade.advance(p.drift * 0.7, dt).max(0.0);
@@ -379,7 +380,7 @@ impl Generator for Radio {
             let h = self.hum.phase * TAU;
             let click = self.clicks.tick(click_p);
             *o = (self.hiss.tick(self.noise.white()) * hiss_gain
-                + (self.tick.tick(click) * 2.0 + click * 0.5) * p.click_level
+                + (self.tick.tick(click) * 5.0 + click) * p.click_level
                 + self.whistle.sin() * whistle_gain
                 + (h.sin() + 0.5 * (h * 2.0).sin()) * hum_gain)
                 * p.gain

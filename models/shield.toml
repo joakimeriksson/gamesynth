@@ -26,7 +26,7 @@ nodes = [
   { id = "core", type = "svf", mode = "lowpass", in = ["s1", "s2"], cutoff = "400 + 3000 * power + 4000 * flare", resonance = 0.4 },
   { id = "white", type = "noise" },
   { id = "shimmer", type = "resonators", in = ["white"], freqs = [1.0, 1.5, 2.25, 3.1], scale = "shimmer_hz * (1 + 0.2 * noise(0.4))", resonance = 0.97 },
-  { id = "sweep", type = "comb", in = [{ from = "core", gain = 0.3 }, { from = "sub", gain = 0.4 }, { from = "shimmer", gain = "shimmer_level * 0.05" }], ms = "2 + 1.5 * lfo(0.13)", feedback = 0.7, mix = 0.6 },
-  { id = "out", type = "gain", in = ["sweep"], gain = "gain * power * (1 + 1.5 * flare) * 0.6" },
+  { id = "sweep", type = "comb", in = [{ from = "core", gain = 0.3 }, { from = "sub", gain = 0.25 }, { from = "shimmer", gain = "shimmer_level * 0.05" }], ms = "2 + 1.5 * lfo(0.13)", feedback = 0.7, mix = 0.6 },
+  { id = "out", type = "gain", in = ["sweep"], gain = "gain * power * (1 + 0.5 * flare) * 0.45" },
 ]
 out = "out"

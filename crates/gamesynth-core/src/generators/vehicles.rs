@@ -211,6 +211,8 @@ pub struct Combustion {
     fire: Phasor,
     cyl: usize,
     amp: f32,
+    /// Cycle-to-cycle timing variation of the current firing.
+    timing: f32,
     cyl_gain: [f32; 12],
     noise: Noise,
     dust: Dust,
@@ -256,6 +258,7 @@ impl Generator for Combustion {
             fire: Phasor::default(),
             cyl: 0,
             amp: 1.0,
+            timing: 1.0,
             cyl_gain,
             noise: Noise::new(0x41_0002),
             dust: Dust::new(0x41_0003),
@@ -289,9 +292,12 @@ impl Generator for Combustion {
         let intake_gain = p.intake_level * (0.2 + 0.8 * throttle) * 1.5;
         let level = (0.35 + 0.65 * load.max(throttle * 0.5)) * (0.7 + 0.6 * rev) * p.gain * 1.1;
         for s in out.iter_mut() {
-            if self.fire.tick(inc) {
+            if self.fire.tick(inc * self.timing) {
                 self.cyl = (self.cyl + 1) % n_cyl;
                 self.amp = self.cyl_gain[self.cyl] * (1.0 + p.roughness * 0.5 * self.dust.rng().next_bipolar());
+                // No two combustion cycles take exactly as long; this is what keeps the upper
+                // harmonics from sounding like a clean synth buzz.
+                self.timing = 1.0 + (0.015 + 0.06 * p.roughness) * self.dust.rng().next_bipolar();
             }
             let pulse = self.amp * (-self.fire.phase * p.pulse_sharp).exp();
             let w = self.noise.white();

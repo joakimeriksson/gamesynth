@@ -21,7 +21,7 @@ nodes = [
   { id = "white", type = "noise" },
   { id = "throat", type = "svf", mode = "bandpass", in = ["white"], cutoff = "pipe_hz * (0.7 + 0.8 * pressure)", resonance = "pipe_res" },
   { id = "air", type = "svf", mode = "highpass", in = ["white"], cutoff = 3500, resonance = 0.1 },
-  { id = "pipe", type = "comb", in = ["throat", { from = "air", gain = 0.15 }], ms = "1000 / pipe_hz", feedback = "ring", mix = 0.7 },
+  { id = "pipe", type = "comb", in = ["throat", { from = "air", gain = 0.45 }], ms = "1000 / pipe_hz", feedback = "ring", mix = 0.7 },
   { id = "out", type = "gain", in = ["pipe"], gain = "gain * level * 0.8" },
 ]
 out = "out"

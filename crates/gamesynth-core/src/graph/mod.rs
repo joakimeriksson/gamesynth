@@ -198,7 +198,7 @@ const NODE_TYPES: &[NodeInfo] = &[
     ("highpass", &[("cutoff", REQ)], &[], "Gentle 6 dB/oct high-pass"),
     ("comb", &[("ms", REQ), ("feedback", 0.5), ("mix", 1.0)], &["max_ms"], "Feedback comb: tube and pipe resonance, flanging"),
     ("delay", &[("ms", REQ), ("feedback", 0.3), ("mix", 0.3)], &["max_ms"], "Echo"),
-    ("resonators", &[("resonance", 0.95), ("scale", 1.0)], &["freqs", "route"], "Bank of ringing band-passes at freqs * scale. route = all | random (each impulse excites one)"),
+    ("resonators", &[("resonance", 0.95), ("scale", 1.0)], &["freqs", "route", "spread"], "Bank of ringing band-passes at freqs * scale. route = all | random (each impulse excites one, detuned by up to +-spread octaves so drops do not sound like a chime)"),
     ("decay", &[("ms", 5.0)], &[], "Turns impulses into decaying envelopes; multiply with noise for bursts"),
     ("drive", &[("amount", 0.5)], &[], "Soft-clip saturation"),
     ("crush", &[("bits", 8.0), ("downsample", 1.0)], &[], "Bit depth and sample-rate reduction"),
@@ -222,7 +222,7 @@ enum Kind {
     Svf { mode: FilterMode, f: Svf },
     OnePole { high: bool, f: OnePole },
     Comb { line: DelayLine, last: f32, echo: bool },
-    Resonators { f: Vec<Svf>, freqs: Vec<f32>, random: bool, rng: Rng },
+    Resonators { f: Vec<Svf>, freqs: Vec<f32>, random: bool, spread: f32, rng: Rng },
     Decay { env: f32 },
     Drive,
     Crush { hold: f32, count: f32 },
@@ -504,13 +504,20 @@ fn process(kind: &mut Kind, pv: &[f32; 4], x: &[f32], by: &[f32], out: &mut [f32
             }
             *last = target;
         }
-        Kind::Resonators { f, freqs, random, rng } => {
-            for (r, hz) in f.iter_mut().zip(freqs.iter()) {
-                r.set(FilterMode::BandPass, (hz * pv[1]).clamp(20.0, sr * 0.45), pv[0], sr);
+        Kind::Resonators { f, freqs, random, spread, rng } => {
+            // With a spread, resonators are tuned when struck instead of every block.
+            if !*random || *spread <= 0.0 {
+                for (r, hz) in f.iter_mut().zip(freqs.iter()) {
+                    r.set(FilterMode::BandPass, (hz * pv[1]).clamp(20.0, sr * 0.45), pv[0], sr);
+                }
             }
             let norm = 1.0 / (f.len() as f32).sqrt();
             for (o, s) in out.iter_mut().zip(x) {
                 let pick = if *random && *s != 0.0 { rng.next_u32() as usize % f.len() } else { usize::MAX };
+                if pick != usize::MAX && *spread > 0.0 {
+                    let hz = freqs[pick] * pv[1] * (rng.next_bipolar() * *spread).exp2();
+                    f[pick].set(FilterMode::BandPass, hz.clamp(20.0, sr * 0.45), pv[0], sr);
+                }
                 let mut y = 0.0;
                 for (k, r) in f.iter_mut().enumerate() {
                     y += r.tick(if !*random || k == pick { *s } else { 0.0 });
@@ -910,7 +917,12 @@ fn build_node(n: &NodeSpec, inputs: Vec<Source>, by: Vec<Source>, ctx: &mut Ctx,
                 "random" => true,
                 other => return err(format!("{who}: unknown route '{other}' (all, random)")),
             };
-            Kind::Resonators { f: vec![Svf::default(); freqs.len()], freqs, random, rng: Rng::new(seed) }
+            let spread = match n.args.get("spread") {
+                None => 0.0,
+                Some(Arg::Num(v)) if (0.0..=4.0).contains(v) => *v as f32,
+                Some(_) => return err(format!("{who}: spread must be a number of octaves from 0 to 4")),
+            };
+            Kind::Resonators { f: vec![Svf::default(); freqs.len()], freqs, random, spread, rng: Rng::new(seed) }
         }
         "decay" => Kind::Decay { env: 0.0 },
         "drive" => Kind::Drive,

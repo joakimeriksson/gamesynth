@@ -15,7 +15,7 @@ model_params! {
     /// Wind: resonant howl that tracks strength, low rumble, hiss and a gap whistle.
     WindParams / WindParamId {
         howl_hz: "howl/hz" = 520.0, exp(100.0, 4000.0);
-        howl_res: "howl/resonance" = 0.6, lin(0.0, 0.95);
+        howl_res: "howl/resonance" = 0.78, lin(0.0, 0.95);
         howl_level: "howl/level" = 0.7, UNIT;
         gust_rate: "gusts/rate_hz" = 0.25, exp(0.02, 4.0);
         rumble_level: "rumble/level" = 0.5, UNIT;
@@ -86,7 +86,7 @@ impl Generator for Wind {
         self.whistle.set(FilterMode::BandPass, p.whistle_hz * (1.0 + 0.12 * wd) * (0.8 + 0.4 * s), 0.97, sr);
         let t = ((s - 0.45) * 3.0).clamp(0.0, 1.0);
         let whistle_gain = p.whistle_level * t * t * 0.12;
-        let (howl, rumble, hiss) = (p.howl_level * 5.0, p.rumble_level * 2.5, p.hiss_level * 0.35 * s);
+        let (howl, rumble, hiss) = (p.howl_level * 2.3, p.rumble_level * 1.4, p.hiss_level * 0.45 * s);
         let level = s.powf(1.5) * p.gain;
         for o in out.iter_mut() {
             let (w, pk) = (self.noise.white(), self.noise.pink());
@@ -109,7 +109,8 @@ model_params! {
     RainParams / RainParamId {
         density: "drops/per_second" = 900.0, exp(20.0, 6000.0);
         drop_hz: "drops/hz" = 2600.0, exp(500.0, 8000.0);
-        drop_res: "drops/resonance" = 0.93, lin(0.5, 0.99);
+        drop_res: "drops/resonance" = 0.88, lin(0.5, 0.99);
+        drop_spread: "drops/spread_octaves" = 0.7, lin(0.0, 2.0);
         drops_level: "drops/level" = 0.6, UNIT;
         bed_level: "bed/level" = 0.5, UNIT;
         bed_hz: "bed/hz" = 2200.0, exp(400.0, 8000.0);
@@ -119,12 +120,15 @@ model_params! {
     }
 }
 
+const PINGS: usize = 8;
+
 pub struct Rain {
     sr: f32,
     noise: Noise,
     drops: Dust,
     patter: Dust,
-    ping: [Svf; 4],
+    ping: [Svf; PINGS],
+    next_ping: usize,
     roof: [Svf; 2],
     bed: Svf,
     air: OnePole,
@@ -154,7 +158,8 @@ impl Generator for Rain {
             noise: Noise::new(0x51_0001),
             drops: Dust::new(0x51_0002),
             patter: Dust::new(0x51_0003),
-            ping: [Svf::default(); 4],
+            ping: [Svf::default(); PINGS],
+            next_ping: 0,
             roof: [Svf::default(); 2],
             bed: Svf::default(),
             air: OnePole::default(),
@@ -164,20 +169,23 @@ impl Generator for Rain {
     fn block(&mut self, x: &[f32], p: &RainParams, out: &mut [f32]) {
         let sr = self.sr;
         let (i, shelter) = (x[0], x[1]);
-        const RATIOS: [f32; 4] = [0.62, 1.0, 1.37, 1.9];
-        for (f, r) in self.ping.iter_mut().zip(RATIOS) {
-            f.set(FilterMode::BandPass, p.drop_hz * r, p.drop_res, sr);
-        }
         self.roof[0].set(FilterMode::BandPass, p.roof_hz, 0.9, sr);
         self.roof[1].set(FilterMode::BandPass, p.roof_hz * 1.62, 0.9, sr);
         self.bed.set(FilterMode::BandPass, p.bed_hz, 0.15, sr);
         let drop_p = p.density * i * i / sr;
         let patter_p = p.density * 0.2 * i * i * shelter / sr;
         let air_coef = hz_coef(18000.0 + (1200.0 - 18000.0) * shelter, sr);
-        let (drops_gain, bed_gain, roof_gain) = (p.drops_level * 2.0, p.bed_level * i.powf(1.5) * 1.6, p.roof_level * 3.0);
+        let (drops_gain, bed_gain, roof_gain) = (p.drops_level * 2.0, p.bed_level * i.powf(1.5) * 1.6, p.roof_level * 5.0);
         for o in out.iter_mut() {
             let d = self.drops.tick(drop_p);
-            let which = if d > 0.0 { (self.drops.rng().next_u32() % 4) as usize } else { 4 };
+            let mut which = PINGS;
+            if d > 0.0 {
+                // Each drop rings at its own pitch; fixed pitches would sound like a chime.
+                which = self.next_ping;
+                self.next_ping = (self.next_ping + 1) % PINGS;
+                let hz = p.drop_hz * (self.drops.rng().next_bipolar() * p.drop_spread).exp2();
+                self.ping[which].set(FilterMode::BandPass, hz.min(sr * 0.4), p.drop_res, sr);
+            }
             let mut pings = 0.0;
             for (k, f) in self.ping.iter_mut().enumerate() {
                 pings += f.tick(if k == which { d } else { 0.0 });
@@ -296,13 +304,13 @@ impl Generator for Fire {
 model_params! {
     /// Running water as a swarm of bubbles: each is a short sine chirp that rises in pitch.
     StreamParams / StreamParamId {
-        bubble_rate: "bubbles/per_second" = 120.0, exp(5.0, 1500.0);
+        bubble_rate: "bubbles/per_second" = 340.0, exp(5.0, 1500.0);
         bubble_hz: "bubbles/hz" = 1100.0, exp(200.0, 5000.0);
         spread: "bubbles/spread_octaves" = 1.0, lin(0.0, 2.5);
-        rise: "bubbles/rise" = 0.5, UNIT;
-        decay_ms: "bubbles/decay_ms" = 22.0, lin(3.0, 120.0);
+        rise: "bubbles/rise" = 0.35, UNIT;
+        decay_ms: "bubbles/decay_ms" = 9.0, lin(3.0, 120.0);
         bubbles_level: "bubbles/level" = 0.7, UNIT;
-        wash_level: "wash/level" = 0.4, UNIT;
+        wash_level: "wash/level" = 0.55, UNIT;
         wash_hz: "wash/hz" = 1800.0, exp(300.0, 8000.0);
         gain: "master/gain" = 1.0, GAIN;
     }
@@ -317,7 +325,7 @@ struct Bubble {
     decay: f32,
 }
 
-const BUBBLES: usize = 12;
+const BUBBLES: usize = 16;
 
 pub struct Stream {
     sr: f32,
@@ -340,9 +348,9 @@ impl Generator for Stream {
 
     fn presets() -> Vec<(&'static str, StreamParams)> {
         vec![
-            ("Dripping cave", StreamParams { bubble_rate: 9.0, bubble_hz: 1500.0, decay_ms: 60.0, wash_level: 0.05, rise: 0.8, ..Default::default() }),
-            ("River", StreamParams { bubble_rate: 500.0, bubble_hz: 700.0, wash_level: 0.8, wash_hz: 1200.0, ..Default::default() }),
-            ("Bubbling potion", StreamParams { bubble_rate: 40.0, bubble_hz: 420.0, spread: 0.6, rise: 0.9, decay_ms: 45.0, wash_level: 0.1, ..Default::default() }),
+            ("Dripping cave", StreamParams { bubble_rate: 9.0, bubble_hz: 1500.0, decay_ms: 60.0, wash_level: 0.05, rise: 0.8, bubbles_level: 1.0, ..Default::default() }),
+            ("River", StreamParams { bubble_rate: 900.0, bubble_hz: 700.0, wash_level: 0.9, wash_hz: 1200.0, ..Default::default() }),
+            ("Bubbling potion", StreamParams { bubble_rate: 40.0, bubble_hz: 420.0, spread: 0.6, rise: 0.9, decay_ms: 45.0, wash_level: 0.1, bubbles_level: 1.0, ..Default::default() }),
         ]
     }
 
@@ -359,7 +367,7 @@ impl Generator for Stream {
         let rise = (p.rise * 1.2 / (decay_samples * 2.0)).exp2();
         let centre = p.bubble_hz * (-1.5 * size).exp2();
         self.wash.set(FilterMode::BandPass, p.wash_hz * (-size).exp2(), 0.2, sr);
-        let (bubble_gain, wash_gain) = (p.bubbles_level * 0.6, p.wash_level * flow * 2.0);
+        let (bubble_gain, wash_gain) = (p.bubbles_level * 0.45, p.wash_level * (0.3 + 0.7 * flow) * 2.4);
         for o in out.iter_mut() {
             let d = self.dust.tick(bubble_p);
             if d > 0.0 {
@@ -391,7 +399,8 @@ impl Generator for Stream {
 model_params! {
     /// Shoreline surf: two overlapping, slightly irregular wave cycles of swell, crash and foam.
     OceanParams / OceanParamId {
-        period: "waves/period_s" = 9.0, lin(3.0, 24.0);
+        period: "waves/period_s" = 7.0, lin(3.0, 24.0);
+        wash: "waves/background_wash" = 0.3, UNIT;
         irregular: "waves/irregularity" = 0.4, UNIT;
         crash_level: "crash/level" = 0.7, UNIT;
         crash_hz: "crash/hz" = 1800.0, exp(300.0, 6000.0);
@@ -412,7 +421,7 @@ pub struct Ocean {
     noise: Noise,
     brown: Brown,
     rng: Rng,
-    waves: [Wave; 2],
+    waves: [Wave; 3],
     crash: Svf,
     foam: Svf,
     rumble: Svf,
@@ -424,7 +433,7 @@ fn wave_env(phase: f32) -> f32 {
     if phase < 0.35 {
         (phase / 0.35).powf(2.5)
     } else {
-        (-(phase - 0.35) * 5.0).exp()
+        (-(phase - 0.35) * 3.2).exp()
     }
 }
 
@@ -440,7 +449,7 @@ impl Generator for Ocean {
 
     fn presets() -> Vec<(&'static str, OceanParams)> {
         vec![
-            ("Lake shore", OceanParams { period: 4.0, crash_level: 0.4, crash_hz: 2600.0, rumble_level: 0.1, foam_level: 0.5, ..Default::default() }),
+            ("Lake shore", OceanParams { period: 4.0, wash: 0.45, crash_level: 0.4, crash_hz: 2600.0, rumble_level: 0.1, foam_level: 0.5, ..Default::default() }),
             ("Storm surf", OceanParams { period: 12.0, crash_level: 1.0, crash_hz: 1200.0, rumble_level: 0.9, irregular: 0.7, ..Default::default() }),
         ]
     }
@@ -451,7 +460,7 @@ impl Generator for Ocean {
             noise: Noise::new(0x54_0001),
             brown: Brown::default(),
             rng: Rng::new(0x54_0002),
-            waves: [Wave { phase: 0.15, jitter: 1.0 }, Wave { phase: 0.6, jitter: 1.0 }],
+            waves: [Wave { phase: 0.15, jitter: 1.0 }, Wave { phase: 0.6, jitter: 1.0 }, Wave { phase: 0.85, jitter: 1.0 }],
             crash: Svf::default(),
             foam: Svf::default(),
             rumble: Svf::default(),
@@ -462,10 +471,10 @@ impl Generator for Ocean {
     fn block(&mut self, x: &[f32], p: &OceanParams, out: &mut [f32]) {
         let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
         let (size, distance) = (x[0], x[1]);
-        let period = p.period * (0.7 + 0.8 * size);
+        let period = p.period * (0.8 + 0.5 * size);
         let (mut swell, mut fizz) = (0.0, 0.0);
         for (k, w) in self.waves.iter_mut().enumerate() {
-            let (scale, weight) = if k == 0 { (1.0, 1.0) } else { (1.37, 0.6) };
+            let (scale, weight) = [(1.0, 1.0), (1.37, 0.6), (0.73, 0.45)][k];
             w.phase += dt / (period * scale * w.jitter);
             if w.phase >= 1.0 {
                 w.phase -= 1.0;
@@ -474,12 +483,14 @@ impl Generator for Ocean {
             swell += weight * wave_env(w.phase);
             fizz += weight * wave_env((w.phase - 0.08).rem_euclid(1.0)).powf(0.7);
         }
-        let swell = swell.min(1.3);
+        // The sea never goes quiet between breakers.
+        let swell = (p.wash + (1.0 - 0.5 * p.wash) * swell).min(1.3);
+        let fizz = p.wash * 0.6 + fizz;
         self.crash.set(FilterMode::LowPass, 250.0 + p.crash_hz * swell, 0.2, sr);
         self.foam.set(FilterMode::HighPass, 2500.0, 0.1, sr);
         self.rumble.set(FilterMode::LowPass, 90.0, 0.1, sr);
         let far_coef = hz_coef(16000.0 + (1500.0 - 16000.0) * distance, sr);
-        let (crash, foam, rumble) = (p.crash_level * swell * 4.0, p.foam_level * fizz.min(1.3) * 0.35, p.rumble_level * swell * 2.5);
+        let (crash, foam, rumble) = (p.crash_level * swell * 2.8, p.foam_level * fizz.min(1.3) * 0.35, p.rumble_level * swell * 2.5);
         let level = (0.3 + 0.7 * size) * (1.0 - 0.5 * distance) * p.gain;
         for o in out.iter_mut() {
             let w = self.noise.white();

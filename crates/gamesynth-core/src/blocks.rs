@@ -21,6 +21,16 @@ pub fn settle_coef(secs: f32, dt: f32) -> f32 {
     }
 }
 
+/// Scramble a seed so that consecutive seeds (voice 0, 1, 2…) give unrelated streams;
+/// xorshift's first outputs are close to linear in the seed.
+#[inline]
+pub fn mix_seed(seed: u32) -> u32 {
+    let mut x = seed.wrapping_add(0x9E37_79B9);
+    x = (x ^ (x >> 16)).wrapping_mul(0x85EB_CA6B);
+    x = (x ^ (x >> 13)).wrapping_mul(0xC2B2_AE35);
+    x ^ (x >> 16)
+}
+
 /// Poisson impulse generator ("dust"): sparse random impulses at an average rate.
 #[derive(Clone, Copy, Debug)]
 pub struct Dust {
@@ -29,7 +39,7 @@ pub struct Dust {
 
 impl Dust {
     pub fn new(seed: u32) -> Self {
-        Dust { rng: Rng::new(seed) }
+        Dust { rng: Rng::new(mix_seed(seed)) }
     }
 
     /// `p` is the per-sample probability (rate / sample_rate). Returns 0 or an amplitude 0.3..1.
@@ -59,7 +69,7 @@ pub struct SlowNoise {
 
 impl SlowNoise {
     pub fn new(seed: u32) -> Self {
-        let mut rng = Rng::new(seed);
+        let mut rng = Rng::new(mix_seed(seed));
         let (a, b) = (rng.next_bipolar(), rng.next_bipolar());
         SlowNoise { rng, phase: 0.0, a, b }
     }

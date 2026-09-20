@@ -43,6 +43,11 @@ cargo run -p gamesynth-core --example render_sfx --release -- sfx_out 5
 cargo run -p gamesynth-core --example render_models --release -- models_out   # every generator, inputs swept
 ```
 
+To review sounds by eye, `tools/spectrograms.py models_out sheet.png wind_default rain_default …`
+renders log-frequency spectrograms with an RMS trace (needs matplotlib and scipy). Fixed
+horizontal stripes mean a tonal, chime-like sound; black vertical gaps mean dropouts; a
+saturated bottom edge means too much sub.
+
 ## Godot
 
 Build the extension, then open `godot/` in Godot 4.7:

@@ -34,7 +34,7 @@ r1 = "min(rpm, 1)"
 f0 = "whine_hz * rpm * (1 + 0.01 * noise(3))"
 roar_cut = "roar_hz * exp2(2 * (rpm - 1))"
 body = "0.35 + 0.65 * r1"
-turbulence = "1 + rumble * 0.5 * noise(14)"
+turbulence = "1 + rumble * 0.3 * noise(14)"
 
 [graph]
 nodes = [
