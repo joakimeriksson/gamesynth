@@ -151,3 +151,77 @@ macro_rules! param_table {
         }
     };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Runtime descriptors and the one-declaration model parameter macro
+// ---------------------------------------------------------------------------------------------
+
+/// Runtime description of one parameter. Static tables ([`Params`]) and file-defined models
+/// both produce these, so bindings need a single code path for inspectors and tooling.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParamDesc {
+    pub name: String,
+    pub kind: ParamKind,
+    pub default: f32,
+}
+
+/// Descriptors for every parameter of a static table, in table order.
+pub fn describe<P: Params>() -> Vec<ParamDesc> {
+    let d = P::default();
+    P::ALL
+        .iter()
+        .map(|&id| ParamDesc { name: P::param_name(id).to_string(), kind: P::param_kind(id), default: d.get_param(id) })
+        .collect()
+}
+
+/// Linear float parameter.
+pub const fn lin(min: f32, max: f32) -> ParamKind {
+    ParamKind::Float { min, max, step: 0.001 }
+}
+
+/// Exponential (log slider) float parameter, e.g. frequencies and rates.
+pub const fn exp(min: f32, max: f32) -> ParamKind {
+    ParamKind::Exp { min, max }
+}
+
+/// Integer parameter (stored as f32).
+pub const fn int(min: i32, max: i32) -> ParamKind {
+    ParamKind::Int { min, max }
+}
+
+/// 0..1 parameter.
+pub const UNIT: ParamKind = lin(0.0, 1.0);
+/// Output gain 0..2.
+pub const GAIN: ParamKind = lin(0.0, 2.0);
+
+/// Declare an all-`f32` parameter struct, its defaults and its parameter table in one go:
+///
+/// ```ignore
+/// model_params! {
+///     /// docs
+///     WindParams / WindParamId {
+///         howl_hz: "howl/hz" = 600.0, exp(100.0, 4000.0);
+///         gain: "master/gain" = 0.8, GAIN;
+///     }
+/// }
+/// ```
+macro_rules! model_params {
+    ($(#[$meta:meta])* $name:ident / $id_ty:ident {
+        $( $field:ident : $pname:literal = $default:expr, $kind:expr ; )*
+    }) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub struct $name { $( pub $field: f32, )* }
+
+        impl Default for $name {
+            fn default() -> Self { $name { $( $field: $default, )* } }
+        }
+
+        param_table! {
+            #[allow(non_camel_case_types)]
+            $id_ty for $name { $( $field => $pname, $kind, ($field); )* }
+        }
+    };
+}

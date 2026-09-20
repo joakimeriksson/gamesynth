@@ -1,0 +1,32 @@
+[model]
+name = "shield"
+category = "scifi"
+doc = "Energy shield: detuned hum and glassy shimmer through a slow flanger; `hit` flares it."
+
+[inputs]
+power = { default = 0.6, doc = "Shield strength" }
+hit = { default = 0.0, doc = "Set to 1 briefly on impact; flares up fast and rings out", smooth = 0.0 }
+
+[params]
+hum_hz = { default = 82, min = 30, max = 400, scale = "exp", group = "hum" }
+shimmer_hz = { default = 2100, min = 500, max = 8000, scale = "exp", group = "shimmer" }
+shimmer_level = { default = 0.5, min = 0, max = 1, group = "shimmer" }
+flare_s = { default = 0.6, min = 0.05, max = 3, group = "hit" }
+gain = { default = 0.9, min = 0, max = 2, group = "master" }
+
+[signals]
+flare = "slew(hit, 0.01, flare_s)"
+f = "hum_hz * (1 + 0.5 * flare)"
+
+[graph]
+nodes = [
+  { id = "s1", type = "saw", freq = "f" },
+  { id = "s2", type = "saw", freq = "f * 1.007" },
+  { id = "sub", type = "sine", freq = "f * 0.5" },
+  { id = "core", type = "svf", mode = "lowpass", in = ["s1", "s2"], cutoff = "400 + 3000 * power + 4000 * flare", resonance = 0.4 },
+  { id = "white", type = "noise" },
+  { id = "shimmer", type = "resonators", in = ["white"], freqs = [1.0, 1.5, 2.25, 3.1], scale = "shimmer_hz * (1 + 0.2 * noise(0.4))", resonance = 0.97 },
+  { id = "sweep", type = "comb", in = [{ from = "core", gain = 0.3 }, { from = "sub", gain = 0.4 }, { from = "shimmer", gain = "shimmer_level * 0.05" }], ms = "2 + 1.5 * lfo(0.13)", feedback = 0.7, mix = 0.6 },
+  { id = "out", type = "gain", in = ["sweep"], gain = "gain * power * (1 + 1.5 * flare) * 0.6" },
+]
+out = "out"

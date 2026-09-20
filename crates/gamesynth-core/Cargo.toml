@@ -8,10 +8,14 @@ license.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+toml = { version = "1", features = ["preserve_order"], optional = true }
+indexmap = { version = "2", features = ["serde"], optional = true }
 
 [features]
-default = ["serde"]
+default = ["serde", "graph"]
 serde = ["dep:serde", "dep:serde_json"]
+# File-defined models (TOML/JSON -> DSP graph). Slower than the native generators.
+graph = ["serde", "dep:toml", "dep:indexmap"]
 
 [dev-dependencies]
 hound = "3"

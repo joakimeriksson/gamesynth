@@ -1,0 +1,40 @@
+[model]
+name = "rain_on_tent"
+category = "nature"
+doc = "Rain heard from inside a tent: drops on taut fabric, a soft bed outside, canvas flapping in wind."
+
+[inputs]
+intensity = { default = 0.5, doc = "Drizzle to downpour" }
+wind = { default = 0.2, doc = "Flaps the canvas" }
+
+[params]
+density = { default = 900, min = 20, max = 6000, scale = "exp", group = "drops" }
+drop_hz = { default = 2600, min = 500, max = 8000, scale = "exp", group = "drops" }
+fabric_hz = { default = 380, min = 100, max = 1500, scale = "exp", group = "tent" }
+fabric_level = { default = 0.7, min = 0, max = 1, group = "tent" }
+bed_level = { default = 0.5, min = 0, max = 1, group = "bed" }
+gain = { default = 1.0, min = 0, max = 2, group = "master" }
+
+[signals]
+rate = "density * pow(intensity, 2)"
+flap = "0.5 + 0.5 * noise(0.7 + 3 * wind)"
+
+[graph]
+nodes = [
+  { id = "drops", type = "dust", rate = "rate" },
+  { id = "ping", type = "resonators", in = ["drops"], freqs = [0.62, 1.0, 1.37, 1.9], scale = "drop_hz", resonance = 0.93, route = "random" },
+  { id = "patter", type = "dust", rate = "rate * 0.25" },
+  { id = "fabric", type = "resonators", in = ["patter"], freqs = [1.0, 1.62, 2.4], scale = "fabric_hz", resonance = 0.9, route = "random" },
+  { id = "pink", type = "noise", color = "pink" },
+  { id = "bed", type = "svf", mode = "bandpass", in = ["pink"], cutoff = 2200, resonance = 0.15 },
+  { id = "muffle", type = "lowpass", in = [{ from = "ping", gain = 2.0 }, { from = "bed", gain = "bed_level * pow(intensity, 1.5) * 0.6" }], cutoff = 3500 },
+  { id = "brown", type = "noise", color = "brown" },
+  { id = "canvas", type = "svf", mode = "lowpass", in = ["brown"], cutoff = "120 + 300 * wind", resonance = 0.3 },
+  { id = "out", type = "gain", gain = "gain * 1.8", in = ["muffle", { from = "fabric", gain = "fabric_level * 4" }, { from = "canvas", gain = "wind * flap * 1.5" }] },
+]
+out = "out"
+
+[presets.heavy_canvas]
+fabric_hz = 220
+fabric_level = 0.9
+drop_hz = 1800

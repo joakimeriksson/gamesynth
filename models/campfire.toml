@@ -1,0 +1,40 @@
+[model]
+name = "campfire"
+category = "nature"
+doc = "Crackling campfire: sparks are dust impulses shaped into short noise bursts."
+
+[inputs]
+intensity = { default = 0.5, doc = "Embers to blaze" }
+
+[params]
+crackle_rate = { default = 30, min = 1, max = 400, scale = "exp", group = "crackle" }
+crackle_hz = { default = 2800, min = 600, max = 8000, scale = "exp", group = "crackle" }
+crackle_ms = { default = 4, min = 0.5, max = 40, group = "crackle" }
+roar_hz = { default = 220, min = 60, max = 1200, scale = "exp", group = "roar" }
+roar_level = { default = 0.6, min = 0, max = 1, group = "roar" }
+gain = { default = 1.0, min = 0, max = 2, group = "master" }
+
+[signals]
+flutter = "1 + 0.4 * noise(6)"
+colour = "crackle_hz * exp2(0.8 * noise(30))"
+sparks_rate = "crackle_rate * (0.15 + 0.85 * intensity)"
+
+[graph]
+nodes = [
+  { id = "white", type = "noise" },
+  { id = "brown", type = "noise", color = "brown" },
+  { id = "sparks", type = "dust", rate = "sparks_rate" },
+  { id = "env", type = "decay", in = ["sparks"], ms = "crackle_ms" },
+  { id = "burst", type = "mul", in = ["white"], by = ["env"] },
+  { id = "crack", type = "svf", mode = "bandpass", in = ["burst"], cutoff = "colour", resonance = 0.5 },
+  { id = "pops", type = "dust", rate = "sparks_rate * 0.08" },
+  { id = "pop", type = "resonators", in = ["pops"], freqs = [260], resonance = 0.85 },
+  { id = "roar", type = "svf", mode = "lowpass", in = ["brown"], cutoff = "roar_hz * (0.6 + 0.9 * intensity)", resonance = 0.25 },
+  { id = "hiss", type = "svf", mode = "highpass", in = ["white"], cutoff = 4000, resonance = 0.1 },
+  { id = "out", type = "gain", gain = "gain", in = [
+      { from = "crack", gain = 4.0 },
+      { from = "pop", gain = 3.0 },
+      { from = "roar", gain = "roar_level * intensity * flutter * 2.5" },
+      { from = "hiss", gain = "0.06 * intensity" } ] },
+]
+out = "out"

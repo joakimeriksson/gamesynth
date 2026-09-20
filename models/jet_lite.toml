@@ -1,0 +1,77 @@
+# Graph version of the native `jet` generator. Same idea (whine + roar through a tube comb,
+# afterburner, wind), defined entirely in this file. Compare with crates/gamesynth-core/src/jet.rs.
+[model]
+name = "jet_lite"
+category = "vehicles"
+doc = "Turbine engine built from graph nodes: spool inertia, whine, roar, tube resonance, afterburner."
+
+[inputs]
+throttle = { default = 0.0, doc = "RPM follows with spool inertia", smooth = 0.0 }
+boost = { default = 0.0, doc = "Afterburner" }
+speed = { default = 0.0, doc = "Airspeed, drives the wind layer" }
+
+[params]
+spool_up = { default = 1.2, min = 0.05, max = 10, group = "spool" }
+spool_down = { default = 2.0, min = 0.05, max = 10, group = "spool" }
+idle_rpm = { default = 0.28, min = 0.05, max = 0.9, group = "spool" }
+boost_rpm = { default = 1.25, min = 1, max = 2, group = "spool" }
+whine_hz = { default = 2600, min = 100, max = 8000, scale = "exp", group = "whine" }
+whine_level = { default = 0.2, min = 0, max = 1, group = "whine" }
+roar_hz = { default = 900, min = 60, max = 6000, scale = "exp", group = "roar" }
+roar_res = { default = 0.45, min = 0, max = 0.95, group = "roar" }
+roar_level = { default = 0.8, min = 0, max = 1, group = "roar" }
+rumble = { default = 0.5, min = 0, max = 1, group = "roar" }
+tube_ms = { default = 3.6, min = 0.5, max = 30, group = "tube" }
+tube_feedback = { default = 0.55, min = 0, max = 0.9, group = "tube" }
+hiss_level = { default = 0.25, min = 0, max = 1, group = "layers" }
+burner_level = { default = 0.8, min = 0, max = 1, group = "layers" }
+wind_level = { default = 0.4, min = 0, max = 1, group = "layers" }
+gain = { default = 0.7, min = 0, max = 2, group = "master" }
+
+[signals]
+rpm = "slew((idle_rpm + (1 - idle_rpm) * throttle) * (1 + (boost_rpm - 1) * boost), spool_up, spool_down)"
+r1 = "min(rpm, 1)"
+f0 = "whine_hz * rpm * (1 + 0.01 * noise(3))"
+roar_cut = "roar_hz * exp2(2 * (rpm - 1))"
+body = "0.35 + 0.65 * r1"
+turbulence = "1 + rumble * 0.5 * noise(14)"
+
+[graph]
+nodes = [
+  { id = "w1", type = "sine", freq = "f0" },
+  { id = "w2", type = "sine", freq = "f0 * 1.004" },
+  { id = "w3", type = "sine", freq = "f0 * 2" },
+  { id = "shaft", type = "sine", freq = "f0 * 0.5" },
+  { id = "whine", type = "mix", in = ["w1", { from = "w2", gain = 0.7 }, { from = "w3", gain = 0.3 }, { from = "shaft", gain = 0.35 }] },
+  { id = "pink", type = "noise", color = "pink" },
+  { id = "white", type = "noise" },
+  { id = "roar_lp", type = "svf", mode = "lowpass", in = ["pink"], cutoff = "roar_cut", resonance = "roar_res" },
+  { id = "roar_bp", type = "svf", mode = "bandpass", in = ["white"], cutoff = "roar_cut * 2.5", resonance = 0.3 },
+  { id = "roar", type = "drive", in = ["roar_lp", { from = "roar_bp", gain = 0.5 }], amount = "0.1 + 0.13 * boost" },
+  { id = "bus", type = "mix", in = [{ from = "whine", gain = "whine_level * body * 0.5" }, { from = "roar", gain = "roar_level * body * turbulence" }] },
+  { id = "tube", type = "comb", in = ["bus"], ms = "tube_ms / (0.6 + 0.4 * min(rpm, 1.5))", feedback = "tube_feedback", mix = 0.5 },
+  { id = "hiss", type = "svf", mode = "highpass", in = ["white"], cutoff = 5000, resonance = 0.1 },
+  { id = "burn_hp", type = "svf", mode = "highpass", in = ["white"], cutoff = 250 },
+  { id = "burn_drive", type = "drive", in = ["burn_hp"], amount = 0.3 },
+  { id = "thrum", type = "sine", freq = 38 },
+  { id = "one", type = "dc", value = 0.6 },
+  { id = "burner", type = "mul", in = ["burn_drive"], by = ["one", { from = "thrum", gain = 0.4 }] },
+  { id = "wind", type = "svf", mode = "bandpass", in = ["white"], cutoff = "1500 * (0.5 + 0.9 * speed)", resonance = 0.25 },
+  { id = "out", type = "gain", gain = "gain", in = [
+      "tube",
+      { from = "hiss", gain = "hiss_level * r1 * r1 * 0.5" },
+      { from = "burner", gain = "burner_level * boost * 0.5" },
+      { from = "wind", gain = "wind_level * speed * speed * 2.5" } ] },
+]
+out = "out"
+
+[presets.heavy]
+spool_up = 2.6
+spool_down = 3.5
+idle_rpm = 0.22
+whine_hz = 1400
+whine_level = 0.14
+roar_hz = 480
+roar_res = 0.6
+tube_ms = 7.5
+tube_feedback = 0.65

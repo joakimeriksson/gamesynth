@@ -1,0 +1,20 @@
+[model]
+name = "geiger"
+category = "signals"
+doc = "Geiger counter: random clicks whose rate follows radiation."
+
+[inputs]
+radiation = { default = 0.2, doc = "Background to lethal", smooth = 0.1 }
+
+[params]
+max_rate = { default = 400, min = 10, max = 3000, scale = "exp", group = "clicks" }
+tick_hz = { default = 2500, min = 800, max = 8000, scale = "exp", group = "clicks" }
+gain = { default = 1.0, min = 0, max = 2, group = "master" }
+
+[graph]
+nodes = [
+  { id = "clicks", type = "dust", rate = "lerp(0.5, max_rate, pow(radiation, 2))" },
+  { id = "tick", type = "resonators", in = ["clicks"], freqs = [1.0, 1.64], scale = "tick_hz", resonance = 0.6 },
+  { id = "out", type = "gain", gain = "gain", in = [{ from = "tick", gain = 2.5 }, { from = "clicks", gain = 0.5 }] },
+]
+out = "out"

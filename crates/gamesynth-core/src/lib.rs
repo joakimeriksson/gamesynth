@@ -17,12 +17,17 @@
 #[macro_use]
 pub mod params;
 
+pub mod blocks;
 pub mod effects;
+pub mod generators;
+#[cfg(feature = "graph")]
+pub mod graph;
 pub mod jet;
 pub mod env;
 pub mod filter;
 pub mod lfo;
 pub mod math;
+pub mod model;
 pub mod noise;
 pub mod osc;
 pub mod patch;
@@ -37,7 +42,10 @@ pub use lfo::{LfoParams, LfoWave};
 pub use math::Rng;
 pub use osc::Waveform;
 pub use jet::{JetCommand, JetEngine, JetParamId, JetParams, JetPreset};
-pub use params::{ParamKind, ParamValue, Params};
+#[cfg(feature = "graph")]
+pub use graph::{GraphModel, ModelError};
+pub use model::{Generator, InputDesc, Model, ModelDesc, Native, PresetDesc};
+pub use params::{ParamDesc, ParamKind, ParamValue, Params};
 pub use patch::{FilterParams, FxParams, OscParams, ParamId, Patch, PitchParams};
 pub use sfx::SfxPreset;
 pub use synth::{Command, StereoFrame, Synth, MAX_BLOCK, MAX_VOICES};
