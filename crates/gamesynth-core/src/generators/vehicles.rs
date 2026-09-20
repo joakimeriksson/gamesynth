@@ -287,7 +287,7 @@ impl Generator for Combustion {
         let pop_p = 40.0 * overrun / sr;
         let drive = 1.0 + p.drive * 5.0;
         let intake_gain = p.intake_level * (0.2 + 0.8 * throttle) * 1.5;
-        let level = (0.35 + 0.65 * load.max(throttle * 0.5)) * (0.7 + 0.6 * rev) * p.gain * 1.6;
+        let level = (0.35 + 0.65 * load.max(throttle * 0.5)) * (0.7 + 0.6 * rev) * p.gain * 1.1;
         for s in out.iter_mut() {
             if self.fire.tick(inc) {
                 self.cyl = (self.cyl + 1) % n_cyl;

@@ -26,7 +26,7 @@ tube_feedback = { default = 0.55, min = 0, max = 0.9, group = "tube" }
 hiss_level = { default = 0.25, min = 0, max = 1, group = "layers" }
 burner_level = { default = 0.8, min = 0, max = 1, group = "layers" }
 wind_level = { default = 0.4, min = 0, max = 1, group = "layers" }
-gain = { default = 0.7, min = 0, max = 2, group = "master" }
+gain = { default = 0.55, min = 0, max = 2, group = "master" }
 
 [signals]
 rpm = "slew((idle_rpm + (1 - idle_rpm) * throttle) * (1 + (boost_rpm - 1) * boost), spool_up, spool_down)"

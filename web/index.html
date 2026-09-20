@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GameSynth Sound Lab</title>
-<meta name="description" content="Procedural game audio for a Wipeout-style racer: jet engines, sfxr-style sound effects and a playable synth, all running the Rust gamesynth engine as WebAssembly in your browser. Tune and export JSON for Godot.">
+<meta name="description" content="Procedural game audio: jet engines, a library of sound generators (wind, rain, fire, engines, crowds...) you can also define in config files, sfxr-style sound effects and a playable synth, all running the Rust gamesynth engine as WebAssembly in your browser. Tune and export JSON for Godot.">
 <meta property="og:title" content="GameSynth Sound Lab">
 <meta property="og:description" content="Rust game-audio synth compiled to WebAssembly: engines, sound effects, instruments.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -14,7 +14,8 @@
     --text: #E8ECF1; --muted: #8593A5; --readout: #BFD8E6;
     --accent: #FF6A1F; --accent-dim: #7A3A18; --accent-glow: rgba(255,106,31,0.28);
     --sfx: #5BD1C8; --sfx-dim: rgba(91,209,200,0.18); --inst: #C9A0FF; --inst-dim: rgba(201,160,255,0.18);
-    --ok: #7BC67E; --warn: #E0B341;
+    --gen: #8FD16A; --gen-dim: rgba(143,209,106,0.18);
+    --ok: #7BC67E; --warn: #E0B341; --bad: #FF7A6B;
     --display: "Saira Condensed", "Barlow Condensed", "Arial Narrow", sans-serif;
     --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
     --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
@@ -38,6 +39,8 @@
   .tab-btn { border: 0; background: transparent; border-radius: 4px; padding: 7px 16px; cursor: pointer; color: var(--muted);
     font-family: var(--display); font-size: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
   .tab-btn::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--line); }
+  .tab-btn[data-k="models"]::before { background: var(--gen-dim); }
+  .tab-btn[aria-selected="true"][data-k="models"]::before { background: var(--gen); }
   .tab-btn[data-k="engines"]::before { background: var(--accent-dim); } .tab-btn[data-k="sfx"]::before { background: var(--sfx-dim); } .tab-btn[data-k="inst"]::before { background: var(--inst-dim); }
   .tab-btn[aria-selected="true"] { background: var(--panel-2); color: var(--text); }
   .tab-btn[aria-selected="true"][data-k="engines"]::before { background: var(--accent); }
@@ -116,7 +119,7 @@
   .export { display: flex; flex-direction: column; gap: 10px; }
   .export .btn { text-align: left; }
   .export p { margin: 0; font-size: 12px; color: var(--muted); }
-  pre.snip { margin: 0; background: var(--ground); border: 1px solid var(--line-soft); border-radius: 4px; padding: 8px 10px; font-family: var(--mono); font-size: 11px; color: var(--readout); white-space: pre-wrap; word-break: break-all; }
+  pre.snip { margin: 0; background: var(--ground); border: 1px solid var(--line-soft); border-radius: 4px; padding: 8px 10px; font-family: var(--mono); font-size: 11px; color: var(--readout); white-space: pre; overflow-x: auto; }
 
   /* ---- instrument ---- */
   .inst-top { display: grid; grid-template-columns: 1fr 300px; gap: 14px; }
@@ -125,6 +128,36 @@
   .inst-ctl .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .bend { display: grid; grid-template-columns: 60px 1fr 44px; gap: 8px; align-items: center; }
   .bend .val { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--readout); }
+
+  /* ---- generators ---- */
+  .gen-grid { display: grid; grid-template-columns: 250px 1fr 270px; gap: 14px; align-items: stretch; }
+  .lib { display: flex; flex-direction: column; gap: 2px; max-height: 470px; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
+  .lib h3 { margin: 10px 0 4px; font-family: var(--display); font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  .lib h3:first-child { margin-top: 0; }
+  .lib-item { border: 1px solid transparent; background: transparent; border-radius: 4px; padding: 5px 8px; cursor: pointer; text-align: left; display: flex; align-items: baseline; gap: 8px;
+    font-family: var(--display); font-size: 17px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text); }
+  .lib-item:hover { background: var(--panel-2); }
+  .lib-item[data-active="true"] { background: var(--panel-2); border-color: var(--line); box-shadow: inset 3px 0 0 var(--gen); }
+  .badge { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: var(--muted); font-weight: 400; }
+  .badge.graph { color: var(--gen); border-color: var(--gen-dim); }
+  .gen-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .gen-head .title { font-family: var(--display); font-size: 24px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1; }
+  .gen-head .doc { color: var(--muted); font-size: 12px; flex: 1 1 260px; }
+  .gen-inputs { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .gen-inputs .ctl { grid-template-columns: 110px 1fr 44px; }
+  .gen-inputs input[type="range"]::-webkit-slider-thumb { background: var(--gen); }
+  .gen-inputs input[type="range"]::-moz-range-thumb { background: var(--gen); }
+  .editor { display: grid; grid-template-columns: 1fr 300px; gap: 14px; margin-top: 16px; }
+  .editor textarea { width: 100%; min-height: 380px; resize: vertical; background: var(--ground); color: var(--text); border: 1px solid var(--line-soft); border-radius: 4px; padding: 10px 12px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.5; tab-size: 2; white-space: pre; overflow: auto; }
+  .editor textarea:focus { outline: none; border-color: var(--gen); }
+  .status { font-family: var(--mono); font-size: 12px; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--line-soft); background: var(--ground); color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+  .status[data-state="ok"] { color: var(--ok); }
+  .status[data-state="error"] { color: var(--bad); border-color: var(--bad); }
+  .noderef { max-height: 380px; overflow-y: auto; font-size: 12px; }
+  .noderef dt { font-family: var(--mono); color: var(--gen); margin-top: 8px; }
+  .noderef dt span { color: var(--muted); }
+  .noderef dd { margin: 1px 0 0; color: var(--muted); }
 
   /* ---- tuning ---- */
   .tune-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -143,12 +176,14 @@
   .note { color: var(--muted); font-size: 12px; }
 
   @media (max-width: 960px) {
-    .hero, .sfx-grid { grid-template-columns: 1fr 1fr; }
+    .hero, .sfx-grid, .gen-grid { grid-template-columns: 1fr 1fr; }
+    .gen-grid .gen-main { grid-column: 1 / -1; order: 3; }
+    .editor { grid-template-columns: 1fr; }
     .hero .scope-panel, .sfx-grid .wave-panel { grid-column: 1 / -1; order: 3; }
     .inst-top { grid-template-columns: 1fr; }
   }
   @media (max-width: 620px) {
-    .hero, .sfx-grid { grid-template-columns: 1fr; }
+    .hero, .sfx-grid, .gen-grid { grid-template-columns: 1fr; }
     .brand h1 { font-size: 22px; }
     .tab-btn { padding: 7px 10px; font-size: 14px; }
   }
@@ -161,6 +196,7 @@
     <div class="brand"><h1>Sound Lab</h1><span class="sub">GameSynth · Rust → WebAssembly</span></div>
     <div class="tabs" role="tablist" aria-label="Sound categories">
       <button class="tab-btn" role="tab" data-k="engines" aria-selected="true" aria-controls="tab-engines">Engines</button>
+      <button class="tab-btn" role="tab" data-k="models" aria-selected="false" aria-controls="tab-models">Generators</button>
       <button class="tab-btn" role="tab" data-k="sfx" aria-selected="false" aria-controls="tab-sfx">Sound FX</button>
       <button class="tab-btn" role="tab" data-k="inst" aria-selected="false" aria-controls="tab-inst">Instrument</button>
     </div>
@@ -201,6 +237,57 @@
       <button id="jet-copy" class="btn">Copy JSON for Godot</button>
     </div>
     <div class="groups" id="jet-groups" style="margin-top:12px"></div>
+  </section>
+
+  <!-- ============================ GENERATORS ============================ -->
+  <section id="tab-models" class="tab" role="tabpanel" hidden>
+    <div class="gen-grid">
+      <div class="panel">
+        <h2>Library</h2>
+        <div class="lib" id="gen-lib"></div>
+      </div>
+      <div class="panel gen-main">
+        <div class="gen-head"><span class="title" id="gen-title">–</span><span class="badge" id="gen-engine">native</span><span class="doc" id="gen-doc"></span></div>
+        <canvas id="gen-spectrum" class="scope" width="1100" height="400" style="height:200px"></canvas>
+        <div class="scope-foot"><span>50 Hz</span><span>200</span><span>1k</span><span>5k</span><span>16 kHz</span></div>
+        <div class="gen-inputs" id="gen-inputs"></div>
+      </div>
+      <div class="panel export">
+        <h2>Preset</h2>
+        <select id="gen-preset" aria-label="Preset"></select>
+        <h2 style="margin-top:6px">Use in Godot</h2>
+        <pre class="snip" id="gen-snip"></pre>
+        <button id="gen-copy-gd" class="btn small">Copy GDScript</button>
+        <button id="gen-copy-params" class="btn small">Copy params JSON</button>
+        <p><kbd>Space</kbd> snaps inertia to the current inputs. Inputs are what your game sets every frame; params are what a designer tunes once.</p>
+      </div>
+    </div>
+
+    <div id="gen-editor" hidden>
+      <div class="tune-head" style="margin-top:16px">
+        <h2>Model file</h2>
+        <p>This sound is defined entirely by the text below (TOML or JSON): inputs, params, control formulas and a graph of nodes. Edit and compile; it costs roughly 2.5x a native generator.</p>
+        <div class="spacer"></div>
+        <button id="gen-revert" class="btn">Revert</button>
+        <button id="gen-copy-src" class="btn">Copy file</button>
+        <button id="gen-compile" class="btn primary" style="padding:7px 16px">Compile <kbd style="margin-left:6px;color:#140A04;background:transparent;border-color:#140A04">Ctrl ↵</kbd></button>
+      </div>
+      <div class="editor">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <textarea id="gen-src" spellcheck="false" aria-label="Model file source"></textarea>
+          <div class="status" id="gen-status" data-state="idle">Not compiled yet.</div>
+        </div>
+        <div class="panel"><h2>Node reference</h2><dl class="noderef" id="gen-noderef"></dl></div>
+      </div>
+    </div>
+
+    <div class="tune-head" style="margin-top:16px">
+      <h2>Tuning</h2>
+      <p>Designer parameters with their ranges, straight from the engine. Same names in Godot: <code>gen.set_param("howl/hz", 800)</code>.</p>
+      <div class="spacer"></div>
+      <button id="gen-reset" class="btn">Reset to preset</button>
+    </div>
+    <div class="groups" id="gen-groups" style="margin-top:12px"></div>
   </section>
 
   <!-- ============================ SOUND FX ============================ -->
@@ -310,21 +397,28 @@
     const h = { kind, gain, analyser, tele: {}, send() {} };
     if (host.worklet) {
       const node = new AudioWorkletNode(ctx, "gs-engine", { outputChannelCount: [2], processorOptions: { module: host.module, kind, ...opts } });
-      node.port.onmessage = e => { if (e.data.ready) h.onready && h.onready(); else h.tele = e.data; };
+      node.port.onmessage = e => { if (e.data.ready) h.onready && h.onready(); else if (e.data.modelError) console.warn("[lab] model error in worklet:", e.data.modelError); else if (!e.data.modelReady) h.tele = e.data; };
       h.send = m => node.port.postMessage(m);
       node.connect(gain);
     } else {
       // ScriptProcessor fallback: render on the main thread with a private engine.
       const w = (await WebAssembly.instantiate(host.module, {})).exports;
-      const e = kind === "jet" ? w.jet_new(ctx.sampleRate, opts.preset | 0) : w.synth_new(ctx.sampleRate), buf = w.gs_alloc_f32(4096);
+      const put = (text, fn) => { const b = new TextEncoder().encode(text), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); const r = fn(p, b.length); w.gs_free_u8(p, b.length); return r; };
+      const makeModel = spec => spec.config != null ? put(spec.config, (p, n) => w.model_from_config(p, n, ctx.sampleRate)) : put(spec.name, (p, n) => w.model_new(p, n, ctx.sampleRate));
+      let e = kind === "jet" ? w.jet_new(ctx.sampleRate, opts.preset | 0) : kind === "model" ? makeModel(opts.model) : w.synth_new(ctx.sampleRate);
+      const buf = w.gs_alloc_f32(4096);
       const str = len => new TextDecoder().decode(new Uint8Array(w.memory.buffer, w.gs_str_ptr(), len));
       h.send = m => {
         const J = (json, fn) => { const b = new TextEncoder().encode(json), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); fn(p, b.length); w.gs_free_u8(p, b.length); };
-        if (kind === "jet") { ({ ctl: () => w.jet_set_controls(e, m.throttle, m.boost, m.speed, m.damage), preset: () => w.jet_set_preset(e, m.index), param: () => w.jet_set_param(e, m.index, m.value), snap: () => w.jet_snap_rpm(e), gain: () => w.jet_set_master_gain(e, m.gain), json: () => J(m.json, (p, n) => w.jet_from_json(e, p, n)) })[m.t]?.(); }
+        if (kind === "model") {
+          if (m.t === "input") w.model_set_input(e, m.index, m.value); else if (m.t === "param") w.model_set_param(e, m.index, m.value);
+          else if (m.t === "preset") w.model_load_preset(e, m.index); else if (m.t === "snap") w.model_snap(e);
+          else if (m.t === "model") { const next = makeModel(m.model); if (next) { w.model_free(e); e = next; (m.inputs || []).forEach((v, i) => w.model_set_input(e, i, v)); (m.params || []).forEach((v, i) => w.model_set_param(e, i, v)); w.model_snap(e); } }
+        } else if (kind === "jet") { ({ ctl: () => w.jet_set_controls(e, m.throttle, m.boost, m.speed, m.damage), preset: () => w.jet_set_preset(e, m.index), param: () => w.jet_set_param(e, m.index, m.value), snap: () => w.jet_snap_rpm(e), gain: () => w.jet_set_master_gain(e, m.gain), json: () => J(m.json, (p, n) => w.jet_from_json(e, p, n)) })[m.t]?.(); }
         else { ({ trigger: () => w.synth_trigger(e), noteon: () => w.synth_note_on(e, m.note, m.velocity ?? 1), noteoff: () => w.synth_note_off(e, m.note), play: () => w.synth_play(e, m.note, m.velocity ?? 1, m.duration || 0), alloff: () => w.synth_all_notes_off(e), panic: () => w.synth_panic(e), sfx: () => w.synth_load_sfx(e, m.preset, m.seed >>> 0), mutate: () => w.synth_mutate(e, m.amount, m.seed >>> 0), reset: () => w.synth_reset_patch(e), param: () => w.synth_set_param(e, m.index, m.value), bend: () => w.synth_set_pitch_bend(e, m.bend), gain: () => w.synth_set_master_gain(e, m.gain), json: () => J(m.json, (p, n) => w.synth_from_json(e, p, n)) })[m.t]?.(); }
       };
       const sp = ctx.createScriptProcessor(2048, 0, 2);
-      sp.onaudioprocess = ev => { const l = ev.outputBuffer.getChannelData(0); if (kind === "jet") w.jet_render(e, buf, l.length); else w.synth_render(e, buf, l.length); l.set(new Float32Array(w.memory.buffer, buf, l.length)); ev.outputBuffer.getChannelData(1).set(l); h.tele = kind === "jet" ? { rpm: w.jet_rpm(e), peak: w.jet_peak(e) } : { peak: w.synth_peak(e), voices: w.synth_active_voices(e) }; };
+      sp.onaudioprocess = ev => { const l = ev.outputBuffer.getChannelData(0); if (kind === "jet") w.jet_render(e, buf, l.length); else if (kind === "model") w.model_render(e, buf, l.length); else w.synth_render(e, buf, l.length); l.set(new Float32Array(w.memory.buffer, buf, l.length)); ev.outputBuffer.getChannelData(1).set(l); h.tele = kind === "jet" ? { rpm: w.jet_rpm(e), peak: w.jet_peak(e) } : kind === "model" ? { peak: w.model_peak(e) } : { peak: w.synth_peak(e), voices: w.synth_active_voices(e) }; };
       sp.connect(gain); void str;
       setTimeout(() => h.onready && h.onready(), 0);
     }
@@ -333,7 +427,10 @@
   }
 
   // ================================================================== tuning UI
-  const GROUP_LABEL = { spool: "Spool", whine: "Turbine whine", roar: "Core roar", tube: "Tube resonance", hiss: "Intake hiss", burner: "Afterburner", wind: "Wind", master: "Master",
+  const GROUP_LABEL = { spool: "Spool", whine: "Turbine whine", roar: "Core roar", tube: "Tube resonance", hiss: "Hiss", burner: "Afterburner", wind: "Wind", master: "Master",
+    core: "Core", field: "Field", strain: "Strain", engine: "Engine", exhaust: "Exhaust", intake: "Intake", motor: "Motor", inverter: "Inverter", gears: "Gears", rotor: "Rotor", wash: "Downwash", turbine: "Turbine",
+    howl: "Howl", gusts: "Gusts", rumble: "Rumble", whistle: "Whistle", drops: "Drops", bed: "Bed", roof: "Roof", crackle: "Crackle", bubbles: "Bubbles", waves: "Waves", crash: "Crash", foam: "Foam",
+    hum: "Hum", arcs: "Arcs", drone: "Drone", air: "Air", murmur: "Murmur", cheer: "Cheer", clicks: "Clicks", siren: "Siren", horn: "Horn", tuning: "Tuning", tent: "Tent", hit: "Hit", layers: "Layers", pipe: "Pipe", shimmer: "Shimmer",
     osc1: "Oscillator 1", osc2: "Oscillator 2", osc3: "Oscillator 3", amp_env: "Amp envelope", filter: "Filter", filter_env: "Filter envelope", lfo: "LFO", pitch: "Pitch", fx: "Effects" };
   const toSlider = (p, v) => p.kind === "exp" ? Math.log(v / p.min) / Math.log(p.max / p.min) : (v - p.min) / (p.max - p.min);
   const fromSlider = (p, t) => p.kind === "exp" ? p.min * Math.pow(p.max / p.min, t) : p.min + (p.max - p.min) * t;
@@ -465,6 +562,109 @@
       $("s-roar").textContent = d.roarCut ? Math.round(d.roarCut) + " Hz" : "–";
       $("s-tube").textContent = d.tubeMs ? d.tubeMs.toFixed(2) + " ms" : "–";
     }
+    return { init, attach, key, frame, node: () => node };
+  })();
+
+  // ================================================================== GENERATORS tab
+  tabs.models = (() => {
+    let lib = null, node = null, mirror = 0, desc = null, refresh = () => {};
+    let current = { kind: "native", name: "wind" }, inputs = [], presetIndex = 0, sources = {};
+    const send = m => node && node.send(m);
+    const spec = () => current.kind === "native" ? { name: current.name } : { config: sources[current.name] };
+    const make = sp => sp.config != null ? withJson(sp.config, (p, n) => host.w.model_from_config(p, n, 48000)) : withJson(sp.name, (p, n) => host.w.model_new(p, n, 48000));
+    const lastError = () => readStr(host.w.gs_str_len());
+    const params = () => desc.params.map(p => host.w.model_get_param(mirror, p.index));
+
+    function snippet() {
+      const lines = current.kind === "native"
+        ? [`var gen := SoundGenerator.new()`, `gen.generator = "${current.name}"`]
+        : [`var gen := SoundGenerator.new()`, `gen.config_file = "res://sounds/${current.name}.toml"`];
+      if (presetIndex > 0) lines.push(`gen.preset = "${desc.presets[presetIndex].name}"`);
+      lines.push(`player.stream = gen`, `player.play()`, ``, `# every frame:`, `var pb := player.get_stream_playback() as SoundGeneratorPlayback`);
+      desc.inputs.forEach(i => lines.push(`pb.set_input("${i.name}", ${i.name})`));
+      return lines.join("\n");
+    }
+    function setStatus(state, msg) { const el = $("gen-status"); el.dataset.state = state; el.textContent = msg; }
+
+    // Rebuild everything that depends on the model's description.
+    function adopt(handle, keepInputs) {
+      if (mirror) host.w.model_free(mirror);
+      mirror = handle;
+      const old = keepInputs && desc ? Object.fromEntries(desc.inputs.map((d, i) => [d.name, inputs[i]])) : {};
+      desc = JSON.parse(readStr(host.w.model_desc_json(mirror)));
+      inputs = desc.inputs.map(d => old[d.name] ?? d.default);
+      inputs.forEach((v, i) => host.w.model_set_input(mirror, i, v));
+      presetIndex = 0;
+      $("gen-title").textContent = desc.name.replace(/_/g, " ");
+      $("gen-doc").textContent = desc.doc;
+      const badge = $("gen-engine"); badge.textContent = desc.engine === "graph" ? "model file" : "native"; badge.className = "badge" + (desc.engine === "graph" ? " graph" : "");
+      const sel = $("gen-preset"); sel.innerHTML = ""; desc.presets.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = p.name; sel.appendChild(o); });
+      const box = $("gen-inputs"); box.innerHTML = "";
+      desc.inputs.forEach((d, i) => {
+        const row = document.createElement("div"); row.className = "ctl";
+        const name = document.createElement("div"); name.className = "name"; name.innerHTML = `${d.name}<small></small>`; name.querySelector("small").textContent = d.doc;
+        const input = document.createElement("input"); input.type = "range"; input.min = "0"; input.max = "1"; input.step = "0.001"; input.value = inputs[i]; input.setAttribute("aria-label", d.name);
+        const val = document.createElement("div"); val.className = "val"; val.textContent = Math.round(inputs[i] * 100) + "%";
+        input.addEventListener("input", () => { inputs[i] = +input.value; val.textContent = Math.round(inputs[i] * 100) + "%"; host.w.model_set_input(mirror, i, inputs[i]); send({ t: "input", index: i, value: inputs[i] }); ensureAudio(); });
+        row.append(name, input, val); box.appendChild(row);
+      });
+      refresh = buildTuning($("gen-groups"), desc.params, i => host.w.model_get_param(mirror, i), (i, v) => { host.w.model_set_param(mirror, i, v); send({ t: "param", index: i, value: v }); });
+      $("gen-snip").textContent = snippet();
+    }
+    function select(entry) {
+      const handle = make(entry.kind === "native" ? { name: entry.name } : { config: sources[entry.name] });
+      if (!handle) { toast("Could not load " + entry.name + ": " + lastError()); return; }
+      current = entry;
+      adopt(handle, false);
+      document.querySelectorAll("#gen-lib .lib-item").forEach(b => b.dataset.active = b.dataset.key === entry.kind + ":" + entry.name);
+      $("gen-editor").hidden = entry.kind !== "file";
+      if (entry.kind === "file") { $("gen-src").value = sources[entry.name]; setStatus("ok", `Compiled: ${desc.inputs.length} inputs, ${desc.params.length} params.`); }
+      send({ t: "model", model: spec(), inputs, params: params() });
+      try { localStorage.setItem("gs-lab-model", entry.kind + ":" + entry.name); } catch {}
+    }
+    function compile() {
+      const text = $("gen-src").value;
+      const handle = make({ config: text });
+      if (!handle) { setStatus("error", lastError()); return; }
+      sources[current.name] = text;
+      adopt(handle, true);
+      setStatus("ok", `Compiled: ${desc.inputs.length} inputs, ${desc.params.length} params. Playing the new version.`);
+      send({ t: "model", model: { config: text }, inputs, params: params() });
+      ensureAudio();
+    }
+
+    function init() {
+      lib = JSON.parse(readStr(host.w.model_library_json()));
+      lib.examples.forEach(e => { sources[e.name] = e.text; });
+      const root = $("gen-lib"), cats = {};
+      lib.models.forEach(m => (cats[m.category] ||= []).push(m));
+      const item = (entry, label, title, graph) => { const b = document.createElement("button"); b.className = "lib-item"; b.dataset.key = entry.kind + ":" + entry.name; b.title = title; b.textContent = label; if (graph) { const s = document.createElement("span"); s.className = "badge graph"; s.textContent = "file"; b.appendChild(s); } b.addEventListener("click", () => { select(entry); ensureAudio(); }); root.appendChild(b); };
+      for (const c in cats) { const h = document.createElement("h3"); h.textContent = c; root.appendChild(h); cats[c].forEach(m => item({ kind: "native", name: m.name }, m.name, m.doc, false)); }
+      const h = document.createElement("h3"); h.textContent = "From model files"; root.appendChild(h);
+      lib.examples.forEach(e => item({ kind: "file", name: e.name }, e.name.replace(/_/g, " "), "Defined by a TOML file; open to edit", true));
+      const ref = $("gen-noderef");
+      lib.nodes.forEach(n => { const dt = document.createElement("dt"); dt.textContent = n.type + " "; const sp = document.createElement("span"); sp.textContent = [...n.params.map(p => p.default == null ? p.name : `${p.name}=${p.default}`), ...n.args].join("  "); dt.appendChild(sp); const dd = document.createElement("dd"); dd.textContent = n.doc; ref.append(dt, dd); });
+      const fn = document.createElement("dt"); fn.textContent = "formulas"; const fd = document.createElement("dd"); fd.textContent = "+ - * / ^ < >  abs sqrt exp exp2 ln sin cos floor db midi min max pow clamp lerp select smoothstep · stateful: slew(x, up_s, down_s) lag(x, s) noise(hz) sh(hz) lfo(hz) ramp(hz) · names: your inputs, params, signals, sr, pi"; ref.append(fn, fd);
+
+      $("gen-preset").addEventListener("change", e => { presetIndex = +e.target.value; host.w.model_load_preset(mirror, presetIndex); refresh(); send({ t: "preset", index: presetIndex }); $("gen-snip").textContent = snippet(); ensureAudio(); });
+      $("gen-reset").addEventListener("click", () => { host.w.model_load_preset(mirror, presetIndex); refresh(); send({ t: "preset", index: presetIndex }); });
+      $("gen-copy-gd").addEventListener("click", () => copy(snippet(), "GDScript copied"));
+      $("gen-copy-params").addEventListener("click", () => copy(JSON.stringify(Object.fromEntries(desc.params.map(p => [p.name, +host.w.model_get_param(mirror, p.index).toPrecision(6)])), null, 2), "Params copied — paste into gen.set_params_json()"));
+      $("gen-copy-src").addEventListener("click", () => copy($("gen-src").value, "Model file copied — save it as res://sounds/" + current.name + ".toml"));
+      $("gen-compile").addEventListener("click", compile);
+      $("gen-revert").addEventListener("click", () => { const ex = lib.examples.find(e => e.name === current.name); if (ex) { $("gen-src").value = ex.text; compile(); } });
+      $("gen-src").addEventListener("keydown", e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); compile(); }
+        else if (e.key === "Tab") { e.preventDefault(); const t = e.target, a = t.selectionStart; t.setRangeText("  ", a, t.selectionEnd, "end"); }
+      });
+      let saved = null; try { saved = localStorage.getItem("gs-lab-model"); } catch {}
+      const [k, n] = (saved || "native:wind").split(":");
+      const known = k === "file" ? lib.examples.some(e => e.name === n) : lib.models.some(m => m.name === n);
+      select(known ? { kind: k, name: n } : { kind: "native", name: "wind" });
+    }
+    async function attach() { node = await makeNode("model", { model: spec() }); node.onready = () => { inputs.forEach((v, i) => send({ t: "input", index: i, value: v })); params().forEach((v, i) => send({ t: "param", index: i, value: v })); send({ t: "snap" }); }; }
+    function key(e, down) { if (down && e.key === " ") { send({ t: "snap" }); toast("Snapped to current inputs"); return true; } return false; }
+    function frame() { drawSpectrum($("gen-spectrum"), node && node.analyser, css("--gen")); }
     return { init, attach, key, frame, node: () => node };
   })();
 
@@ -626,7 +826,7 @@
   function setActive(k) {
     host.active = k;
     document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", b.dataset.k === k));
-    for (const t of ["engines", "sfx", "inst"]) { $("tab-" + t).hidden = t !== k; const n = tabs[t].node(); if (n && host.ctx) n.gain.gain.setTargetAtTime(t === k ? 1 : 0, host.ctx.currentTime, 0.02); }
+    for (const t of ["engines", "models", "sfx", "inst"]) { $("tab-" + t).hidden = t !== k; const n = tabs[t].node(); if (n && host.ctx) n.gain.gain.setTargetAtTime(t === k ? 1 : 0, host.ctx.currentTime, 0.02); }
     try { localStorage.setItem("gs-lab-tab", k); } catch {}
   }
   document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => { if (host.active === "inst") tabs.inst.allOff(); setActive(b.dataset.k); }));

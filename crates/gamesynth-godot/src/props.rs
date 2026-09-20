@@ -6,22 +6,25 @@ use godot::builtin::VariantType;
 use godot::prelude::*;
 use godot::register::info::{PropertyHint, PropertyHintInfo, PropertyInfo, PropertyUsageFlags};
 
+/// Inspector property for one parameter: range slider, exp slider, int or enum dropdown.
+pub fn param_property(name: &str, kind: ParamKind) -> PropertyInfo {
+    let (variant_type, hint, hint_string) = match kind {
+        ParamKind::Float { min, max, step } => (VariantType::FLOAT, PropertyHint::RANGE, format!("{min},{max},{step}")),
+        ParamKind::Exp { min, max } => (VariantType::FLOAT, PropertyHint::RANGE, format!("{min},{max},0.01,exp")),
+        ParamKind::Int { min, max } => (VariantType::INT, PropertyHint::RANGE, format!("{min},{max},1")),
+        ParamKind::Enum(names) => (VariantType::INT, PropertyHint::ENUM, names.join(",")),
+    };
+    PropertyInfo {
+        variant_type,
+        class_name: StringName::default(),
+        property_name: name.into(),
+        hint_info: PropertyHintInfo { hint, hint_string: GString::from(&hint_string) },
+        usage: PropertyUsageFlags::DEFAULT,
+    }
+}
+
 pub fn param_properties<P: Params>() -> impl Iterator<Item = PropertyInfo> {
-    P::ALL.iter().map(|&id| {
-        let (variant_type, hint, hint_string) = match P::param_kind(id) {
-            ParamKind::Float { min, max, step } => (VariantType::FLOAT, PropertyHint::RANGE, format!("{min},{max},{step}")),
-            ParamKind::Exp { min, max } => (VariantType::FLOAT, PropertyHint::RANGE, format!("{min},{max},0.01,exp")),
-            ParamKind::Int { min, max } => (VariantType::INT, PropertyHint::RANGE, format!("{min},{max},1")),
-            ParamKind::Enum(names) => (VariantType::INT, PropertyHint::ENUM, names.join(",")),
-        };
-        PropertyInfo {
-            variant_type,
-            class_name: StringName::default(),
-            property_name: P::param_name(id).into(),
-            hint_info: PropertyHintInfo { hint, hint_string: GString::from(&hint_string) },
-            usage: PropertyUsageFlags::DEFAULT,
-        }
-    })
+    P::ALL.iter().map(|&id| param_property(P::param_name(id), P::param_kind(id)))
 }
 
 /// Current value of a named parameter as a Variant, or `None` if `name` is not a parameter.
@@ -56,7 +59,7 @@ pub fn param_names<P: Params>() -> PackedStringArray {
     P::ALL.iter().map(|&id| GString::from(P::param_name(id))).collect()
 }
 
-fn to_variant(kind: ParamKind, value: f32) -> Variant {
+pub fn to_variant(kind: ParamKind, value: f32) -> Variant {
     match kind {
         ParamKind::Int { .. } | ParamKind::Enum(_) => (value.round() as i64).to_variant(),
         _ => (value as f64).to_variant(),
@@ -78,6 +81,27 @@ pub fn enum_property(name: &str, names: &[&str]) -> PropertyInfo {
         class_name: StringName::default(),
         property_name: name.into(),
         hint_info: PropertyHintInfo { hint: PropertyHint::ENUM, hint_string: GString::from(&names.join(",")) },
+        usage: PropertyUsageFlags::DEFAULT,
+    }
+}
+
+/// A String property with an inspector hint (enum dropdown, file picker, multiline text).
+pub fn string_property(name: &str, hint: PropertyHint, hint_string: &str) -> PropertyInfo {
+    PropertyInfo {
+        variant_type: VariantType::STRING,
+        class_name: StringName::default(),
+        property_name: name.into(),
+        hint_info: PropertyHintInfo { hint, hint_string: hint_string.into() },
+        usage: PropertyUsageFlags::DEFAULT,
+    }
+}
+
+pub fn bool_property(name: &str) -> PropertyInfo {
+    PropertyInfo {
+        variant_type: VariantType::BOOL,
+        class_name: StringName::default(),
+        property_name: name.into(),
+        hint_info: PropertyHintInfo { hint: PropertyHint::NONE, hint_string: GString::new() },
         usage: PropertyUsageFlags::DEFAULT,
     }
 }

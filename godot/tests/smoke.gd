@@ -124,5 +124,70 @@ func _init() -> void:
 	jpb.stop()
 	_check(not jpb.is_playing(), "engine stopped")
 
+	print("SoundGenerator")
+	_check(ClassDB.class_exists("SoundGenerator"), "class registered")
+	var gen_names := SoundGenerator.get_generator_names()
+	_check(gen_names.size() >= 15, "generator library: %d" % gen_names.size())
+	var silent := []
+	for gname in gen_names:
+		var g := SoundGenerator.create(gname)
+		var gpb := g.instantiate_playback() as SoundGeneratorPlayback
+		if gpb == null or g.get_error() != "":
+			silent.append(gname + " (no playback)")
+			continue
+		for input_name in gpb.get_input_names():
+			gpb.set_input(input_name, 1.0)
+		gpb.start(0.0)
+		gpb.snap()
+		gpb.mix_audio(1.0, 24000)
+		var gen_peak := _peak(gpb.mix_audio(1.0, 48000 * 3))
+		if gen_peak < 0.02 or gen_peak > 1.0:
+			silent.append("%s (peak %.3f)" % [gname, gen_peak])
+	_check(silent.is_empty(), "every generator sounds and stays bounded %s" % [silent])
+
+	var wind_gen := SoundGenerator.new()
+	_check(wind_gen.generator == "wind" and wind_gen.is_native(), "defaults to native wind")
+	_check(wind_gen.get_input_names() == PackedStringArray(["strength", "gustiness"]), "input names %s" % [wind_gen.get_input_names()])
+	_check(wind_gen.get("howl/hz") == 520.0, "params are inspector properties")
+	wind_gen.set("howl/hz", 99999.0)
+	_check(wind_gen.get_param("howl/hz") == 4000.0, "param set via property is clamped")
+	wind_gen.preset = "Blizzard"
+	_check(wind_gen.get_param("howl/hz") == 800.0, "preset applied")
+	_check(not wind_gen.set_param("nope/x", 1.0), "unknown param rejected")
+	var wpb := wind_gen.instantiate_playback() as SoundGeneratorPlayback
+	wpb.start(0.0)
+	wpb.set_inputs({"strength": 1.0, "gustiness": 0.0})
+	wpb.snap()
+	wpb.mix_audio(1.0, 4096)
+	var loud_peak := _peak(wpb.mix_audio(1.0, 48000))
+	wind_gen.set_param("master/gain", 0.0)
+	wpb.mix_audio(1.0, 4096)
+	_check(loud_peak > 0.05 and _peak(wpb.mix_audio(1.0, 4096)) == 0.0, "live param edit reaches the running playback (%.3f -> 0)" % loud_peak)
+	_check(not wpb.set_input("nope", 1.0) and wpb.get_input_index("strength") == 0, "input lookup")
+	var round_trip := SoundGenerator.create("wind")
+	_check(round_trip.set_params_json(wind_gen.get_params_json()) and round_trip.get_param("howl/hz") == 800.0, "params json round trip")
+
+	var model_path := ProjectSettings.globalize_path("res://").path_join("../models/campfire.toml")
+	var fire_gen := SoundGenerator.from_file(model_path)
+	_check(fire_gen.get_error() == "" and not fire_gen.is_native(), "model file loads as a graph model %s" % fire_gen.get_error())
+	_check(fire_gen.get_input_names() == PackedStringArray(["intensity"]), "file-defined inputs")
+	_check(fire_gen.get("crackle/crackle_rate") == 30.0, "file-defined params in the inspector")
+	var fpb := fire_gen.instantiate_playback() as SoundGeneratorPlayback
+	fpb.start(0.0)
+	fpb.set_input("intensity", 1.0)
+	fpb.mix_audio(1.0, 24000)
+	_check(_peak(fpb.mix_audio(1.0, 48000)) > 0.05, "file-defined model sounds")
+
+	var inline_gen := SoundGenerator.new()
+	inline_gen.config = "[params]\nhz = { default = 440, min = 100, max = 2000 }\n[graph]\nnodes = [{ id = \"o\", type = \"sine\", freq = \"hz\" }, { id = \"g\", type = \"gain\", in = [\"o\"], gain = 0.5 }]\nout = \"g\""
+	_check(inline_gen.get_error() == "" and inline_gen.get_param_names() == PackedStringArray(["tuning/hz"]), "inline config %s" % inline_gen.get_error())
+	var ipb2 := inline_gen.instantiate_playback()
+	ipb2.start(0.0)
+	_check(absf(_peak(ipb2.mix_audio(1.0, 4800)) - 0.5) < 0.01, "inline sine at the configured level")
+	print("  (the next two errors are expected)")
+	inline_gen.config = "[graph]\nnodes = [{ id = \"o\", type = \"wobble\" }]\nout = \"o\""
+	_check(inline_gen.get_error().contains("unknown type 'wobble'"), "bad config reports: %s" % inline_gen.get_error().left(48))
+	_check(inline_gen.instantiate_playback() == null, "bad config yields no playback instead of crashing")
+
 	print("Result: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)

@@ -57,6 +57,12 @@ pub unsafe extern "C" fn gs_free_u8(p: *mut u8, n: u32) {
     }
 }
 
+/// Length in bytes of the string buffer (for calls that report errors through it).
+#[no_mangle]
+pub extern "C" fn gs_str_len() -> u32 {
+    OUT.with(|o| o.borrow().len() as u32)
+}
+
 /// Pointer to the string produced by the most recent `gs_meta_json` / `jet_to_json` call.
 #[no_mangle]
 pub extern "C" fn gs_str_ptr() -> *const u8 {
@@ -65,24 +71,28 @@ pub extern "C" fn gs_str_ptr() -> *const u8 {
 
 // --- metadata ---------------------------------------------------------------------------
 
-fn describe<P: gamesynth_core::Params>() -> Vec<serde_json::Value> {
-    P::ALL
+fn params_json(params: &[gamesynth_core::ParamDesc]) -> Vec<serde_json::Value> {
+    params
         .iter()
         .enumerate()
-        .map(|(i, &id)| {
-            let (kind, min, max, step, names) = match P::param_kind(id) {
+        .map(|(i, p)| {
+            let (kind, min, max, step, names) = match p.kind {
                 ParamKind::Float { min, max, step } => ("float", min, max, step, None),
                 ParamKind::Exp { min, max } => ("exp", min, max, 0.0, None),
                 ParamKind::Int { min, max } => ("int", min as f32, max as f32, 1.0, None),
                 ParamKind::Enum(names) => ("enum", 0.0, (names.len() - 1) as f32, 1.0, Some(names)),
             };
-            let mut v = json!({ "index": i, "name": P::param_name(id), "kind": kind, "min": min, "max": max, "step": step });
+            let mut v = json!({ "index": i, "name": p.name, "kind": kind, "min": min, "max": max, "step": step, "default": p.default });
             if let Some(n) = names {
                 v["names"] = json!(n);
             }
             v
         })
         .collect()
+}
+
+fn describe<P: gamesynth_core::Params>() -> Vec<serde_json::Value> {
+    params_json(&gamesynth_core::params::describe::<P>())
 }
 
 /// Writes `{"version", "params": [jet params], "presets": [jet presets],
@@ -352,4 +362,135 @@ pub unsafe extern "C" fn synth_from_json(s: *mut Synth, ptr: *const u8, len: u32
         }
         None => 0,
     }
+}
+
+// =========================================================================================
+// Sound models: native generators and file-defined graphs behind one interface
+// =========================================================================================
+
+use gamesynth_core::{generators, GraphModel, Model, ModelDesc};
+
+/// Handle type: a thin pointer to a boxed trait object.
+pub type ModelHandle = *mut Box<dyn Model>;
+
+const EXAMPLES: &[(&str, &str)] = &[
+    ("jet_lite", include_str!("../../../models/jet_lite.toml")),
+    ("rain_on_tent", include_str!("../../../models/rain_on_tent.toml")),
+    ("campfire", include_str!("../../../models/campfire.toml")),
+    ("shield", include_str!("../../../models/shield.toml")),
+    ("geiger", include_str!("../../../models/geiger.toml")),
+    ("steam_vent", include_str!("../../../models/steam_vent.toml")),
+];
+
+fn desc_json(d: &ModelDesc) -> serde_json::Value {
+    json!({
+        "name": d.name,
+        "category": d.category,
+        "doc": d.doc,
+        "engine": d.engine,
+        "inputs": d.inputs.iter().enumerate().map(|(i, x)| json!({ "index": i, "name": x.name, "default": x.default, "doc": x.doc })).collect::<Vec<_>>(),
+        "params": params_json(&d.params),
+        "presets": d.presets.iter().map(|p| json!({ "name": p.name, "values": p.values })).collect::<Vec<_>>(),
+    })
+}
+
+unsafe fn text<'a>(ptr: *const u8, len: u32) -> &'a str {
+    std::str::from_utf8(std::slice::from_raw_parts(ptr, len as usize)).unwrap_or("")
+}
+
+/// `{"models": [desc..], "examples": [{name, text}..], "nodes": [{type, params, args, doc}..]}`
+/// into the string buffer; returns its length.
+#[no_mangle]
+pub extern "C" fn model_library_json() -> u32 {
+    let nodes: Vec<_> = gamesynth_core::graph::node_library()
+        .iter()
+        .map(|(ty, params, args, doc)| {
+            let params: Vec<_> = params.iter().map(|(n, d)| json!({ "name": n, "default": if d.is_nan() { serde_json::Value::Null } else { json!(d) } })).collect();
+            json!({ "type": ty, "params": params, "args": args, "doc": doc })
+        })
+        .collect();
+    set_out(
+        json!({
+            "models": generators::describe_all().iter().map(desc_json).collect::<Vec<_>>(),
+            "examples": EXAMPLES.iter().map(|(n, t)| json!({ "name": n, "text": t })).collect::<Vec<_>>(),
+            "nodes": nodes,
+        })
+        .to_string(),
+    )
+}
+
+/// Create a native generator by name. Returns null for an unknown name.
+#[no_mangle]
+pub unsafe extern "C" fn model_new(name: *const u8, len: u32, sample_rate: f32) -> ModelHandle {
+    match generators::create(text(name, len), sample_rate) {
+        Some(m) => Box::into_raw(Box::new(m)),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Compile a TOML/JSON model file. Returns null on error and leaves the message in the
+/// string buffer (`gs_str_ptr` / `gs_str_len`).
+#[no_mangle]
+pub unsafe extern "C" fn model_from_config(config: *const u8, len: u32, sample_rate: f32) -> ModelHandle {
+    match GraphModel::from_text(text(config, len), sample_rate) {
+        Ok(m) => {
+            set_out(String::new());
+            Box::into_raw(Box::new(Box::new(m) as Box<dyn Model>))
+        }
+        Err(e) => {
+            set_out(e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn model_free(m: ModelHandle) {
+    if !m.is_null() {
+        drop(Box::from_raw(m));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn model_desc_json(m: ModelHandle) -> u32 {
+    set_out(desc_json((*m).desc()).to_string())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn model_set_input(m: ModelHandle, index: u32, value: f32) {
+    (*m).set_input(index as usize, value);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn model_set_param(m: ModelHandle, index: u32, value: f32) {
+    (*m).set_param(index as usize, value);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn model_get_param(m: ModelHandle, index: u32) -> f32 {
+    (*m).param(index as usize)
+}
+
+/// Returns 1 if the preset exists.
+#[no_mangle]
+pub unsafe extern "C" fn model_load_preset(m: ModelHandle, index: u32) -> u32 {
+    (*m).load_preset(index as usize) as u32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn model_snap(m: ModelHandle) {
+    (*m).snap();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn model_render(m: ModelHandle, out: *mut f32, frames: u32) {
+    if m.is_null() || out.is_null() || frames == 0 {
+        return;
+    }
+    (*m).render_mono(std::slice::from_raw_parts_mut(out, frames as usize));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn model_peak(m: ModelHandle) -> f32 {
+    (*m).peak()
 }

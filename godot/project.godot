@@ -17,4 +17,4 @@ driver/output_latency=10
 [display]
 
 window/size/viewport_width=900
-window/size/viewport_height=560
+window/size/viewport_height=800

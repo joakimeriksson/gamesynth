@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
-toml = { version = "1", features = ["preserve_order"], optional = true }
+toml = { version = "1", default-features = false, features = ["std", "serde", "parse", "preserve_order"], optional = true }
 indexmap = { version = "2", features = ["serde"], optional = true }
 
 [features]

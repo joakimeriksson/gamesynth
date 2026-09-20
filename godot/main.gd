@@ -7,6 +7,8 @@ extends Control
 ## send note_on / note_off to its SynthStreamPlayback.
 ## Jet engine: one JetEngineStream driven every frame from sliders / keys (Up = throttle,
 ## Shift = boost), the way a ship script would from its physics state.
+## Generators: any SoundGenerator (built-in library or a model file); its input sliders are
+## built from the stream's own description.
 
 const KEYS := {
 	KEY_A: 60, KEY_W: 61, KEY_S: 62, KEY_E: 63, KEY_D: 64, KEY_F: 65, KEY_T: 66,
@@ -29,6 +31,10 @@ var _jet_damage: HSlider
 var _jet_rpm: Label
 var _key_throttle := false
 var _key_boost := false
+
+var _gen_player: AudioStreamPlayer
+var _gen_inputs: VBoxContainer
+var _gen_info: Label
 
 
 func _ready() -> void:
@@ -137,6 +143,30 @@ func _ready() -> void:
 	_jet_speed = _add_plain_slider(root, "Speed", 0.0)
 	_jet_damage = _add_plain_slider(root, "Damage", 0.0)
 
+	# --- Generators ----------------------------------------------------------------------
+	root.add_child(HSeparator.new())
+	var gen_row := HBoxContainer.new()
+	root.add_child(gen_row)
+	var gen_title := Label.new()
+	gen_title.text = "Generators:"
+	gen_row.add_child(gen_title)
+	var gen_pick := OptionButton.new()
+	gen_pick.add_item("(off)")
+	for gen_name in SoundGenerator.get_generator_names():
+		gen_pick.add_item(gen_name)
+	gen_pick.add_item("file: ../models/shield.toml")
+	gen_row.add_child(gen_pick)
+	_gen_info = Label.new()
+	_gen_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_gen_info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	gen_row.add_child(_gen_info)
+	_gen_player = AudioStreamPlayer.new()
+	_gen_player.volume_db = -6.0
+	add_child(_gen_player)
+	_gen_inputs = VBoxContainer.new()
+	root.add_child(_gen_inputs)
+	gen_pick.item_selected.connect(func(i: int) -> void: _select_generator(gen_pick.get_item_text(i)))
+
 
 func _add_slider(parent: Control, label: String, param: String, lo: float, hi: float, exp: bool) -> void:
 	var row := HBoxContainer.new()
@@ -171,6 +201,33 @@ func _add_plain_slider(parent: Control, label: String, value: float) -> HSlider:
 	s.custom_minimum_size.x = 400
 	row.add_child(s)
 	return s
+
+
+func _select_generator(choice: String) -> void:
+	_gen_player.stop()
+	for child in _gen_inputs.get_children():
+		child.queue_free()
+	_gen_info.text = ""
+	if choice == "(off)":
+		return
+	var gen: SoundGenerator
+	if choice.begins_with("file: "):
+		gen = SoundGenerator.from_file(ProjectSettings.globalize_path("res://").path_join(choice.trim_prefix("file: ")))
+	else:
+		gen = SoundGenerator.create(choice)
+	if gen.get_error() != "":
+		_gen_info.text = "  " + gen.get_error()
+		return
+	_gen_info.text = "  %s  [%s]" % [gen.get_description(), "native" if gen.is_native() else "model file"]
+	_gen_player.stream = gen
+	_gen_player.play()
+	# One slider per input the model declares; this is all a game has to drive.
+	for input_name in gen.get_input_names():
+		var slider := _add_plain_slider(_gen_inputs, input_name.capitalize(), gen.get_input_default(input_name))
+		slider.value_changed.connect(func(v: float) -> void:
+			var pb := _gen_player.get_stream_playback() as SoundGeneratorPlayback
+			if pb:
+				pb.set_input(input_name, v))
 
 
 var _octave := 0

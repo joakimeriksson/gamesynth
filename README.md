@@ -5,10 +5,11 @@ GDExtension. One engine covers both **procedural sound effects** (sfxr-style, se
 no audio files) and **playable instruments** (polyphonic subtractive synth).
 
 ```
-crates/gamesynth-core    pure Rust DSP (synth voice, SFX presets, jet engine), #![forbid(unsafe_code)]
+crates/gamesynth-core    pure Rust DSP (synth voice, SFX presets, generator library, graph models), #![forbid(unsafe_code)]
 crates/gamesynth-godot   GDExtension: SynthPatch (Resource), SynthStream (AudioStream)
 crates/gamesynth-wasm    C-ABI WebAssembly build of the jet engine (no bindgen)
 godot/                   demo project
+models/                  sound generators defined as TOML files (format: models/README.md)
 web/                     Sound Lab: browser test stand running the wasm build (GitHub Pages)
 ```
 
@@ -39,6 +40,7 @@ Audition without Godot (writes WAVs):
 
 ```
 cargo run -p gamesynth-core --example render_sfx --release -- sfx_out 5
+cargo run -p gamesynth-core --example render_models --release -- models_out   # every generator, inputs swept
 ```
 
 ## Godot
@@ -121,6 +123,37 @@ func _physics_process(_dt):
 class. Audition offline: `cargo run -p gamesynth-core --example render_jet --release -- jet_out`
 renders an idle → full → boost → damaged spool-down sequence per preset.
 
+### Generators: wind, rain, fire, engines, crowds…
+
+Every continuous sound shares one shape: **inputs** your game sets each frame (0..1 game
+state) and **params** a designer tunes (ranges, presets, inspector sliders). There are two
+tiers behind the same `SoundGenerator` class:
+
+| Tier | What | Cost |
+|---|---|---|
+| **Native** (15) | `jet` `hover` `combustion` `motor` `rotor` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`, each with presets (V8 muscle, Tin roof, Force field, Police yelp…) | all 15 at once use a fraction of one core |
+| **Model files** | your own, as TOML/JSON: a graph of nodes plus control formulas. See [`models/README.md`](models/README.md) and the examples in `models/` | about 2.5x a native generator |
+
+```gdscript
+var gen := SoundGenerator.create("combustion")       # or SoundGenerator.from_file("res://sounds/shield.toml")
+gen.preset = "V8 muscle"
+player.stream = gen                                   # AudioStreamPlayer / 2D / 3D
+player.play()
+
+func _physics_process(_dt):
+    var pb := player.get_stream_playback() as SoundGeneratorPlayback
+    pb.set_inputs({"throttle": throttle, "load": load})
+```
+
+`gen.get_input_names()` tells you what a model wants; params appear in the inspector under
+their groups and reach running playbacks live. Start from a native generator; move to a
+model file when you need something the library does not have; ask for a native port if a
+file model ends up on many simultaneous emitters.
+
+In Rust both tiers are a `Box<dyn Model>`: `generators::create("rain", sr)` or
+`GraphModel::from_text(toml, sr)`, then `set_input` / `render_mono`. Adding a native
+generator is one `model_params!` table plus a `Generator::block` function.
+
 ### Classes
 
 | Class | Base | Purpose |
@@ -131,6 +164,8 @@ renders an idle → full → boost → damaged spool-down sequence per preset.
 | `JetEnginePatch` | `Resource` | Engine parameters; `from_preset`, `apply_preset`, `to_json`/`from_json`, `set_param`/`get_param` |
 | `JetEngineStream` | `AudioStream` | `patch`, `initial_throttle`, `start_spooled`; `from_preset(name)` |
 | `JetEnginePlayback` | `AudioStreamPlayback` | `set_throttle`, `set_boost`, `set_speed`, `set_damage`, `set_state`, `snap_rpm`, `set_param`, `set_patch`, `set_master_gain`, `get_rpm`, `get_peak` |
+| `SoundGenerator` | `AudioStream` | `generator`, `config_file`, `config`, `preset`, `start_snapped`, params as properties; `create`, `from_file`, `get_generator_names`, `get_input_names`, `get_input_default`, `get_param_names`, `get_preset_names`, `set_param`/`get_param`, `get_params_json`/`set_params_json`, `get_error`, `is_native` |
+| `SoundGeneratorPlayback` | `AudioStreamPlayback` | `set_input`, `set_inputs`, `set_input_index`, `get_input_index`, `get_input_names`, `set_param`, `load_preset`, `snap`, `get_peak` |
 
 SFX presets: `Pickup`, `Laser`, `Explosion`, `PowerUp`, `Hit`, `Jump`, `Blip`, `Arrow`, `Shoot`, `Throw`, `Random`.
 Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.
@@ -138,11 +173,12 @@ Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.
 ## Web: Sound Lab (WebAssembly)
 
 Live at **https://joakimeriksson.github.io/gamesynth/**. `web/` is a static page that runs
-the *same* Rust engine compiled to WebAssembly inside an AudioWorklet, in three tabs:
+the *same* Rust engine compiled to WebAssembly inside an AudioWorklet, in four tabs:
 
 | Tab | What it does | Godot counterpart |
 |---|---|---|
 | **Engines** | Jet engine dyno: throttle / boost / speed / damage, RPM gauge, spectrum, presets, tuning | `JetEngineStream` + `pb.set_state(...)` |
+| **Generators** | The whole generator library with input sliders, presets and tuning; for model files a live editor (edit, Ctrl+Enter, hear it) with a node reference | `SoundGenerator` + `pb.set_input(...)` |
 | **Sound FX** | sfxr-style presets fired with a seed, mutate, waveform preview, recent list, WAV download | `SynthStream.from_preset(name, seed)` |
 | **Instrument** | Playable keyboard (mouse/touch/computer keys), pitch bend, Lead/Bass/Pad/Pluck patches | `SynthStream` with `one_shot = false` |
 
@@ -152,14 +188,14 @@ accept unchanged. `?tab=sfx` deep-links a tab.
 
 ```
 rustup target add wasm32-unknown-unknown     # once
-./web/build.sh                               # -> web/pkg/gamesynth_wasm.wasm (~220 KB)
+./web/build.sh                               # -> web/pkg/gamesynth_wasm.wasm (~820 KB, 250 KB gzipped)
 python3 -m http.server -d web 8000           # open http://localhost:8000
 ```
 
 If your day-to-day `cargo` is Homebrew's (no wasm target) and rustup is the keg-only
 formula: `CARGO=/opt/homebrew/opt/rustup/bin/cargo ./web/build.sh`.
 
-`crates/gamesynth-wasm` exposes a plain C ABI (`jet_*`, `synth_*`, `gs_meta_json`, …), so
+`crates/gamesynth-wasm` exposes a plain C ABI (`jet_*`, `synth_*`, `model_*`, `gs_meta_json`, …), so
 the page has no bindgen glue and the module has zero imports; `web/jet-worklet.js`
 instantiates it on the audio thread, one node per tab.
 
