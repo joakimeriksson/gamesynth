@@ -178,6 +178,24 @@ fn effects_and_lfo_stay_bounded() {
 }
 
 #[test]
+fn sustain_zero_one_shot_ends_by_itself() {
+    // Reported from the game as "never ends". It does: the envelope goes idle once it has
+    // decayed 80 dB, about 1.33 x the decay time, and `one_shot_length` bounds it. (What the
+    // game saw was the playback not reporting its end to Godot.)
+    let mut p = Patch::default();
+    p.osc[0].wave = Waveform::Sine;
+    p.amp_env = AdsrParams::new(0.003, 0.5, 0.0, 2.0);
+    assert_eq!(p.duration, 0.0);
+    let bound = p.one_shot_length().expect("sustain 0 is a finite sound");
+    let mut synth = Synth::with_patch(SR, p);
+    synth.trigger();
+    let mut out = vec![0.0; (bound * SR) as usize];
+    synth.render_mono(&mut out);
+    assert!(peak(&out) > 0.2);
+    assert!(synth.is_silent() && synth.active_voices() == 0, "still sounding after one_shot_length = {bound} s");
+}
+
+#[test]
 fn stereo_render_matches_mono() {
     let p = SfxPreset::Pickup.generate(3);
     let mut a = Synth::with_patch(SR, p);

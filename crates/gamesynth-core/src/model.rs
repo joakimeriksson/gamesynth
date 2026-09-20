@@ -7,7 +7,7 @@
 //! directly. Engine bindings only ever see `Box<dyn Model>`.
 
 use crate::blocks::{settle_coef, BLOCK};
-use crate::math::limit;
+use crate::math::{limit, LIMIT_KNEE};
 use crate::params::{describe, ParamDesc, Params};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +72,22 @@ pub trait Model: Send {
         false
     }
     fn render_mono(&mut self, out: &mut [f32]);
+    /// Render stereo (`left.len() == right.len()`). Models without a stereo image render mono
+    /// into both channels. For models that have one, [`Model::render_mono`] is the same sound
+    /// with its width at zero, not a fold-down.
+    fn render_stereo(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.render_mono(left);
+        right.copy_from_slice(left);
+    }
+    /// For one-shots: an upper bound, in seconds, on how long a trigger sounds with the current
+    /// params, including its tail. `None` for continuous models and when it cannot be known
+    /// without rendering (model files).
+    fn length_secs(&self) -> Option<f32> {
+        None
+    }
+    /// Playback-rate style pitch control (2.0 = an octave up), e.g. a player's `pitch_scale`.
+    /// Event generators transpose; models without a meaningful pitch ignore it.
+    fn set_pitch_ratio(&mut self, _ratio: f32) {}
     /// Recent output peak 0..1, decays over ~250 ms.
     fn peak(&self) -> f32;
     fn sample_rate(&self) -> f32;
@@ -145,6 +161,16 @@ pub trait Generator: Send + 'static {
     fn is_active(&self) -> bool {
         true
     }
+    /// Upper bound on a one-shot's length with params `p`, tail included.
+    fn length(_p: &Self::P) -> Option<f32> {
+        None
+    }
+    fn set_pitch_ratio(&mut self, _ratio: f32) {}
+    /// Stereo version of [`Generator::block`]; the default is mono in both channels.
+    fn block_stereo(&mut self, x: &[f32], p: &Self::P, left: &mut [f32], right: &mut [f32]) {
+        self.block(x, p, left);
+        right.copy_from_slice(left);
+    }
     /// Render one control block, overwriting `out` (`out.len() <= BLOCK`). `x` holds the
     /// smoothed inputs in `INPUTS` order.
     fn block(&mut self, x: &[f32], p: &Self::P, out: &mut [f32]);
@@ -163,6 +189,22 @@ pub struct Native<G: Generator> {
 }
 
 impl<G: Generator> Native<G> {
+    /// Idle one-shots cost nothing: true (and the peak meter decayed) when there is nothing to render.
+    fn idle(&mut self, frames: usize) -> bool {
+        let idle = G::ONE_SHOT && !self.g.is_active();
+        if idle {
+            self.peak *= self.peak_decay.powi(frames as i32);
+        }
+        idle
+    }
+
+    fn smooth_inputs(&mut self, frames: usize) {
+        let coef = settle_coef(G::INPUT_SMOOTH_SECS, frames as f32 / self.sample_rate);
+        for (s, t) in self.smooth.iter_mut().zip(&self.target) {
+            *s += (*t - *s) * coef;
+        }
+    }
+
     pub fn new(sample_rate: f32) -> Self {
         let sample_rate = if sample_rate.is_finite() && sample_rate >= 8000.0 { sample_rate } else { 48000.0 };
         let desc = Self::describe();
@@ -247,17 +289,12 @@ impl<G: Generator> Model for Native<G> {
 
     fn render_mono(&mut self, out: &mut [f32]) {
         let mut peak = self.peak;
-        if G::ONE_SHOT && !self.g.is_active() {
-            // Idle one-shots cost nothing.
+        if self.idle(out.len()) {
             out.iter_mut().for_each(|s| *s = 0.0);
-            self.peak = peak * self.peak_decay.powi(out.len() as i32);
             return;
         }
         for chunk in out.chunks_mut(BLOCK) {
-            let coef = settle_coef(G::INPUT_SMOOTH_SECS, chunk.len() as f32 / self.sample_rate);
-            for (s, t) in self.smooth.iter_mut().zip(&self.target) {
-                *s += (*t - *s) * coef;
-            }
+            self.smooth_inputs(chunk.len());
             self.g.block(&self.smooth, &self.p, chunk);
             for s in chunk.iter_mut() {
                 let y = if !s.is_finite() {
@@ -272,6 +309,42 @@ impl<G: Generator> Model for Native<G> {
             }
         }
         self.peak = peak;
+    }
+
+    fn render_stereo(&mut self, left: &mut [f32], right: &mut [f32]) {
+        let mut peak = self.peak;
+        if self.idle(left.len()) {
+            left.iter_mut().chain(right.iter_mut()).for_each(|s| *s = 0.0);
+            return;
+        }
+        for (l, r) in left.chunks_mut(BLOCK).zip(right.chunks_mut(BLOCK)) {
+            self.smooth_inputs(l.len());
+            self.g.block_stereo(&self.smooth, &self.p, l, r);
+            for (a, b) in l.iter_mut().zip(r.iter_mut()) {
+                if !a.is_finite() || !b.is_finite() {
+                    (*a, *b) = (0.0, 0.0);
+                }
+                // One gain for both channels, so limiting never shifts the stereo image.
+                let m = a.abs().max(b.abs());
+                if G::LIMIT && m > LIMIT_KNEE {
+                    // The louder channel takes the limited value itself (not value * gain), so
+                    // equal channels stay sample-identical to the mono render.
+                    let (limited, g) = (limit(m), limit(m) / m);
+                    *a = if a.abs() == m { limited.copysign(*a) } else { *a * g };
+                    *b = if b.abs() == m { limited.copysign(*b) } else { *b * g };
+                }
+                peak = (peak * self.peak_decay).max(a.abs().max(b.abs()));
+            }
+        }
+        self.peak = peak;
+    }
+
+    fn length_secs(&self) -> Option<f32> {
+        G::length(&self.p)
+    }
+
+    fn set_pitch_ratio(&mut self, ratio: f32) {
+        self.g.set_pitch_ratio(if ratio.is_finite() { ratio.clamp(0.125, 8.0) } else { 1.0 });
     }
 
     fn peak(&self) -> f32 {

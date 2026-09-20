@@ -72,6 +72,15 @@
   .bench b span { font-size: 12px; color: var(--muted); margin-left: 4px; }
   .bench small { color: var(--muted); font-size: 12px; }
 
+  /* ---- stereo before/after ---- */
+  .ab { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+  .ab-row { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 10px 13px 12px; display: grid; grid-template-columns: 58px 1fr; gap: 6px 10px; align-items: center; }
+  .ab-row h3 { grid-column: 1 / -1; font-size: 19px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .ab-row h3 small { font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted); }
+  .ab-row .tag { font-family: var(--display); font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .ab-row .tag b { display: block; font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--ink); }
+  .ab-row audio { width: 100%; height: 34px; }
+
   /* ---- sounds ---- */
   .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
   .filters button { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 3px 12px; cursor: pointer; font-family: var(--display); font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
@@ -117,6 +126,11 @@
   <section id="bench-section" style="display:flex;flex-direction:column;gap:12px">
     <div class="section-head"><h2>Speed</h2><p>Release build, one core. "&#xD7; real time" is how many seconds of audio render per second; model files trade speed for not needing Rust.</p></div>
     <div class="bench" id="bench"></div>
+  </section>
+
+  <section id="stereo-section" style="display:flex;flex-direction:column;gap:12px">
+    <div class="section-head"><h2>Stereo: before and after</h2><p>The same triggers twice: <b>before</b> is <code>space/width</code> 0, the old mono sound; <b>after</b> is the designed width. Use headphones or speakers apart. Correlation 1.00 is mono, 0 is fully wide; cost is render time as a share of one core while the event sounds.</p></div>
+    <div class="ab" id="stereo"></div>
   </section>
 
   <section style="display:flex;flex-direction:column;gap:12px">
@@ -167,6 +181,21 @@ const DATA = /*DATA*/null;
   if (!DATA.benchmarks.length) $("bench-section").hidden = true;
   DATA.benchmarks.forEach(b => { const d = el("div"); const v = el("b", "", b.value >= 100 ? Math.round(b.value) : b.value.toFixed(b.value < 10 ? 2 : 1)); v.append(el("span", "", b.unit)); d.append(v, el("small", "", b.label)); $("bench").append(d); });
 
+  // ---- stereo before / after ----
+  if (!DATA.stereo || !DATA.stereo.length) $("stereo-section").hidden = true;
+  (DATA.stereo || []).forEach(r => {
+    const row = el("div", "ab-row"), h = el("h3", "", r.name.replace(/_/g, " "));
+    h.append(el("small", "", `${r.preset} \u00b7 cost ${r.cost_before.toFixed(2)}% \u2192 ${r.cost_after.toFixed(2)}% of a core`));
+    row.append(h);
+    [["Before", r.before, r.corr_before], ["After", r.after, r.corr_after]].forEach(([label, src, corr]) => {
+      const tag = el("div", "tag", label); tag.append(el("b", "", "corr " + corr.toFixed(2)));
+      const audio = el("audio"); audio.controls = true; audio.preload = "none"; audio.src = src; audio.setAttribute("aria-label", `${r.name} ${label.toLowerCase()}`);
+      audio.addEventListener("play", () => document.querySelectorAll("audio").forEach(a => { if (a !== audio) a.pause(); }));
+      row.append(tag, audio);
+    });
+    $("stereo").append(row);
+  });
+
   // ---- sounds ----
   const cards = [];
   DATA.sounds.forEach(s => {
@@ -177,7 +206,7 @@ const DATA = /*DATA*/null;
     [["20k", "3%"], ["1k", "44%"], ["30", "88%"]].forEach(([t, top]) => { const h = el("span", "hz", t); h.style.top = top; spec.append(h); });
     const ruler = el("div", "ruler"); const event = s.kind === "event"; card.dataset.kind = s.kind || "continuous";
     if (event) ruler.style.gridTemplateColumns = "1fr 1fr 1fr 1fr";
-    (event ? ["full power", "again (must differ)", "power 0.4", s.engine === "native" ? "distance 0.8" : "2nd input 0.8"] : ["0-4 s  ramp up", "4-6 s  hold", "6-10 s  ramp down"]).forEach(t => ruler.append(el("span", "", t)));
+    (event ? ["full power", "again (differs)", "power 0.4", s.engine === "native" ? "distance 0.8" : "2nd input 0.8"] : ["0-4 s  ramp up", "4-6 s  hold", "6-10 s  ramp down"]).forEach(t => ruler.append(el("span", "", t)));
     const body = el("div", "body"), head = el("div", "head");
     head.append(el("h3", "", s.name.replace(/_/g, " ")), el("span", "pill plain", s.engine), el("span", "pill " + s.status, s.status === "pass" ? "clean" : "check"));
     const audio = el("audio"); audio.controls = true; audio.preload = "none"; audio.src = s.audio; audio.setAttribute("aria-label", `Play ${s.name}`);

@@ -23,7 +23,7 @@ fn main() {
         let mut w = hound::WavWriter::create(&file, spec).expect("create wav");
         let mut buf = [0.0f32; 480];
         if m.desc().one_shot {
-            println!("# one_shot {}", m.desc().name);
+            println!("# one_shot {} 3", m.desc().name);
             // Same four events as render_models: power 1, 1, 0.4, then 1 with input 1 raised.
             let mut long = vec![0.0f32; SR as usize * 3];
             for (power, second) in [(1.0, 0.0), (1.0, 0.0), (0.4, 0.0), (1.0, 0.8)] {

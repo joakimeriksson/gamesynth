@@ -38,6 +38,7 @@ WAV = os.path.join(OUT, "wav")
 FLAT_BY_DESIGN = {"drone": "level is constant by design; tension changes the timbre",
                   "mine_armed": "proximity changes the tick rate, not the level"}
 SPARSE_BY_DESIGN = {"geiger": "isolated clicks are the sound", "radio": "clicks over quiet hiss"}
+NARROW_BY_DESIGN = {"beep": "UI tones stay centred", "lock_on": "UI tones stay centred"}
 # Noise-based sounds that must not ring at fixed pitches (the "glass chime" fault).
 BROADBAND = {"wind", "rain", "fire", "stream", "ocean", "crowd", "rain_on_tent", "campfire"}
 # `recharge` is gated by its first input and pitched by its second, so the level sweep
@@ -148,23 +149,45 @@ def web_audio():
 
 
 def godot():
+    """Two suites: the API smoke test (mixes by hand) and the scene-tree test that awaits the
+    players' `finished` signal, which only a real AudioServer mix can produce."""
+    names = [("godot", "Headless Godot smoke test of the extension", "tests/smoke.gd"),
+             ("godot \u00b7 finished", "One-shots through real AudioStreamPlayers must emit `finished`", "tests/finished.gd")]
     if not shutil.which("godot"):
-        return suite("godot", "Headless Godot smoke test of the extension", [], 0, skipped="godot is not installed")
+        return [suite(n, what, [], 0, skipped="godot is not installed") for n, what, _ in names]
     code, out, build_secs = run(["cargo", "build", "-p", "gamesynth-godot"])
     if code != 0:
-        return suite("godot", "Headless Godot smoke test of the extension", [{"name": "extension builds", "status": "fail", "detail": out[-600:]}], build_secs)
+        return [suite("godot", names[0][1], [{"name": "extension builds", "status": "fail", "detail": out[-600:]}], build_secs)]
     run(["godot", "--headless", "--path", "godot", "--import"], timeout=300)
-    code, out, secs = run(["godot", "--headless", "--path", "godot", "-s", "tests/smoke.gd"], timeout=600)
-    tests, section = [], ""
-    for line in out.splitlines():
-        m = re.match(r"\s+(ok|FAIL)\s+(.*)", line)
-        if m:
-            tests.append({"name": f"{section}: {m.group(2)}"[:140], "status": "pass" if m.group(1) == "ok" else "fail", "detail": ""})
-        elif re.match(r"^[A-Z][A-Za-z ]+$", line.strip()) and not line.startswith(" "):
-            section = line.strip()
-    if not tests:
-        tests = [{"name": "smoke test ran", "status": "fail", "detail": out[-600:]}]
-    return suite("godot", "Headless Godot smoke test of the extension", tests, build_secs + secs)
+    suites = []
+    for name, what, script in names:
+        code, out, secs = run(["godot", "--headless", "--path", "godot", "-s", script], timeout=600)
+        tests, section = [], ""
+        for line in out.splitlines():
+            m = re.match(r"\s+(ok|FAIL)\s+(.*)", line)
+            if m:
+                tests.append({"name": f"{section}: {m.group(2)}"[:150], "status": "pass" if m.group(1) == "ok" else "fail", "detail": ""})
+            elif re.match(r"^[A-Z][A-Za-z `]+$", line.strip()) and not line.startswith(" "):
+                section = line.strip()
+        if not tests or "Result:" not in out:
+            tests.append({"name": "script ran to the end", "status": "fail", "detail": out[-600:]})
+        suites.append(suite(name, what, tests, secs))
+    return suites
+
+
+def stereo_review():
+    """Before/after pairs for judging the stereo image by ear: the same triggers at width 0 (the
+    old mono sound) and at the designed width, with the measured correlation and CPU cost."""
+    folder = os.path.join(OUT, "stereo_wav")
+    code, out, _ = run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_stereo", "--", folder])
+    rows = []
+    for name, preset, c0, c1, cost0, cost1 in re.findall(r"^# stereo (\w+) (\S+) (\S+) (\S+) (\S+) (\S+)", out, re.M):
+        rows.append({"name": name, "preset": preset.replace("_", " "), "corr_before": float(c0), "corr_after": float(c1),
+                     "cost_before": float(cost0) * 100, "cost_after": float(cost1) * 100,
+                     "before": encode(f"stereo_{name}_before", os.path.join(folder, f"{name}_before.wav")),
+                     "after": encode(f"stereo_{name}_after", os.path.join(folder, f"{name}_after.wav"))})
+    shutil.rmtree(folder, ignore_errors=True)
+    return rows
 
 
 def benchmarks():
@@ -186,10 +209,26 @@ def benchmarks():
 # Sound review
 # ------------------------------------------------------------------------------------------
 
-def load(path):
+def load_channels(path):
     with wave.open(path) as w:
-        sr = w.getframerate()
-        return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(float) / 32767, sr
+        sr, channels = w.getframerate(), w.getnchannels()
+        data = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(float) / 32767
+    return data.reshape(-1, channels).T, sr
+
+
+def load(path):
+    """Mono fold-down for the analysis (the renders are stereo, as the game hears them)."""
+    channels, sr = load_channels(path)
+    return channels.mean(axis=0), sr
+
+
+def correlation(path):
+    """L/R correlation: 1.0 is mono, 0 fully decorrelated, below 0 out of phase."""
+    channels, _ = load_channels(path)
+    if len(channels) < 2:
+        return 1.0
+    l, r = channels[0], channels[1]
+    return float(np.dot(l, r) / (np.sqrt(np.dot(l, l) * np.dot(r, r)) + 1e-12))
 
 
 def rms(x):
@@ -235,20 +274,21 @@ def picture(name, x, sr, marks):
     return [round(float(v), 3) for v in level]
 
 
-def review_event(name, path, engine):
-    """One-shots are rendered as four events 3 s apart: full power, full power again, power 0.4,
-    and full power at distance 0.8 (for model files: with their second input raised)."""
+def review_event(name, path, engine, slot=3):
+    """One-shots are rendered as four events one slot apart (the event's length, at least 3 s):
+    full power, full power again, power 0.4, and full power at distance 0.8 (for model files:
+    with their second input raised)."""
     x, sr = load(path)
-    ev = [x[int(k * 3 * sr):int((k + 1) * 3 * sr)] for k in range(4)]
+    ev = [x[int(k * slot * sr):int((k + 1) * slot * sr)] for k in range(4)]
     peak = float(np.max(np.abs(x)))
     first = float(np.max(np.abs(ev[0])))
     head = slice(0, int(1.5 * sr))
     differ = float(np.max(np.abs(ev[0][head] - ev[1][head])) / (first + 1e-9))
-    tail = rms(ev[0][int(2.7 * sr):])
+    tail = rms(ev[0][int(0.9 * slot * sr):])
     checks = [
         {"name": "Bounded", "status": "pass" if np.all(np.isfinite(x)) and peak <= 1.0 else "fail", "detail": f"peak {peak:.2f}"},
         {"name": "Fires", "status": "pass" if first > 0.15 else "fail", "detail": f"peak {first:.2f} at full power (want > 0.15)"},
-        {"name": "Rings out", "status": "pass" if tail < 0.01 else "fail", "detail": f"rms {tail:.4f} by 2.7 s after the trigger (want < 0.01)"},
+        {"name": "Rings out", "status": "pass" if tail < 0.01 else "fail", "detail": f"rms {tail:.4f} by {0.9 * slot:.1f} s after the trigger (want < 0.01)"},
         {"name": "Responds to power", "status": "pass" if rms(ev[2]) < rms(ev[0]) * 0.8 else "fail", "detail": f"rms {rms(ev[0]):.3f} at power 1, {rms(ev[2]):.3f} at 0.4"},
     ]
     if name in ("beep", "lock_on"):
@@ -260,7 +300,13 @@ def review_event(name, path, engine):
         # mostly low already, like a cannon thump.)
         near, far = treble(ev[0][head], sr), treble(ev[3][head], sr)
         checks.append({"name": "Distance dulls", "status": "pass" if far < near * 0.6 and rms(ev[3]) < rms(ev[0]) else "fail", "detail": f"energy above 2 kHz: {near * 100:.1f}% near, {far * 100:.1f}% far"})
-    levels = picture(name, x, sr, (3, 6, 9))
+    if engine == "native":
+        corr = correlation(path)
+        if name in NARROW_BY_DESIGN:
+            checks.append({"name": "Stereo", "status": "exempt", "detail": f"L/R correlation {corr:.2f}; {NARROW_BY_DESIGN[name]}"})
+        else:
+            checks.append({"name": "Stereo", "status": "pass" if -0.2 < corr < 0.995 else "fail", "detail": f"L/R correlation {corr:.2f} (1.00 is mono; want a real image that is not out of phase)"})
+    levels = picture(name, x, sr, (slot, 2 * slot, 3 * slot))
     return {"name": name, "engine": engine, "kind": "event", "checks": checks, "status": "fail" if any(c["status"] == "fail" for c in checks) else "pass",
             "levels": levels, "sub": 0, "spec": f"spec/{name}.png", "audio": encode(name, path)}
 
@@ -317,12 +363,12 @@ def sounds():
         if m and m.group(1) != "model":
             presets.setdefault(m.group(1), []).append({"name": m.group(2).strip(), "rms": float(m.group(5)), "peak": float(m.group(6))})
     code, graph_out, _ = run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_graphs", "--", WAV])
-    events = set(re.findall(r"^# one_shot (\w+)", out + graph_out, re.M))
+    events = {name: int(slot) for name, slot in re.findall(r"^# one_shot (\w+) (\d+)", out + graph_out, re.M)}
     result = []
     for file in sorted(os.listdir(WAV)):
         if file.endswith("_default.wav"):
             name = file[: -len("_default.wav")]
-            card = (review_event if name in events else review)(name, os.path.join(WAV, file), "native")
+            card = review_event(name, os.path.join(WAV, file), "native", events[name]) if name in events else review(name, os.path.join(WAV, file), "native")
             card["presets"] = presets.get(name, [])
             quiet = [p["name"] for p in card["presets"] if not 0.02 < p["rms"] < 0.6 or p["peak"] > 1.0]
             card["checks"].append({"name": "Presets in range", "status": "fail" if quiet else "pass", "detail": ", ".join(quiet) or f"{len(card['presets'])} presets between 0.02 and 0.6 rms"})
@@ -331,8 +377,9 @@ def sounds():
     for file in sorted(os.listdir(WAV)):
         if file.startswith("graph_"):
             name = file[len("graph_"):-4]
-            result.append((review_event if name in events else review)(name, os.path.join(WAV, file), "model file"))
-    order = ["jet", "hover", "combustion", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
+            path = os.path.join(WAV, file)
+            result.append(review_event(name, path, "model file", events[name]) if name in events else review(name, path, "model file"))
+    order = ["jet", "hover", "combustion", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "bell", "finish", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
     result.sort(key=lambda c: (c["engine"] != "native", order.index(c["name"]) if c["name"] in order else 99, c["name"]))
     return result
 
@@ -361,16 +408,17 @@ def main():
     code, dirty, _ = run(["git", "status", "--porcelain"])
     code, subject, _ = run(["git", "log", "-1", "--format=%s"])
     print("running test suites…", flush=True)
-    suites = previous["suites"] if previous else core_tests() + [clippy(), wasm(), web_audio(), godot()]
+    suites = previous["suites"] if previous else core_tests() + [clippy(), wasm(), web_audio()] + godot()
     print("rendering and reviewing sounds…", flush=True)
     cards = sounds()
     data = {
         "commit": head.strip(), "dirty": bool(dirty.strip()), "subject": subject.strip(),
         "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "suites": suites, "sounds": cards, "benchmarks": previous["benchmarks"] if previous else [] if quick else benchmarks(),
+        "suites": suites, "sounds": cards, "stereo": stereo_review(), "benchmarks": previous["benchmarks"] if previous else [] if quick else benchmarks(),
     }
     write_page(data)
     files = {c[k]: f"dashboard/{c[k]}" for c in cards for k in ("spec", "audio")}
+    files.update({row[k]: f"dashboard/{row[k]}" for row in data["stereo"] for k in ("before", "after")})
     json.dump(files, open(os.path.join(OUT, "files.json"), "w"), indent=1)
     shutil.rmtree(WAV, ignore_errors=True)
     bad = [s["name"] for s in suites if s["status"] == "fail"] + [c["name"] for c in cards if c["status"] == "fail"]

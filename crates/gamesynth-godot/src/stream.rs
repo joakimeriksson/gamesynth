@@ -143,6 +143,12 @@ impl SynthStreamPlayback {
         }
     }
 
+    /// A one-shot is over once every voice and the effect tail are silent (the 50 ms guard
+    /// covers the moment between start and the first rendered sample).
+    fn ended(&self) -> bool {
+        self.synth.is_silent() && self.frames_rendered as f32 > self.synth.sample_rate() * 0.05
+    }
+
     fn sync_patch(&mut self) {
         if let Some(p) = self.shared.poll(&mut self.patch_version) {
             self.synth.set_patch(p);
@@ -280,6 +286,14 @@ impl IAudioStreamPlayback for SynthStreamPlayback {
             self.synth.apply(cmd);
         }
         self.sync_patch();
+        if self.one_shot && self.ended() {
+            // Godot ends a playback (and the player emits `finished`) only when mix() returns
+            // fewer frames than it asked for; it never consults is_playing() for that.
+            self.playing = false;
+            return 0;
+        }
+        // A trigger() on a finished one-shot brings it back.
+        self.playing = true;
         // The player's pitch_scale arrives as a resampling ratio; apply it as transposition.
         let transpose = if rate_scale > 0.0 && (rate_scale - 1.0).abs() > 1e-4 { 12.0 * rate_scale.log2() } else { 0.0 };
         self.synth.set_transpose(transpose);
@@ -289,7 +303,8 @@ impl IAudioStreamPlayback for SynthStreamPlayback {
         unsafe { fill_frames_stereo(ptr, frames, |block| synth.render(block)) };
         self.frames_rendered += frames as u64;
 
-        if self.one_shot && self.synth.is_silent() && self.frames_rendered as f32 > self.synth.sample_rate() * 0.05 {
+        if self.one_shot && self.ended() {
+            // For callers polling is_playing(); the next mix() returns 0 and ends the playback.
             self.playing = false;
         }
         frames as i32

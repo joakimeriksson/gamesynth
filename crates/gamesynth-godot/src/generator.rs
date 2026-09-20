@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::sync::Arc;
 
 use gamesynth_core::{generators, GraphModel, Model};
@@ -9,7 +10,7 @@ use godot_core::meta::RawPtr;
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::props;
-use crate::shared::{fill_frames, Shared};
+use crate::shared::{fill_frames_lr, Shared};
 
 const COMMAND_QUEUE_LEN: usize = 1024;
 const MAX_PARAMS: usize = 64;
@@ -67,6 +68,9 @@ pub struct SoundGenerator {
     start_snapped: bool,
     /// Input values a new playback starts with (what a one-shot fires with on `play()`).
     start_inputs: Vec<(String, f32)>,
+    /// Measured length of a file-defined one-shot, keyed by the parameter version it was
+    /// measured at (native events report theirs analytically).
+    measured_length: Cell<Option<(u32, f64)>>,
     /// Prototype instance: owns the description and the current parameter values.
     proto: Option<Box<dyn Model>>,
     /// Source text when the model comes from a file or inline config.
@@ -337,6 +341,7 @@ impl IAudioStream for SoundGenerator {
             preset: GString::new(),
             start_snapped: true,
             start_inputs: Vec::new(),
+            measured_length: Cell::new(None),
             proto: None,
             source: None,
             error: String::new(),
@@ -455,6 +460,39 @@ impl IAudioStream for SoundGenerator {
 
     fn get_stream_name(&self) -> GString {
         self.proto.as_ref().map(|m| GString::from(&m.desc().name)).unwrap_or_else(|| "SoundGenerator".into())
+    }
+
+    /// Event sounds: an upper bound in seconds on one trigger, reverb tail included, with the
+    /// current params. Continuous generators return 0 (no fixed length), like a looping stream.
+    fn get_length(&self) -> f64 {
+        let Some(proto) = self.proto.as_ref().filter(|m| m.desc().one_shot) else { return 0.0 };
+        if let Some(bound) = proto.length_secs() {
+            return bound as f64;
+        }
+        // Model files shape their envelope with formulas, so measure: fire a copy offline.
+        let version = self.shared.version();
+        if let Some((v, length)) = self.measured_length.get() {
+            if v == version {
+                return length;
+            }
+        }
+        let Ok(mut model) = self.build(48000.0) else { return 0.0 };
+        for i in 0..proto.desc().params.len() {
+            model.set_param(i, proto.param(i));
+        }
+        for (name, value) in &self.start_inputs {
+            model.set_input_by_name(name, *value);
+        }
+        model.trigger();
+        let mut chunk = [0.0f32; 4800];
+        let mut rendered = 0usize;
+        while !model.is_finished() && rendered < 48000 * 30 {
+            model.render_mono(&mut chunk);
+            rendered += chunk.len();
+        }
+        let length = rendered as f64 / 48000.0;
+        self.measured_length.set(Some((version, length)));
+        length
     }
 
     fn is_monophonic(&self) -> bool {
@@ -620,7 +658,7 @@ impl IAudioStreamPlayback for SoundGeneratorPlayback {
 
     fn seek(&mut self, _position: f64) {}
 
-    unsafe fn mix_rawptr(&mut self, buffer: RawPtr<*mut AudioFrame>, _rate_scale: f32, frames: i32) -> i32 {
+    unsafe fn mix_rawptr(&mut self, buffer: RawPtr<*mut AudioFrame>, rate_scale: f32, frames: i32) -> i32 {
         let ptr = buffer.ptr();
         if ptr.is_null() || frames <= 0 {
             return 0;
@@ -638,16 +676,25 @@ impl IAudioStreamPlayback for SoundGeneratorPlayback {
             }
         }
         self.sync_params();
+        // The player's pitch_scale arrives as a resampling ratio. Event generators transpose
+        // by it, as SynthStream does; continuous generators have no single pitch and ignore it.
+        self.model.set_pitch_ratio(if rate_scale > 0.0 { rate_scale } else { 1.0 });
         if self.pending_trigger {
             self.pending_trigger = false;
+            self.playing = true;
             self.model.trigger();
+        } else if self.model.is_finished() {
+            // Godot ends a playback (and the player emits `finished`) only when mix() returns
+            // fewer frames than it asked for; it never consults is_playing() for that.
+            self.playing = false;
+            return 0;
         }
         let model = &mut self.model;
         // SAFETY: Godot guarantees `buffer` holds at least `frames` AudioFrames.
-        unsafe { fill_frames(ptr, frames, |block| model.render_mono(block)) };
+        unsafe { fill_frames_lr(ptr, frames, |left, right| model.render_stereo(left, right)) };
         self.frames_rendered += frames as u64;
         if self.model.is_finished() {
-            // Lets the player emit `finished`, like a sample that reached its end.
+            // For callers polling is_playing(); the next mix() returns 0 and ends the playback.
             self.playing = false;
         }
         frames as i32

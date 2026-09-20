@@ -507,6 +507,29 @@ pub unsafe extern "C" fn model_render(m: ModelHandle, out: *mut f32, frames: u32
     (*m).render_mono(std::slice::from_raw_parts_mut(out, frames as usize));
 }
 
+/// Stereo render: models without a stereo image fill both channels with the mono sound.
+#[no_mangle]
+pub unsafe extern "C" fn model_render_stereo(m: ModelHandle, left: *mut f32, right: *mut f32, frames: u32) {
+    if m.is_null() || left.is_null() || right.is_null() || frames == 0 {
+        return;
+    }
+    let n = frames as usize;
+    (*m).render_stereo(std::slice::from_raw_parts_mut(left, n), std::slice::from_raw_parts_mut(right, n));
+}
+
+/// Upper bound in seconds on one trigger of an event sound with the current params, tail
+/// included; -1 for continuous models and model files (measure those by rendering).
+#[no_mangle]
+pub unsafe extern "C" fn model_length(m: ModelHandle) -> f32 {
+    (*m).length_secs().unwrap_or(-1.0)
+}
+
+/// Playback-rate style pitch (2.0 = an octave up); event generators transpose by it.
+#[no_mangle]
+pub unsafe extern "C" fn model_set_pitch_ratio(m: ModelHandle, ratio: f32) {
+    (*m).set_pitch_ratio(ratio);
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn model_peak(m: ModelHandle) -> f32 {
     (*m).peak()

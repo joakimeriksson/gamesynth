@@ -80,3 +80,20 @@ pub unsafe fn fill_frames_stereo(ptr: *mut AudioFrame, frames: usize, mut render
         done += n;
     }
 }
+
+/// Same as [`fill_frames`] for renderers that fill separate left and right buffers.
+///
+/// # Safety
+/// See [`fill_frames`].
+pub unsafe fn fill_frames_lr(ptr: *mut AudioFrame, frames: usize, mut render: impl FnMut(&mut [f32], &mut [f32])) {
+    let (mut left, mut right) = ([0.0f32; gamesynth_core::MAX_BLOCK], [0.0f32; gamesynth_core::MAX_BLOCK]);
+    let mut done = 0;
+    while done < frames {
+        let n = (frames - done).min(left.len());
+        render(&mut left[..n], &mut right[..n]);
+        for (i, (l, r)) in left[..n].iter().zip(&right[..n]).enumerate() {
+            unsafe { ptr.add(done + i).write(AudioFrame { left: *l, right: *r }) };
+        }
+        done += n;
+    }
+}

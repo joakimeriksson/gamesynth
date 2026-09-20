@@ -197,6 +197,8 @@ pub struct Reverb {
     combs: [DelayLine; 4],
     damp: [f32; 4],
     allpass: [DelayLine; 2],
+    /// Second all-pass pair, for the side (difference) signal of the stereo output.
+    side_allpass: [DelayLine; 2],
     /// Keeps sub-bass out of the combs, whose low modes would ring as a pitched "boing".
     send_hp: OnePole,
     send_coef: f32,
@@ -205,15 +207,16 @@ pub struct Reverb {
 
 const COMB_MS: [f32; 4] = [29.7, 37.1, 41.1, 43.7];
 const ALLPASS_MS: [f32; 2] = [5.0, 1.7];
+const SIDE_ALLPASS_MS: [f32; 2] = [5.9, 2.3];
 
 impl Reverb {
     pub fn new(sample_rate: f32) -> Self {
         let line = |ms: f32| DelayLine::new((ms * 0.001 * sample_rate) as usize + 2);
-        Reverb { combs: COMB_MS.map(line), damp: [0.0; 4], allpass: ALLPASS_MS.map(line), send_hp: OnePole::default(), send_coef: hz_coef(220.0, sample_rate), sr: sample_rate }
+        Reverb { combs: COMB_MS.map(line), damp: [0.0; 4], allpass: ALLPASS_MS.map(line), side_allpass: SIDE_ALLPASS_MS.map(line), send_hp: OnePole::default(), send_coef: hz_coef(220.0, sample_rate), sr: sample_rate }
     }
 
     pub fn clear(&mut self) {
-        self.combs.iter_mut().chain(self.allpass.iter_mut()).for_each(|l| l.clear());
+        self.combs.iter_mut().chain(self.allpass.iter_mut()).chain(self.side_allpass.iter_mut()).for_each(|l| l.clear());
         self.damp = [0.0; 4];
         self.send_hp = OnePole::default();
     }
@@ -222,19 +225,43 @@ impl Reverb {
     /// the tail.
     #[inline]
     pub fn tick(&mut self, x: f32, rt60: f32, damping: f32) -> f32 {
+        let (sum, _) = self.combs(x, rt60, damping);
+        Self::diffuse(&mut self.allpass, &ALLPASS_MS, sum * 0.25, self.sr)
+    }
+
+    /// Stereo wet signal as `(mid, side)`: left = mid + side, right = mid - side. `mid` is
+    /// exactly what [`Reverb::tick`] returns, so a width of zero is the mono reverb. The side
+    /// signal sums the same four combs with alternating signs, which decorrelates the channels
+    /// for the price of two short all-passes.
+    #[inline]
+    pub fn tick_stereo(&mut self, x: f32, rt60: f32, damping: f32) -> (f32, f32) {
+        let (sum, alt) = self.combs(x, rt60, damping);
+        let sr = self.sr;
+        (Self::diffuse(&mut self.allpass, &ALLPASS_MS, sum * 0.25, sr), Self::diffuse(&mut self.side_allpass, &SIDE_ALLPASS_MS, alt * 0.25, sr))
+    }
+
+    /// Run the comb bank; returns (sum, alternating-sign sum) of the comb outputs.
+    #[inline]
+    fn combs(&mut self, x: f32, rt60: f32, damping: f32) -> (f32, f32) {
         let keep = 1.0 - damping.clamp(0.0, 0.95);
         let x = self.send_hp.hp(x, self.send_coef);
-        let mut wet = 0.0;
+        let (mut sum, mut alt, mut sign) = (0.0, 0.0, 1.0);
         for ((comb, damp), ms) in self.combs.iter_mut().zip(self.damp.iter_mut()).zip(COMB_MS) {
             let g = 10f32.powf(-3.0 * ms * 0.001 / rt60.max(0.05));
             let y = comb.read(ms * 0.001 * self.sr);
             *damp += (y - *damp) * keep;
             comb.write(x + *damp * g);
-            wet += y;
+            sum += y;
+            alt += y * sign;
+            sign = -sign;
         }
-        let mut y = wet * 0.25;
-        for (line, ms) in self.allpass.iter_mut().zip(ALLPASS_MS) {
-            let v = -0.5 * y + line.read(ms * 0.001 * self.sr);
+        (sum, alt)
+    }
+
+    #[inline]
+    fn diffuse(lines: &mut [DelayLine; 2], ms: &[f32; 2], mut y: f32, sr: f32) -> f32 {
+        for (line, ms) in lines.iter_mut().zip(ms) {
+            let v = -0.5 * y + line.read(ms * 0.001 * sr);
             line.write(y + 0.5 * v);
             y = v;
         }

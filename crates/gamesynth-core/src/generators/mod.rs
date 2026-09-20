@@ -65,4 +65,6 @@ registry!(
     fx::OneShot<fx::Airbrake>,
     fx::OneShot<fx::Pickup>,
     fx::OneShot<fx::Beep>,
+    fx::OneShot<fx::Bell>,
+    fx::OneShot<fx::Finish>,
 );

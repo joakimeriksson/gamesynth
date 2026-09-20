@@ -22,7 +22,7 @@ const checks = [];
 const check = (name, ok, detail = "") => checks.push({ name, ok: !!ok, detail });
 
 const lib = JSON.parse(str(w.model_library_json()));
-check("library lists the native generators", lib.models.length >= 28, `${lib.models.length} generators, ${lib.nodes.length} node types`);
+check("library lists the native generators", lib.models.length >= 36, `${lib.models.length} generators, ${lib.nodes.length} node types`);
 for (const d of lib.models) {
   const m = put(d.name, (p, n) => w.model_new(p, n, SR));
   d.inputs.forEach((i) => w.model_set_input(m, i.index, 1));
@@ -33,8 +33,9 @@ for (const d of lib.models) {
     w.model_render(m, buf, SR);
     let peak = 0;
     for (const x of new Float32Array(w.memory.buffer, buf, SR)) peak = Math.max(peak, Math.abs(x));
-    for (let i = 0; i < 5; i++) w.model_render(m, buf, SR);
-    check(`one-shot ${d.name} fires and finishes`, peak > 0.15 && peak <= 1 && w.model_is_finished(m) === 1, `peak ${peak.toFixed(2)}`);
+    const length = w.model_length(m);
+    for (let i = 0; i < Math.ceil(length); i++) w.model_render(m, buf, SR);
+    check(`one-shot ${d.name} fires and finishes within its reported length`, peak > 0.15 && peak <= 1 && length > 0 && w.model_is_finished(m) === 1, `peak ${peak.toFixed(2)}, length ${length.toFixed(2)} s`);
     w.model_free(m);
     continue;
   }
@@ -53,6 +54,24 @@ for (const e of lib.examples) {
   const l = d.one_shot ? (() => { w.model_render(m, buf, SR); let s = 0; for (const x of new Float32Array(w.memory.buffer, buf, SR)) s += x * x; return { rms: Math.sqrt(s / SR), finite: true }; })() : level(() => w.model_render(m, buf, SR));
   check(`model file ${e.name} compiles and renders`, l.finite && l.rms > 0.02, `rms ${l.rms.toFixed(3)}`);
   w.model_free(m);
+}
+{
+  // Stereo: width 0 must be the mono sound in both channels; the designed width must differ.
+  const right = w.gs_alloc_f32(SR);
+  const corr = (width) => {
+    const m = put("explosion", (p, n) => w.model_new(p, n, SR));
+    const d = JSON.parse(str(w.model_desc_json(m)));
+    if (width != null) w.model_set_param(m, d.params.find((p) => p.name === "space/width").index, width);
+    w.model_trigger(m);
+    w.model_render_stereo(m, buf, right, SR);
+    const l = new Float32Array(w.memory.buffer, buf, SR), r = new Float32Array(w.memory.buffer, right, SR);
+    let lr = 0, ll = 0, rr = 0;
+    for (let i = 0; i < SR; i++) { lr += l[i] * r[i]; ll += l[i] * l[i]; rr += r[i] * r[i]; }
+    w.model_free(m);
+    return lr / Math.sqrt(ll * rr);
+  };
+  const [mono, wide] = [corr(0), corr(null)];
+  check("stereo: explosion is mono at width 0 and wide as designed", mono > 0.9999 && wide < 0.7, `L/R correlation ${mono.toFixed(3)} at width 0, ${wide.toFixed(3)} as designed`);
 }
 const bad = put('[graph]\nnodes = [{ id = "a", type = "wobble" }]\nout = "a"', (p, n) => w.model_from_config(p, n, SR));
 check("a bad model file is rejected with a message", bad === 0 && str(w.gs_str_len()).includes("unknown type"), str(w.gs_str_len()).slice(0, 60));

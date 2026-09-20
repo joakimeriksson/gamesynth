@@ -127,7 +127,7 @@ func _init() -> void:
 	print("SoundGenerator")
 	_check(ClassDB.class_exists("SoundGenerator"), "class registered")
 	var gen_names := SoundGenerator.get_generator_names()
-	_check(gen_names.size() >= 28, "generator library: %d" % gen_names.size())
+	_check(gen_names.size() >= 36, "generator library: %d" % gen_names.size())
 	var silent := []
 	for gname in gen_names:
 		var g := SoundGenerator.create(gname)
@@ -143,8 +143,9 @@ func _init() -> void:
 			gpb = g.instantiate_playback() as SoundGeneratorPlayback
 			gpb.start(0.0)
 			var shot := _peak(gpb.mix_audio(1.0, 24000))
-			gpb.mix_audio(1.0, 48000 * 6)
-			if shot < 0.15 or shot > 1.0 or gpb.is_playing():
+			gpb.mix_audio(1.0, int(48000 * g.get_length()))
+			# Over: is_playing() is false and mix() returns no frames (what ends it for Godot).
+			if shot < 0.15 or shot > 1.0 or gpb.is_playing() or g.get_length() <= 0.0 or gpb.mix_audio(1.0, 512).size() != 0:
 				silent.append("%s (one-shot peak %.3f, still playing %s)" % [gname, shot, gpb.is_playing()])
 			continue
 		gpb.start(0.0)
@@ -185,6 +186,39 @@ func _init() -> void:
 	var boom_peak := _peak(bpb.mix_audio(1.0, 48000))
 	bpb.mix_audio(1.0, 48000 * 5)
 	_check(boom_peak > 0.3 and not bpb.is_playing(), "play() fires it (peak %.2f) and it finishes by itself" % boom_peak)
+	_check(bpb.mix_audio(1.0, 512).size() == 0, "a finished one-shot returns no frames, which is what ends it for Godot")
+	var st := SoundGenerator.create("explosion").instantiate_playback() as SoundGeneratorPlayback
+	st.start(0.0)
+	var differs := false
+	for f in st.mix_audio(1.0, 24000):
+		if absf(f.x - f.y) > 0.01:
+			differs = true
+			break
+	_check(differs, "events are stereo: left and right differ")
+	var mono_gen := SoundGenerator.create("explosion")
+	mono_gen.set_param("space/width", 0.0)
+	var mono_pb := mono_gen.instantiate_playback() as SoundGeneratorPlayback
+	mono_pb.start(0.0)
+	var same := true
+	for f in mono_pb.mix_audio(1.0, 24000):
+		if f.x != f.y:
+			same = false
+			break
+	_check(same, "space/width 0 is mono")
+	var low := SoundGenerator.create("beep")
+	low.set_param("shape/variation", 0.0)
+	var crossings := func(scale: float) -> int:
+		var pitch_pb := low.instantiate_playback() as SoundGeneratorPlayback
+		pitch_pb.start(0.0)
+		var pitched := pitch_pb.mix_audio(scale, 4096)
+		var count := 0
+		for i in range(1, pitched.size()):
+			if (pitched[i - 1].x < 0.0) != (pitched[i].x < 0.0):
+				count += 1
+		return count
+	var base_pitch: int = crossings.call(1.0)
+	var octave_up: int = crossings.call(2.0)
+	_check(absf(float(octave_up) / base_pitch - 2.0) < 0.2, "pitch_scale transposes events (%d -> %d crossings)" % [base_pitch, octave_up])
 	boom.set_start_input("power", 0.2)
 	boom.set_start_input("distance", 0.9)
 	var far_pb := boom.instantiate_playback() as SoundGeneratorPlayback

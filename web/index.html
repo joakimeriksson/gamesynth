@@ -414,7 +414,7 @@
       const put = (text, fn) => { const b = new TextEncoder().encode(text), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); const r = fn(p, b.length); w.gs_free_u8(p, b.length); return r; };
       const makeModel = spec => spec.config != null ? put(spec.config, (p, n) => w.model_from_config(p, n, ctx.sampleRate)) : put(spec.name, (p, n) => w.model_new(p, n, ctx.sampleRate));
       let e = kind === "jet" ? w.jet_new(ctx.sampleRate, opts.preset | 0) : kind === "model" ? makeModel(opts.model) : w.synth_new(ctx.sampleRate);
-      const buf = w.gs_alloc_f32(4096);
+      const buf = w.gs_alloc_f32(4096), buf2 = w.gs_alloc_f32(4096);
       const str = len => new TextDecoder().decode(new Uint8Array(w.memory.buffer, w.gs_str_ptr(), len));
       h.send = m => {
         const J = (json, fn) => { const b = new TextEncoder().encode(json), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); fn(p, b.length); w.gs_free_u8(p, b.length); };
@@ -426,7 +426,7 @@
         else { ({ trigger: () => w.synth_trigger(e), noteon: () => w.synth_note_on(e, m.note, m.velocity ?? 1), noteoff: () => w.synth_note_off(e, m.note), play: () => w.synth_play(e, m.note, m.velocity ?? 1, m.duration || 0), alloff: () => w.synth_all_notes_off(e), panic: () => w.synth_panic(e), sfx: () => w.synth_load_sfx(e, m.preset, m.seed >>> 0), mutate: () => w.synth_mutate(e, m.amount, m.seed >>> 0), reset: () => w.synth_reset_patch(e), param: () => w.synth_set_param(e, m.index, m.value), bend: () => w.synth_set_pitch_bend(e, m.bend), gain: () => w.synth_set_master_gain(e, m.gain), json: () => J(m.json, (p, n) => w.synth_from_json(e, p, n)) })[m.t]?.(); }
       };
       const sp = ctx.createScriptProcessor(2048, 0, 2);
-      sp.onaudioprocess = ev => { const l = ev.outputBuffer.getChannelData(0); if (kind === "jet") w.jet_render(e, buf, l.length); else if (kind === "model") w.model_render(e, buf, l.length); else w.synth_render(e, buf, l.length); l.set(new Float32Array(w.memory.buffer, buf, l.length)); ev.outputBuffer.getChannelData(1).set(l); h.tele = kind === "jet" ? { rpm: w.jet_rpm(e), peak: w.jet_peak(e) } : kind === "model" ? { peak: w.model_peak(e) } : { peak: w.synth_peak(e), voices: w.synth_active_voices(e) }; };
+      sp.onaudioprocess = ev => { const l = ev.outputBuffer.getChannelData(0); if (kind === "jet") w.jet_render(e, buf, l.length); else if (kind === "model") w.model_render_stereo(e, buf, buf2, l.length); else w.synth_render(e, buf, l.length); l.set(new Float32Array(w.memory.buffer, buf, l.length)); ev.outputBuffer.getChannelData(1).set(kind === "model" ? new Float32Array(w.memory.buffer, buf2, l.length) : l); h.tele = kind === "jet" ? { rpm: w.jet_rpm(e), peak: w.jet_peak(e) } : kind === "model" ? { peak: w.model_peak(e) } : { peak: w.synth_peak(e), voices: w.synth_active_voices(e) }; };
       sp.connect(gain); void str;
       setTimeout(() => h.onready && h.onready(), 0);
     }
@@ -627,7 +627,7 @@
       $("gen-snip").textContent = snippet();
       $("gen-trigger").hidden = !desc.one_shot;
       $("gen-help").innerHTML = desc.one_shot
-        ? "An event sound: set the inputs, then fire. Every trigger is slightly different (<code>shape/variation</code>); overlapping copies need one player each."
+        ? "An event sound: set the inputs, then fire. Every trigger is slightly different (<code>shape/variation</code>); <code>space/width</code> sets the stereo image (0 = mono). Overlapping copies need one player each."
         : "<kbd>Space</kbd> snaps inertia to the current inputs. Inputs are what your game sets every frame; params are what a designer tunes once.";
     }
     async function fire() { if (!(await ensureAudio())) return; send({ t: "trigger" }); }

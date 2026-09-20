@@ -27,6 +27,7 @@ class GsEngineProcessor extends AudioWorkletProcessor {
         if (preset != null) w.synth_load_sfx(this.engine, preset | 0, seed >>> 0);
       }
       this.buf = w.gs_alloc_f32(MAX_FRAMES);
+      this.buf2 = w.gs_alloc_f32(MAX_FRAMES); // right channel; only sound models render stereo
       this.ready = true;
       for (const m of this.pending) this.handle(m);
       this.pending = [];
@@ -110,12 +111,15 @@ class GsEngineProcessor extends AudioWorkletProcessor {
     const left = out[0];
     if (!this.ready) return true;
     const n = Math.min(left.length, MAX_FRAMES), w = this.w;
+    const stereo = this.kind === "model" && out.length > 1;
     if (this.kind === "jet") w.jet_render(this.engine, this.buf, n);
+    else if (stereo) w.model_render_stereo(this.engine, this.buf, this.buf2, n);
     else if (this.kind === "model") w.model_render(this.engine, this.buf, n);
     else w.synth_render(this.engine, this.buf, n);
     // Memory may have grown; always take a fresh view.
     left.set(new Float32Array(w.memory.buffer, this.buf, n));
-    for (let c = 1; c < out.length; c++) out[c].set(left);
+    if (stereo) out[1].set(new Float32Array(w.memory.buffer, this.buf2, n));
+    for (let c = stereo ? 2 : 1; c < out.length; c++) out[c].set(left);
     this.frames += n;
     if (this.frames >= sampleRate / 30) {
       this.frames = 0;

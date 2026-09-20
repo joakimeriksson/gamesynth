@@ -27,8 +27,9 @@ def main():
     fig, axes = plt.subplots(len(names), 1, figsize=(13, 2.6 * len(names)), facecolor="#0F141B")
     for ax, name in zip(np.atleast_1d(axes), names):
         with wave.open(f"{folder}/{name}.wav") as w:
-            sr = w.getframerate()
+            sr, channels = w.getframerate(), w.getnchannels()
             x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(float) / 32767
+            x = x.reshape(-1, channels).mean(axis=1)  # renders are stereo; analyse the fold-down
         f, t, power = spectrogram(x, fs=sr, nperseg=2048, noverlap=1536, window="hann")
         band = (f >= 30) & (f <= 20000)
         ax.pcolormesh(t, f[band], 10 * np.log10(power[band] + 1e-12), vmin=-105, vmax=-35, cmap="magma", shading="auto")
@@ -45,8 +46,7 @@ def main():
         ax.set_title(name, color="w", fontsize=9, loc="left")
         ax.tick_params(colors="#8593A5", labelsize=7)
         ax.set_facecolor("black")
-        for mark in (4, 6):
-            ax.axvline(mark, color="w", lw=0.5, alpha=0.5)
+        ax.set_xlim(0, len(x) / sr)
     plt.tight_layout()
     plt.savefig(sheet, dpi=70)
     print(sheet)

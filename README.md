@@ -136,7 +136,7 @@ tiers behind the same `SoundGenerator` class:
 
 | Tier | What | Cost |
 |---|---|---|
-| **Native** (34) | continuous: `jet` `hover` `combustion` `motor` `rotor` `scrape` `beam` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
+| **Native** (36) | continuous: `jet` `hover` `combustion` `motor` `rotor` `scrape` `beam` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep` `finish`, and a struck `bell`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
 | **Model files** | your own, as TOML/JSON: a graph of nodes plus control formulas. See [`models/README.md`](models/README.md) and the examples in `models/` (`mine_armed` proximity ticker, `rocket_flight` for the projectile, `recharge`, `checkpoint`, `shield`…) | about 2.5x a native generator |
 
 ```gdscript
@@ -150,8 +150,8 @@ func _physics_process(_dt):
     pb.set_inputs({"throttle": throttle, "load": load})
 ```
 
-**Event sounds** (the `fx` generators, or a model file with `one_shot = true`) are layered
-one-shots: an explosion is a crack, a swept body, a sub drop, rumble and a debris tail into a
+**Event sounds** (the `fx` generators, or a model file with `one_shot = true`) are layered,
+stereo one-shots: an explosion is a crack, a swept body, a sub drop, rumble and a debris tail into a
 small reverb. `play()` fires them, the player emits `finished` when the tail has rung out, and
 **every trigger is slightly different** (`shape/variation`), which is what keeps the tenth
 explosion from sounding canned. The game passes `power` and `distance` at the moment it happens:
@@ -168,7 +168,18 @@ func explode(power: float, distance: float) -> void:
 
 `pb.trigger()` refires a running one (auto-cannon bursts). Macro params bend a recipe without
 rewriting it: `shape/size`, `shape/pitch_semitones`, `shape/brightness`, `shape/punch`,
-`space/amount`, `space/tail`. A new native effect is a table of `Layer`s in
+`space/amount`, `space/tail`, `space/width`.
+
+Events are **stereo**: cracks and subs stay centred, noise bodies, debris and the reverb tail
+are decorrelated, chime partials are placed across the image. `space/width` 0 is mono and
+sample-identical to the mono render, 0.5 is each effect's designed width (wide for `explosion`
+and `shield_up`, nearly centred for `beep` and `pickup`), 1.0 doubles it. Stereo costs 30-50%
+more than mono, about 0.3% of a desktop core per sounding event.
+
+They end like samples: when the tail has rung out, `mix()` returns no frames, Godot drops the
+playback and the player emits `finished`. `get_length()` reports an upper bound on one trigger,
+tail included (measured by an offline render for model files). The player's `pitch_scale`
+transposes events, as it does for `SynthStream`; continuous generators ignore it. A new native effect is a table of `Layer`s in
 `generators/fx.rs`, not new DSP.
 
 `gen.get_input_names()` tells you what a model wants; params appear in the inspector under
@@ -238,14 +249,17 @@ tools/test_dashboard.py --sounds   # only re-render and re-review the sounds
 One page with every test surface (core suites, clippy, the wasm build exercised as the web lab
 uses it, the web lab itself in headless Chrome with the sound of every tab **measured**
 (`tools/web_audio_check.mjs [url]`, which also works against the deployed site), the headless
-Godot smoke test), release-build speed figures, and a **sound review**:
+Godot smoke test and a scene-tree test that plays one-shots through real
+`AudioStreamPlayer`s and awaits `finished`), release-build speed figures, and a **sound review**:
 each generator and model file rendered with a standard 10 s input sweep, shown as a
 spectrogram with a play button, and scored by detectors for faults found by reading
 spectrograms. Continuous sounds: *Bounded*, *Follows input*, *No dropouts*, *Not a chime* (noise-like sounds
 ringing at fixed pitches; calibrated at 0.9 dB for the shipped rain vs 6.6 dB for rain forced
 to one pitch), *Audible*, *Presets in range*. Event sounds are fired four times (full power
 twice, weak, distant) and checked for *Fires*, *Rings out*, *Varies* between identical
-triggers, *Responds to power* and *Distance dulls*. Sounds that legitimately break a rule are marked
+triggers, *Responds to power*, *Distance dulls* and *Stereo* (a real image, not out of phase).
+A **Stereo: before and after** section plays the same triggers at width 0 and at the designed
+width, with the measured L/R correlation and CPU cost. Sounds that legitimately break a rule are marked
 exempt with the reason. The script exits non-zero when anything needs attention, so it can
 gate CI. Needs numpy, scipy, matplotlib; uses node, godot and ffmpeg when present.
 
