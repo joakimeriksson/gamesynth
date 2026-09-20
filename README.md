@@ -236,7 +236,9 @@ tools/test_dashboard.py --sounds   # only re-render and re-review the sounds
 ```
 
 One page with every test surface (core suites, clippy, the wasm build exercised as the web lab
-uses it, the headless Godot smoke test), release-build speed figures, and a **sound review**:
+uses it, the web lab itself in headless Chrome with the sound of every tab **measured**
+(`tools/web_audio_check.mjs [url]`, which also works against the deployed site), the headless
+Godot smoke test), release-build speed figures, and a **sound review**:
 each generator and model file rendered with a standard 10 s input sweep, shown as a
 spectrogram with a play button, and scored by detectors for faults found by reading
 spectrograms. Continuous sounds: *Bounded*, *Follows input*, *No dropouts*, *Not a chime* (noise-like sounds

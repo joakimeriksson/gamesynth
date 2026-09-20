@@ -397,9 +397,16 @@
     const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.8;
     const h = { kind, gain, analyser, tele: {}, send() {} };
     if (host.worklet) {
-      const node = new AudioWorkletNode(ctx, "gs-engine", { outputChannelCount: [2], processorOptions: { module: host.module, kind, ...opts } });
-      node.port.onmessage = e => { if (e.data.ready) h.onready && h.onready(); else if (e.data.modelError) console.warn("[lab] model error in worklet:", e.data.modelError); else if (!e.data.modelReady) h.tele = e.data; };
-      h.send = m => node.port.postMessage(m);
+      // The worklet scope has no TextEncoder/TextDecoder, so text crosses the port as bytes.
+      const utf8 = new TextEncoder();
+      const wire = m => {
+        if (m.json != null) m = { ...m, json: undefined, bytes: utf8.encode(m.json) };
+        if (m.model) m = { ...m, model: { bytes: utf8.encode(m.model.config ?? m.model.name), config: m.model.config != null } };
+        return m;
+      };
+      const node = new AudioWorkletNode(ctx, "gs-engine", { outputChannelCount: [2], processorOptions: wire({ module: host.module, kind, ...opts }) });
+      node.port.onmessage = e => { if (e.data.ready) h.onready && h.onready(); else if (e.data.modelError) console.warn("[lab] model error in worklet:", new TextDecoder().decode(e.data.modelError)); else if (!e.data.modelReady) h.tele = e.data; };
+      h.send = m => node.port.postMessage(wire(m));
       node.connect(gain);
     } else {
       // ScriptProcessor fallback: render on the main thread with a private engine.

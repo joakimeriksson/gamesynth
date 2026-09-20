@@ -6,7 +6,8 @@
     tools/test_dashboard.py --sounds   # re-render and re-review the sounds, keep the last test results
     tools/test_dashboard.py --restyle  # re-apply the page template to the last results
 
-Runs every test surface (core tests, clippy, the WebAssembly build, the Godot smoke test),
+Runs every test surface (core tests, clippy, the WebAssembly build, the web lab in a real
+browser with its audio output measured, the Godot smoke test),
 renders every generator and model file with a standard input sweep, scores each sound with
 detectors for the faults a spectrogram review looks for, and writes a self-contained page with
 a spectrogram and an audio player per sound. Needs numpy, scipy and matplotlib; node, godot,
@@ -126,6 +127,24 @@ def wasm():
     tests = [{"name": c["name"], "status": "pass" if c["ok"] else "fail", "detail": c["detail"]} for c in checks]
     note = f"{os.path.getsize(wasm_file) // 1024} KB" + ("" if built else " (rebuild failed; checked the existing file)")
     return suite("wasm", "WebAssembly build as the web lab uses it", tests, build_secs + secs, note=note)
+
+
+def web_audio():
+    """Real browser: every tab of the web lab must produce measurable sound and no errors."""
+    what = "Web lab in headless Chrome: sound measured on every tab"
+    if not shutil.which("node") or not os.path.exists("/Applications/Google Chrome.app") and not os.environ.get("CHROME"):
+        return suite("web audio", what, [], 0, skipped="needs node and Chrome (set CHROME=path)")
+    code, out, secs = run(["node", "tools/web_audio_check.mjs"], timeout=300)
+    try:
+        report = json.loads(out[out.index("{"):])
+    except ValueError:
+        return suite("web audio", what, [{"name": "browser check ran", "status": "fail", "detail": out[-400:]}], secs)
+    levels = report.get("levels", {})
+    tests = [{"name": f"{k.replace('_', ' ')} is audible", "status": "pass" if v >= 0.01 else "fail", "detail": f"peak {v}"} for k, v in levels.items() if isinstance(v, (int, float))]
+    tests.append({"name": "audio context running", "status": "pass" if levels.get("context") == "running" else "fail", "detail": str(levels.get("context", levels.get("error", "")))})
+    problems = report.get("problems", [])
+    tests.append({"name": "no errors from the page or its AudioWorklet", "status": "fail" if any("rror" in x for x in problems) else "pass", "detail": "\n".join(problems)})
+    return suite("web audio", what, tests, secs)
 
 
 def godot():
@@ -342,7 +361,7 @@ def main():
     code, dirty, _ = run(["git", "status", "--porcelain"])
     code, subject, _ = run(["git", "log", "-1", "--format=%s"])
     print("running test suites…", flush=True)
-    suites = previous["suites"] if previous else core_tests() + [clippy(), wasm(), godot()]
+    suites = previous["suites"] if previous else core_tests() + [clippy(), wasm(), web_audio(), godot()]
     print("rendering and reviewing sounds…", flush=True)
     cards = sounds()
     data = {

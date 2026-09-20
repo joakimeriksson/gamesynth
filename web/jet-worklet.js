@@ -3,6 +3,10 @@
 // sound model (native generator by name, or a TOML/JSON model file compiled in place).
 // The compiled WebAssembly.Module arrives via processorOptions and is instantiated here, on
 // the audio thread, so rendering never crosses a thread boundary.
+//
+// AudioWorkletGlobalScope has no TextEncoder / TextDecoder: all text crosses the port as UTF-8
+// bytes (`bytes: Uint8Array`), encoded and decoded by the page. tools/web_audio_check.mjs runs
+// this file in a real browser; Node-based checks cannot see that class of mistake.
 const MAX_FRAMES = 4096;
 
 class GsEngineProcessor extends AudioWorkletProcessor {
@@ -17,7 +21,7 @@ class GsEngineProcessor extends AudioWorkletProcessor {
     WebAssembly.instantiate(module, {}).then((instance) => {
       const w = (this.w = instance.exports);
       if (this.kind === "jet") this.engine = w.jet_new(sampleRate, preset | 0);
-      else if (this.kind === "model") this.engine = this.makeModel(model || { name: "wind" }) || this.makeModel({ name: "wind" });
+      else if (this.kind === "model") this.engine = this.makeModel(model) || this.makeModel({ bytes: Uint8Array.of(119, 105, 110, 100) }); // "wind"
       else {
         this.engine = w.synth_new(sampleRate);
         if (preset != null) w.synth_load_sfx(this.engine, preset | 0, seed >>> 0);
@@ -30,28 +34,22 @@ class GsEngineProcessor extends AudioWorkletProcessor {
     });
   }
 
-  // Build a model from { name } (native) or { config } (file text). Returns 0 on failure and
-  // reports the compiler's message to the page.
+  // Build a model from { bytes, config }: a generator name, or model file text when `config`.
+  // Returns 0 on failure and sends the compiler's message (as bytes) to the page.
   makeModel(spec) {
     const w = this.w;
-    let handle = 0;
-    this.writeJson(spec.config != null ? spec.config : spec.name, (p, n) => {
-      handle = spec.config != null ? w.model_from_config(p, n, sampleRate) : w.model_new(p, n, sampleRate);
-    });
-    if (!handle) {
-      const len = w.gs_str_len();
-      const error = len ? new TextDecoder().decode(new Uint8Array(w.memory.buffer, w.gs_str_ptr(), len).slice()) : "unknown model";
-      this.port.postMessage({ modelError: error });
-    }
+    const handle = this.withBytes(spec.bytes, (p, n) => (spec.config ? w.model_from_config(p, n, sampleRate) : w.model_new(p, n, sampleRate)));
+    if (!handle) this.port.postMessage({ modelError: new Uint8Array(w.memory.buffer, w.gs_str_ptr(), w.gs_str_len()).slice() });
     return handle;
   }
 
-  writeJson(json, fn) {
-    const w = this.w, bytes = new TextEncoder().encode(json);
-    const p = w.gs_alloc_u8(bytes.length);
+  // Copy UTF-8 `bytes` into wasm memory for the duration of `fn(ptr, len)`.
+  withBytes(bytes, fn) {
+    const w = this.w, p = w.gs_alloc_u8(bytes.length);
     new Uint8Array(w.memory.buffer, p, bytes.length).set(bytes);
-    fn(p, bytes.length);
+    const result = fn(p, bytes.length);
     w.gs_free_u8(p, bytes.length);
+    return result;
   }
 
   handle(m) {
@@ -85,7 +83,7 @@ class GsEngineProcessor extends AudioWorkletProcessor {
         case "param": w.jet_set_param(e, m.index | 0, m.value); break;
         case "snap": w.jet_snap_rpm(e); break;
         case "gain": w.jet_set_master_gain(e, m.gain); break;
-        case "json": this.writeJson(m.json, (p, n) => w.jet_from_json(e, p, n)); break;
+        case "json": this.withBytes(m.bytes, (p, n) => w.jet_from_json(e, p, n)); break;
       }
     } else {
       switch (m.t) {
@@ -101,7 +99,7 @@ class GsEngineProcessor extends AudioWorkletProcessor {
         case "param": w.synth_set_param(e, m.index | 0, m.value); break;
         case "bend": w.synth_set_pitch_bend(e, m.bend); break;
         case "gain": w.synth_set_master_gain(e, m.gain); break;
-        case "json": this.writeJson(m.json, (p, n) => w.synth_from_json(e, p, n)); break;
+        case "json": this.withBytes(m.bytes, (p, n) => w.synth_from_json(e, p, n)); break;
       }
     }
   }
