@@ -18,7 +18,7 @@ fn set_all(m: &mut dyn Model, v: f32) {
 
 #[test]
 fn registry_is_consistent() {
-    assert!(generators::NAMES.len() >= 15);
+    assert!(generators::NAMES.len() >= 28);
     let descs = generators::describe_all();
     assert_eq!(descs.len(), generators::NAMES.len());
     for (name, d) in generators::NAMES.iter().zip(&descs) {
@@ -46,6 +46,18 @@ fn every_generator_and_preset_is_bounded_and_audible() {
             assert!(m.load_preset(preset));
             let label = format!("{name}/{}", m.desc().presets[preset].name);
             set_all(m.as_mut(), 1.0);
+            if m.desc().one_shot {
+                // Events are judged at point-blank range.
+                m.set_input(1, 0.0);
+                assert!(render(m.as_mut(), 0.2).iter().all(|x| *x == 0.0), "{label} must be silent before its trigger");
+                m.trigger();
+                let out = render(m.as_mut(), 6.0);
+                assert!(out.iter().all(|x| x.is_finite()), "{label} produced NaN/inf");
+                assert!(peak(&out) > 0.15 && peak(&out) <= 1.0, "{label} peak {}", peak(&out));
+                assert!(m.is_finished(), "{label} never finished");
+                assert!(peak(&out[5 * SR as usize..]) < 1e-3, "{label} still sounding after 5 s");
+                continue;
+            }
             m.snap();
             // Ocean waves take several seconds per cycle.
             let out = render(m.as_mut(), 6.0);
@@ -62,7 +74,7 @@ fn every_generator_and_preset_is_bounded_and_audible() {
 #[test]
 fn inputs_change_the_sound() {
     // Raising the primary input must raise the level for everything driven by intensity.
-    for name in ["hover", "combustion", "motor", "rotor", "wind", "rain", "fire", "stream", "electric", "crowd", "radio"] {
+    for name in ["hover", "combustion", "motor", "rotor", "scrape", "wind", "rain", "fire", "stream", "electric", "crowd", "radio"] {
         let level = |v: f32| {
             let mut m = generators::create(name, SR).unwrap();
             set_all(m.as_mut(), 0.5);
@@ -122,4 +134,44 @@ fn whole_library_renders_in_real_time() {
     let elapsed = start.elapsed().as_secs_f32();
     println!("library: all {} generators together render at {:.1}x real time", all.len(), secs / elapsed);
     assert!(elapsed < secs * 0.5, "all {} generators took {elapsed}s for {secs}s", all.len());
+}
+
+fn event(name: &str, power: f32, distance: f32, m: &mut dyn Model) -> Vec<f32> {
+    let _ = name;
+    m.set_input(0, power);
+    m.set_input(1, distance);
+    m.trigger();
+    render(m, 3.0)
+}
+
+#[test]
+fn one_shots_vary_respond_to_power_and_distance() {
+    for name in generators::NAMES {
+        let mut m = generators::create(name, SR).unwrap();
+        if !m.desc().one_shot {
+            continue;
+        }
+        let a = event(name, 1.0, 0.0, m.as_mut());
+        let b = event(name, 1.0, 0.0, m.as_mut());
+        let weak = event(name, 0.3, 0.0, m.as_mut());
+        let far = event(name, 1.0, 0.9, m.as_mut());
+        // Two identical triggers must not be sample-identical (anti-repetition).
+        let diff = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        assert!(diff > 0.01, "{name}: repeated triggers are identical");
+        assert!(rms(&weak) < rms(&a) * 0.8, "{name}: power 0.3 ({}) is not quieter than 1.0 ({})", rms(&weak), rms(&a));
+        assert!(rms(&far) < rms(&a) * 0.8, "{name}: distance does not attenuate");
+        let crossings = |s: &[f32]| s.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count() as f32 / s.len() as f32;
+        assert!(crossings(&far[..SR as usize / 2]) < crossings(&a[..SR as usize / 2]), "{name}: distance does not dull the sound");
+    }
+}
+
+#[test]
+fn variation_zero_is_repeatable() {
+    let mut m = generators::create("beep", SR).unwrap();
+    let i = m.desc().param_index("shape/variation").unwrap();
+    m.set_param(i, 0.0);
+    let a = event("beep", 1.0, 0.0, m.as_mut());
+    let b = event("beep", 1.0, 0.0, m.as_mut());
+    let diff = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+    assert!(diff < 1e-3, "UI tones must be able to repeat exactly: {diff}");
 }

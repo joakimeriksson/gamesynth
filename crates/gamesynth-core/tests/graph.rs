@@ -11,6 +11,8 @@ const FILES: &[(&str, &str)] = &[
     ("shield", include_str!("../../../models/shield.toml")),
     ("geiger", include_str!("../../../models/geiger.toml")),
     ("steam_vent", include_str!("../../../models/steam_vent.toml")),
+    ("checkpoint", include_str!("../../../models/checkpoint.toml")),
+    ("recharge", include_str!("../../../models/recharge.toml")),
 ];
 
 fn render(m: &mut dyn Model, secs: f32) -> Vec<f32> {
@@ -31,10 +33,24 @@ fn shipped_models_compile_and_sound() {
                 m.set_input(i, 1.0);
             }
             m.snap();
+            if m.desc().one_shot {
+                assert!(render(&mut m, 0.2).iter().all(|x| *x == 0.0), "{name} must be silent before its trigger");
+                m.trigger();
+            }
             let out = render(&mut m, 4.0);
             assert!(out.iter().all(|x| x.is_finite()), "{name} NaN");
             assert!(peak(&out) <= 1.0, "{name} peak {}", peak(&out));
-            assert!(rms(&out[SR as usize..]) > 0.02, "{name} preset {preset} too quiet: {}", rms(&out[SR as usize..]));
+            if m.desc().one_shot {
+                assert!(peak(&out) > 0.1, "{name} one-shot too quiet: {}", peak(&out));
+                assert!(m.is_finished(), "{name} one-shot never finished");
+                let again = {
+                    m.trigger();
+                    render(&mut m, 4.0)
+                };
+                assert!(out.iter().zip(&again).any(|(a, b)| (a - b).abs() > 1e-3), "{name}: `rnd` should vary each trigger");
+            } else {
+                assert!(rms(&out[SR as usize..]) > 0.02, "{name} preset {preset} too quiet: {}", rms(&out[SR as usize..]));
+            }
         }
     }
 }

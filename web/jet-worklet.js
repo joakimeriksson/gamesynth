@@ -62,6 +62,7 @@ class GsEngineProcessor extends AudioWorkletProcessor {
         case "param": w.model_set_param(e, m.index | 0, m.value); break;
         case "preset": w.model_load_preset(e, m.index | 0); break;
         case "snap": w.model_snap(e); break;
+        case "trigger": w.model_trigger(e); break;
         case "model": {
           // Hot swap. Allocating on the audio thread is fine for a tool page; a game would
           // build the new model elsewhere and hand over a pointer.

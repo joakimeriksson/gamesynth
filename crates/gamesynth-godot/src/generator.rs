@@ -32,6 +32,7 @@ struct ParamBlock {
 }
 
 enum Cmd {
+    Trigger,
     Input(usize, f32),
     Param(usize, f32),
     Preset(usize),
@@ -64,6 +65,8 @@ pub struct SoundGenerator {
     config: GString,
     preset: GString,
     start_snapped: bool,
+    /// Input values a new playback starts with (what a one-shot fires with on `play()`).
+    start_inputs: Vec<(String, f32)>,
     /// Prototype instance: owns the description and the current parameter values.
     proto: Option<Box<dyn Model>>,
     /// Source text when the model comes from a file or inline config.
@@ -220,6 +223,28 @@ impl SoundGenerator {
         GString::from(&self.error)
     }
 
+    /// True for event sounds (explosion, pickup…): `play()` fires them once and the player
+    /// emits `finished` when the tail has rung out.
+    #[func]
+    fn is_one_shot(&self) -> bool {
+        self.proto.as_ref().is_some_and(|m| m.desc().one_shot)
+    }
+
+    /// Input value that playbacks started from now on begin with. For one-shots this is how
+    /// you pass `power` / `distance` before `play()`:
+    /// `gen.set_start_input("power", 0.4); player.play()`.
+    #[func]
+    fn set_start_input(&mut self, name: GString, value: f64) -> bool {
+        let name = name.to_string();
+        if !self.proto.as_ref().is_some_and(|m| m.desc().input_index(&name).is_some()) {
+            godot_warn!("SoundGenerator.set_start_input: unknown input '{name}'");
+            return false;
+        }
+        self.start_inputs.retain(|(n, _)| *n != name);
+        self.start_inputs.push((name, value as f32));
+        true
+    }
+
     /// True for built-in generators, false for file-defined (graph) models.
     #[func]
     fn is_native(&self) -> bool {
@@ -311,6 +336,7 @@ impl IAudioStream for SoundGenerator {
             config: GString::new(),
             preset: GString::new(),
             start_snapped: true,
+            start_inputs: Vec::new(),
             proto: None,
             source: None,
             error: String::new(),
@@ -405,6 +431,9 @@ impl IAudioStream for SoundGenerator {
         for i in 0..block.count {
             model.set_param(i, block.values[i]);
         }
+        for (name, value) in &self.start_inputs {
+            model.set_input_by_name(name, *value);
+        }
         let (tx, rx) = RingBuffer::new(COMMAND_QUEUE_LEN);
         let input_names = model.desc().inputs.iter().map(|i| i.name.clone()).collect();
         let pb = Gd::from_init_fn(|base| SoundGeneratorPlayback {
@@ -416,6 +445,7 @@ impl IAudioStream for SoundGenerator {
             version,
             generation: block.generation,
             start_snapped: self.start_snapped,
+            pending_trigger: false,
             playing: false,
             frames_rendered: 0,
             base,
@@ -445,6 +475,9 @@ pub struct SoundGeneratorPlayback {
     version: u32,
     generation: u32,
     start_snapped: bool,
+    /// A one-shot fires on the first mix after `start`, so inputs sent right after `play()`
+    /// still shape it.
+    pending_trigger: bool,
     playing: bool,
     frames_rendered: u64,
     base: Base<AudioStreamPlayback>,
@@ -537,6 +570,13 @@ impl SoundGeneratorPlayback {
         }
     }
 
+    /// Fire a one-shot again with the current inputs (auto-cannon bursts, repeated beeps).
+    /// Cuts the previous tail; overlapping copies need one player each.
+    #[func]
+    fn trigger(&mut self) {
+        self.send(Cmd::Trigger);
+    }
+
     /// Jump all inertia (spool, rev, smoothing) to the current inputs.
     #[func]
     fn snap(&mut self) {
@@ -557,6 +597,7 @@ impl IAudioStreamPlayback for SoundGeneratorPlayback {
         if self.start_snapped {
             self.model.snap();
         }
+        self.pending_trigger = self.model.desc().one_shot;
         self.frames_rendered = 0;
         self.playing = true;
     }
@@ -587,6 +628,7 @@ impl IAudioStreamPlayback for SoundGeneratorPlayback {
         let frames = frames as usize;
         while let Ok(cmd) = self.rx.pop() {
             match cmd {
+                Cmd::Trigger => self.pending_trigger = true,
                 Cmd::Input(i, v) => self.model.set_input(i, v),
                 Cmd::Param(i, v) => self.model.set_param(i, v),
                 Cmd::Preset(i) => {
@@ -596,10 +638,18 @@ impl IAudioStreamPlayback for SoundGeneratorPlayback {
             }
         }
         self.sync_params();
+        if self.pending_trigger {
+            self.pending_trigger = false;
+            self.model.trigger();
+        }
         let model = &mut self.model;
         // SAFETY: Godot guarantees `buffer` holds at least `frames` AudioFrames.
         unsafe { fill_frames(ptr, frames, |block| model.render_mono(block)) };
         self.frames_rendered += frames as u64;
+        if self.model.is_finished() {
+            // Lets the player emit `finished`, like a sample that reached its end.
+            self.playing = false;
+        }
         frames as i32
     }
 }

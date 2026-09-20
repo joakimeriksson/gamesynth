@@ -10,7 +10,7 @@ game: `SoundGenerator.from_file("res://sounds/shield.toml")`.
 
 ```toml
 [model]
-name = "steam_vent"           # shown in tools; also category, doc
+name = "steam_vent"           # shown in tools; also category, doc, one_shot
 
 [inputs]                      # game state, 0..1, set every frame by the game
 pressure = { default = 0.5, doc = "Leak to full blast", smooth = 0.05 }
@@ -41,11 +41,16 @@ pipe_hz = 2400
   Gains and oscillator frequencies are ramped across each block, so modulation is click-free.
 * Signals and nodes may be listed in any order; dependencies are sorted for you.
 * The output always passes a soft limiter, so a model can never exceed ±1.0.
+* **Event sounds:** set `one_shot = true` under `[model]`. The model is silent (and free) until
+  triggered, then formulas see `t`, the seconds since the trigger, and `rnd`, a 0..1 value
+  re-rolled on every trigger. `exp(-t / 0.3)` is an envelope, `lerp(900, 90, clamp(t * 6, 0, 1))`
+  a pitch dive, `1 + 0.02 * (rnd - 0.5)` makes each one a little different. It counts as
+  finished once its level falls 60 dB. See `checkpoint.toml`.
 
 ## Formulas
 
 Operators `+ - * / ^ < >`, unary minus, parentheses. Names: your inputs, params and
-signals, plus `sr`, `pi`, `tau`.
+signals, plus `sr`, `pi`, `tau`, and `t` / `rnd` (time since the last trigger, per-trigger random).
 
 | Pure | |
 |---|---|
@@ -82,6 +87,7 @@ signals, plus `sr`, `pi`, `tau`.
 | `crush` | bits (8), downsample (1) | lo-fi |
 | `gain` | **gain** | smoothed |
 | `mix` | | sum of inputs |
+| `reverb` | time (1.2), mix (0.3), damping (0.4) | small room; gives events a tail (its send is high-passed so subs never ring) |
 | `limiter` | | soft limiter |
 
 Recipes: **crackle** = `dust → decay → mul(noise) → svf bandpass` (see `campfire.toml`);

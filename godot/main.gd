@@ -225,9 +225,16 @@ func _select_generator(choice: String) -> void:
 	for input_name in gen.get_input_names():
 		var slider := _add_plain_slider(_gen_inputs, input_name.capitalize(), gen.get_input_default(input_name))
 		slider.value_changed.connect(func(v: float) -> void:
+			# Events read their inputs when they fire; continuous sounds follow them live.
+			gen.set_start_input(input_name, v)
 			var pb := _gen_player.get_stream_playback() as SoundGeneratorPlayback
-			if pb:
+			if pb and not gen.is_one_shot():
 				pb.set_input(input_name, v))
+	if gen.is_one_shot():
+		var fire := Button.new()
+		fire.text = "Fire  (play() triggers it; every trigger varies)"
+		fire.pressed.connect(func() -> void: _gen_player.play())
+		_gen_inputs.add_child(fire)
 
 
 var _octave := 0

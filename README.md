@@ -136,7 +136,7 @@ tiers behind the same `SoundGenerator` class:
 
 | Tier | What | Cost |
 |---|---|---|
-| **Native** (15) | `jet` `hover` `combustion` `motor` `rotor` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`, each with presets (V8 muscle, Tin roof, Force field, Police yelp…) | all 15 at once use a fraction of one core |
+| **Native** (28) | continuous: `jet` `hover` `combustion` `motor` `rotor` `scrape` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: `explosion` `rocket` `plasma` `cannon` `impact` `shield_hit` `emp` `quake` `boost` `airbrake` `pickup` `beep`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
 | **Model files** | your own, as TOML/JSON: a graph of nodes plus control formulas. See [`models/README.md`](models/README.md) and the examples in `models/` | about 2.5x a native generator |
 
 ```gdscript
@@ -149,6 +149,27 @@ func _physics_process(_dt):
     var pb := player.get_stream_playback() as SoundGeneratorPlayback
     pb.set_inputs({"throttle": throttle, "load": load})
 ```
+
+**Event sounds** (the `fx` generators, or a model file with `one_shot = true`) are layered
+one-shots: an explosion is a crack, a swept body, a sub drop, rumble and a debris tail into a
+small reverb. `play()` fires them, the player emits `finished` when the tail has rung out, and
+**every trigger is slightly different** (`shape/variation`), which is what keeps the tenth
+explosion from sounding canned. The game passes `power` and `distance` at the moment it happens:
+
+```gdscript
+var boom := SoundGenerator.create("explosion")          # once; share it between pooled players
+boom.preset = "Ship destroyed"
+
+func explode(power: float, distance: float) -> void:
+    boom.set_start_input("power", power)                # glancing hit .. full blast
+    boom.set_start_input("distance", distance)          # 0 = point blank, 1 = far off
+    free_player().play()                                 # one player per overlapping copy
+```
+
+`pb.trigger()` refires a running one (auto-cannon bursts). Macro params bend a recipe without
+rewriting it: `shape/size`, `shape/pitch_semitones`, `shape/brightness`, `shape/punch`,
+`space/amount`, `space/tail`. A new native effect is a table of `Layer`s in
+`generators/fx.rs`, not new DSP.
 
 `gen.get_input_names()` tells you what a model wants; params appear in the inspector under
 their groups and reach running playbacks live. Start from a native generator; move to a
@@ -169,8 +190,8 @@ generator is one `model_params!` table plus a `Generator::block` function.
 | `JetEnginePatch` | `Resource` | Engine parameters; `from_preset`, `apply_preset`, `to_json`/`from_json`, `set_param`/`get_param` |
 | `JetEngineStream` | `AudioStream` | `patch`, `initial_throttle`, `start_spooled`; `from_preset(name)` |
 | `JetEnginePlayback` | `AudioStreamPlayback` | `set_throttle`, `set_boost`, `set_speed`, `set_damage`, `set_state`, `snap_rpm`, `set_param`, `set_patch`, `set_master_gain`, `get_rpm`, `get_peak` |
-| `SoundGenerator` | `AudioStream` | `generator`, `config_file`, `config`, `preset`, `start_snapped`, params as properties; `create`, `from_file`, `get_generator_names`, `get_input_names`, `get_input_default`, `get_param_names`, `get_preset_names`, `set_param`/`get_param`, `get_params_json`/`set_params_json`, `get_error`, `is_native` |
-| `SoundGeneratorPlayback` | `AudioStreamPlayback` | `set_input`, `set_inputs`, `set_input_index`, `get_input_index`, `get_input_names`, `set_param`, `load_preset`, `snap`, `get_peak` |
+| `SoundGenerator` | `AudioStream` | `generator`, `config_file`, `config`, `preset`, `start_snapped`, params as properties; `create`, `from_file`, `is_one_shot`, `set_start_input`, `get_generator_names`, `get_input_names`, `get_input_default`, `get_param_names`, `get_preset_names`, `set_param`/`get_param`, `get_params_json`/`set_params_json`, `get_error`, `is_native` |
+| `SoundGeneratorPlayback` | `AudioStreamPlayback` | `trigger`, `set_input`, `set_inputs`, `set_input_index`, `get_input_index`, `get_input_names`, `set_param`, `load_preset`, `snap`, `get_peak` |
 
 SFX presets: `Pickup`, `Laser`, `Explosion`, `PowerUp`, `Hit`, `Jump`, `Blip`, `Arrow`, `Shoot`, `Throw`, `Random`.
 Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.
@@ -218,9 +239,11 @@ One page with every test surface (core suites, clippy, the wasm build exercised 
 uses it, the headless Godot smoke test), release-build speed figures, and a **sound review**:
 each generator and model file rendered with a standard 10 s input sweep, shown as a
 spectrogram with a play button, and scored by detectors for faults found by reading
-spectrograms: *Bounded*, *Follows input*, *No dropouts*, *Not a chime* (noise-like sounds
+spectrograms. Continuous sounds: *Bounded*, *Follows input*, *No dropouts*, *Not a chime* (noise-like sounds
 ringing at fixed pitches; calibrated at 0.9 dB for the shipped rain vs 6.6 dB for rain forced
-to one pitch), *Audible*, *Presets in range*. Sounds that legitimately break a rule are marked
+to one pitch), *Audible*, *Presets in range*. Event sounds are fired four times (full power
+twice, weak, distant) and checked for *Fires*, *Rings out*, *Varies* between identical
+triggers, *Responds to power* and *Distance dulls*. Sounds that legitimately break a rule are marked
 exempt with the reason. The script exits non-zero when anything needs attention, so it can
 gate CI. Needs numpy, scipy, matplotlib; uses node, godot and ffmpeg when present.
 

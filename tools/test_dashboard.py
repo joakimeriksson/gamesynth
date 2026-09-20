@@ -38,6 +38,8 @@ FLAT_BY_DESIGN = {"drone": "level is constant by design; tension changes the tim
 SPARSE_BY_DESIGN = {"geiger": "isolated clicks are the sound", "radio": "clicks over quiet hiss"}
 # Noise-based sounds that must not ring at fixed pitches (the "glass chime" fault).
 BROADBAND = {"wind", "rain", "fire", "stream", "ocean", "crowd", "rain_on_tent", "campfire"}
+# `recharge` is gated by its first input and pitched by its second, so the level sweep
+# still applies; nothing else needs an exemption so far.
 
 
 def _native_prefix():
@@ -188,6 +190,61 @@ def chime_prominence(x, sr):
     return float(np.percentile(fine - smooth, 99))
 
 
+def treble(x, sr):
+    f, p = welch(x, fs=sr, nperseg=4096)
+    return float(np.sum(p[f > 2000]) / (np.sum(p) + 1e-20))
+
+
+def picture(name, x, sr, marks):
+    fs, ts, power = spectrogram(x, fs=sr, nperseg=2048, noverlap=1536, window="hann")
+    band = (fs >= 30) & (fs <= 20000)
+    fig = plt.figure(figsize=(9, 2.3), dpi=100)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.pcolormesh(ts, fs[band], 10 * np.log10(power[band] + 1e-12), vmin=-105, vmax=-35, cmap="magma", shading="auto")
+    ax.set_yscale("log")
+    ax.set_ylim(30, 20000)
+    ax.set_xlim(0, len(x) / sr)
+    ax.axis("off")
+    for mark in marks:
+        ax.axvline(mark, color="w", lw=0.6, alpha=0.45)
+    os.makedirs(os.path.join(OUT, "spec"), exist_ok=True)
+    fig.savefig(os.path.join(OUT, "spec", f"{name}.png"), facecolor="black")
+    plt.close(fig)
+    win = sr // 20
+    level = np.sqrt(np.convolve(x**2, np.ones(win) / win, "same"))[:: max(1, len(x) // 120)]
+    return [round(float(v), 3) for v in level]
+
+
+def review_event(name, path, engine):
+    """One-shots are rendered as four events 3 s apart: full power, full power again, power 0.4,
+    and full power at distance 0.8 (for model files: with their second input raised)."""
+    x, sr = load(path)
+    ev = [x[int(k * 3 * sr):int((k + 1) * 3 * sr)] for k in range(4)]
+    peak = float(np.max(np.abs(x)))
+    first = float(np.max(np.abs(ev[0])))
+    head = slice(0, int(1.5 * sr))
+    differ = float(np.max(np.abs(ev[0][head] - ev[1][head])) / (first + 1e-9))
+    tail = rms(ev[0][int(2.7 * sr):])
+    checks = [
+        {"name": "Bounded", "status": "pass" if np.all(np.isfinite(x)) and peak <= 1.0 else "fail", "detail": f"peak {peak:.2f}"},
+        {"name": "Fires", "status": "pass" if first > 0.15 else "fail", "detail": f"peak {first:.2f} at full power (want > 0.15)"},
+        {"name": "Rings out", "status": "pass" if tail < 0.01 else "fail", "detail": f"rms {tail:.4f} by 2.7 s after the trigger (want < 0.01)"},
+        {"name": "Responds to power", "status": "pass" if rms(ev[2]) < rms(ev[0]) * 0.8 else "fail", "detail": f"rms {rms(ev[0]):.3f} at power 1, {rms(ev[2]):.3f} at 0.4"},
+    ]
+    if name == "beep":
+        checks.append({"name": "Varies", "status": "exempt", "detail": "UI tones are meant to repeat; its presets set variation to 0"})
+    else:
+        checks.append({"name": "Varies", "status": "pass" if differ > 0.02 else "fail", "detail": f"two identical triggers differ by {differ * 100:.0f}% of peak (want > 2%)"})
+    if engine == "native":
+        # Share of energy above 2 kHz. (A spectral centroid barely moves for sounds that are
+        # mostly low already, like a cannon thump.)
+        near, far = treble(ev[0][head], sr), treble(ev[3][head], sr)
+        checks.append({"name": "Distance dulls", "status": "pass" if far < near * 0.6 and rms(ev[3]) < rms(ev[0]) else "fail", "detail": f"energy above 2 kHz: {near * 100:.1f}% near, {far * 100:.1f}% far"})
+    levels = picture(name, x, sr, (3, 6, 9))
+    return {"name": name, "engine": engine, "kind": "event", "checks": checks, "status": "fail" if any(c["status"] == "fail" for c in checks) else "pass",
+            "levels": levels, "sub": 0, "spec": f"spec/{name}.png", "audio": encode(name, path)}
+
+
 def review(name, path, engine):
     x, sr = load(path)
     seg = lambda a, b: x[int(a * sr):int(b * sr)]
@@ -214,23 +271,9 @@ def review(name, path, engine):
     audible = rms(seg(3.0, 6.0))
     checks.append({"name": "Audible", "status": "pass" if 0.02 < audible < 0.6 else "fail", "detail": f"rms {audible:.3f} at full input (want 0.02 - 0.6)"})
 
-    fs, ts, power = spectrogram(x, fs=sr, nperseg=2048, noverlap=1536, window="hann")
-    band = (fs >= 30) & (fs <= 20000)
-    fig = plt.figure(figsize=(9, 2.3), dpi=100)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.pcolormesh(ts, fs[band], 10 * np.log10(power[band] + 1e-12), vmin=-105, vmax=-35, cmap="magma", shading="auto")
-    ax.set_yscale("log")
-    ax.set_ylim(30, 20000)
-    ax.axis("off")
-    for mark in (4, 6):
-        ax.axvline(mark, color="w", lw=0.6, alpha=0.45)
-    os.makedirs(os.path.join(OUT, "spec"), exist_ok=True)
-    fig.savefig(os.path.join(OUT, "spec", f"{name}.png"), facecolor="black")
-    plt.close(fig)
-
-    level = np.sqrt(np.convolve(x**2, np.ones(win) / win, "same"))[:: sr // 10]
-    return {"name": name, "engine": engine, "checks": checks, "status": "fail" if any(c["status"] == "fail" for c in checks) else "pass",
-            "levels": [round(float(v), 3) for v in level], "sub": round(sub, 2), "spec": f"spec/{name}.png", "audio": encode(name, path)}
+    levels = picture(name, x, sr, (4, 6))
+    return {"name": name, "engine": engine, "kind": "continuous", "checks": checks, "status": "fail" if any(c["status"] == "fail" for c in checks) else "pass",
+            "levels": levels, "sub": round(sub, 2), "spec": f"spec/{name}.png", "audio": encode(name, path)}
 
 
 def encode(name, path):
@@ -253,12 +296,13 @@ def sounds():
         m = re.match(r"(\w+)\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)$", line)
         if m and m.group(1) != "model":
             presets.setdefault(m.group(1), []).append({"name": m.group(2).strip(), "rms": float(m.group(5)), "peak": float(m.group(6))})
-    run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_graphs", "--", WAV])
+    code, graph_out, _ = run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_graphs", "--", WAV])
+    events = set(re.findall(r"^# one_shot (\w+)", out + graph_out, re.M))
     result = []
     for file in sorted(os.listdir(WAV)):
         if file.endswith("_default.wav"):
             name = file[: -len("_default.wav")]
-            card = review(name, os.path.join(WAV, file), "native")
+            card = (review_event if name in events else review)(name, os.path.join(WAV, file), "native")
             card["presets"] = presets.get(name, [])
             quiet = [p["name"] for p in card["presets"] if not 0.02 < p["rms"] < 0.6 or p["peak"] > 1.0]
             card["checks"].append({"name": "Presets in range", "status": "fail" if quiet else "pass", "detail": ", ".join(quiet) or f"{len(card['presets'])} presets between 0.02 and 0.6 rms"})
@@ -266,8 +310,9 @@ def sounds():
             result.append(card)
     for file in sorted(os.listdir(WAV)):
         if file.startswith("graph_"):
-            result.append(review(file[len("graph_"):-4], os.path.join(WAV, file), "model file"))
-    order = ["jet", "hover", "combustion", "motor", "rotor", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
+            name = file[len("graph_"):-4]
+            result.append((review_event if name in events else review)(name, os.path.join(WAV, file), "model file"))
+    order = ["jet", "hover", "combustion", "motor", "rotor", "scrape", "explosion", "rocket", "plasma", "cannon", "impact", "shield_hit", "emp", "quake", "boost", "airbrake", "pickup", "beep", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
     result.sort(key=lambda c: (c["engine"] != "native", order.index(c["name"]) if c["name"] in order else 99, c["name"]))
     return result
 

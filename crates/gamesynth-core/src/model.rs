@@ -31,6 +31,9 @@ pub struct ModelDesc {
     pub doc: String,
     /// "native" or "graph".
     pub engine: &'static str,
+    /// True for event sounds (explosion, pickup…): silent until [`Model::trigger`], then plays
+    /// once and reports [`Model::is_finished`].
+    pub one_shot: bool,
     pub inputs: Vec<InputDesc>,
     pub params: Vec<ParamDesc>,
     pub presets: Vec<PresetDesc>,
@@ -61,6 +64,13 @@ pub trait Model: Send {
     fn param(&self, index: usize) -> f32;
     /// Jump all smoothing/inertia straight to the current inputs (e.g. spawning mid-flight).
     fn snap(&mut self);
+    /// Fire a one-shot using the current inputs (each trigger varies slightly). Continuous
+    /// models ignore it.
+    fn trigger(&mut self) {}
+    /// True once a one-shot has rung out; continuous models never finish.
+    fn is_finished(&self) -> bool {
+        false
+    }
     fn render_mono(&mut self, out: &mut [f32]);
     /// Recent output peak 0..1, decays over ~250 ms.
     fn peak(&self) -> f32;
@@ -118,6 +128,8 @@ pub trait Generator: Send + 'static {
     const INPUT_SMOOTH_SECS: f32 = 0.05;
     /// Whether [`Native`] applies the master soft limiter.
     const LIMIT: bool = true;
+    /// Event sound: silent until triggered, plays once.
+    const ONE_SHOT: bool = false;
 
     /// Named parameter sets. The default parameters are always preset 0 ("Default").
     fn presets() -> Vec<(&'static str, Self::P)> {
@@ -127,6 +139,12 @@ pub trait Generator: Send + 'static {
     fn new(sample_rate: f32) -> Self;
     /// Jump internal inertia to match `x`.
     fn snap(&mut self, _x: &[f32], _p: &Self::P) {}
+    /// Start a one-shot with inputs `x`.
+    fn trigger(&mut self, _x: &[f32], _p: &Self::P) {}
+    /// Whether a one-shot is still sounding (including its tail).
+    fn is_active(&self) -> bool {
+        true
+    }
     /// Render one control block, overwriting `out` (`out.len() <= BLOCK`). `x` holds the
     /// smoothed inputs in `INPUTS` order.
     fn block(&mut self, x: &[f32], p: &Self::P, out: &mut [f32]);
@@ -171,6 +189,7 @@ impl<G: Generator> Native<G> {
             category: G::CATEGORY.into(),
             doc: G::DOC.into(),
             engine: "native",
+            one_shot: G::ONE_SHOT,
             inputs: G::INPUTS.iter().map(|i| InputDesc { name: i.name.into(), default: i.default, doc: i.doc.into() }).collect(),
             params: describe::<G::P>(),
             presets,
@@ -216,8 +235,24 @@ impl<G: Generator> Model for Native<G> {
         self.g.snap(&self.smooth, &self.p);
     }
 
+    fn trigger(&mut self) {
+        // An event takes its inputs as they are at that instant.
+        self.smooth.copy_from_slice(&self.target);
+        self.g.trigger(&self.smooth, &self.p);
+    }
+
+    fn is_finished(&self) -> bool {
+        G::ONE_SHOT && !self.g.is_active() && self.peak < 1e-4
+    }
+
     fn render_mono(&mut self, out: &mut [f32]) {
         let mut peak = self.peak;
+        if G::ONE_SHOT && !self.g.is_active() {
+            // Idle one-shots cost nothing.
+            out.iter_mut().for_each(|s| *s = 0.0);
+            self.peak = peak * self.peak_decay.powi(out.len() as i32);
+            return;
+        }
         for chunk in out.chunks_mut(BLOCK) {
             let coef = settle_coef(G::INPUT_SMOOTH_SECS, chunk.len() as f32 / self.sample_rate);
             for (s, t) in self.smooth.iter_mut().zip(&self.target) {

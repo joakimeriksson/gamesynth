@@ -22,10 +22,22 @@ const checks = [];
 const check = (name, ok, detail = "") => checks.push({ name, ok: !!ok, detail });
 
 const lib = JSON.parse(str(w.model_library_json()));
-check("library lists the native generators", lib.models.length >= 15, `${lib.models.length} generators, ${lib.nodes.length} node types`);
+check("library lists the native generators", lib.models.length >= 28, `${lib.models.length} generators, ${lib.nodes.length} node types`);
 for (const d of lib.models) {
   const m = put(d.name, (p, n) => w.model_new(p, n, SR));
   d.inputs.forEach((i) => w.model_set_input(m, i.index, 1));
+  if (d.one_shot) {
+    // Events: point blank, fired once; must sound, then finish.
+    w.model_set_input(m, 1, 0);
+    w.model_trigger(m);
+    w.model_render(m, buf, SR);
+    let peak = 0;
+    for (const x of new Float32Array(w.memory.buffer, buf, SR)) peak = Math.max(peak, Math.abs(x));
+    for (let i = 0; i < 5; i++) w.model_render(m, buf, SR);
+    check(`one-shot ${d.name} fires and finishes`, peak > 0.15 && peak <= 1 && w.model_is_finished(m) === 1, `peak ${peak.toFixed(2)}`);
+    w.model_free(m);
+    continue;
+  }
   w.model_snap(m);
   const l = level(() => w.model_render(m, buf, SR));
   check(`generator ${d.name} renders`, m && l.finite && l.rms > 0.02, `rms ${l.rms.toFixed(3)}`);
@@ -37,7 +49,8 @@ for (const e of lib.examples) {
   const d = JSON.parse(str(w.model_desc_json(m)));
   d.inputs.forEach((i) => w.model_set_input(m, i.index, 1));
   w.model_snap(m);
-  const l = level(() => w.model_render(m, buf, SR));
+  if (d.one_shot) w.model_trigger(m);
+  const l = d.one_shot ? (() => { w.model_render(m, buf, SR); let s = 0; for (const x of new Float32Array(w.memory.buffer, buf, SR)) s += x * x; return { rms: Math.sqrt(s / SR), finite: true }; })() : level(() => w.model_render(m, buf, SR));
   check(`model file ${e.name} compiles and renders`, l.finite && l.rms > 0.02, `rms ${l.rms.toFixed(3)}`);
   w.model_free(m);
 }

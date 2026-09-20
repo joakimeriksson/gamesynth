@@ -4,6 +4,7 @@
 //! [`Model`] so bindings can treat native and file-defined models identically.
 
 pub mod ambient;
+pub mod fx;
 pub mod nature;
 pub mod vehicles;
 
@@ -35,6 +36,7 @@ registry!(
     vehicles::Combustion,
     vehicles::Motor,
     vehicles::Rotor,
+    vehicles::Scrape,
     nature::Wind,
     nature::Rain,
     nature::Fire,
@@ -45,4 +47,16 @@ registry!(
     ambient::Crowd,
     ambient::Radio,
     ambient::Siren,
+    fx::OneShot<fx::Explosion>,
+    fx::OneShot<fx::Rocket>,
+    fx::OneShot<fx::Plasma>,
+    fx::OneShot<fx::Cannon>,
+    fx::OneShot<fx::Impact>,
+    fx::OneShot<fx::ShieldHit>,
+    fx::OneShot<fx::Emp>,
+    fx::OneShot<fx::Quake>,
+    fx::OneShot<fx::Boost>,
+    fx::OneShot<fx::Airbrake>,
+    fx::OneShot<fx::Pickup>,
+    fx::OneShot<fx::Beep>,
 );

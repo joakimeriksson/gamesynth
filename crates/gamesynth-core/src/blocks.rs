@@ -189,3 +189,55 @@ impl Phasor {
         (self.phase * TAU).sin()
     }
 }
+
+/// Small mono reverb (four damped combs into two all-passes). Gives one-shots a space to
+/// ring out in; cheap enough to run per emitter.
+#[derive(Clone, Debug)]
+pub struct Reverb {
+    combs: [DelayLine; 4],
+    damp: [f32; 4],
+    allpass: [DelayLine; 2],
+    /// Keeps sub-bass out of the combs, whose low modes would ring as a pitched "boing".
+    send_hp: OnePole,
+    send_coef: f32,
+    sr: f32,
+}
+
+const COMB_MS: [f32; 4] = [29.7, 37.1, 41.1, 43.7];
+const ALLPASS_MS: [f32; 2] = [5.0, 1.7];
+
+impl Reverb {
+    pub fn new(sample_rate: f32) -> Self {
+        let line = |ms: f32| DelayLine::new((ms * 0.001 * sample_rate) as usize + 2);
+        Reverb { combs: COMB_MS.map(line), damp: [0.0; 4], allpass: ALLPASS_MS.map(line), send_hp: OnePole::default(), send_coef: hz_coef(220.0, sample_rate), sr: sample_rate }
+    }
+
+    pub fn clear(&mut self) {
+        self.combs.iter_mut().chain(self.allpass.iter_mut()).for_each(|l| l.clear());
+        self.damp = [0.0; 4];
+        self.send_hp = OnePole::default();
+    }
+
+    /// Wet signal for input `x`. `rt60` is the decay time in seconds, `damping` 0..1 darkens
+    /// the tail.
+    #[inline]
+    pub fn tick(&mut self, x: f32, rt60: f32, damping: f32) -> f32 {
+        let keep = 1.0 - damping.clamp(0.0, 0.95);
+        let x = self.send_hp.hp(x, self.send_coef);
+        let mut wet = 0.0;
+        for ((comb, damp), ms) in self.combs.iter_mut().zip(self.damp.iter_mut()).zip(COMB_MS) {
+            let g = 10f32.powf(-3.0 * ms * 0.001 / rt60.max(0.05));
+            let y = comb.read(ms * 0.001 * self.sr);
+            *damp += (y - *damp) * keep;
+            comb.write(x + *damp * g);
+            wet += y;
+        }
+        let mut y = wet * 0.25;
+        for (line, ms) in self.allpass.iter_mut().zip(ALLPASS_MS) {
+            let v = -0.5 * y + line.read(ms * 0.001 * self.sr);
+            line.write(y + 0.5 * v);
+            y = v;
+        }
+        y
+    }
+}

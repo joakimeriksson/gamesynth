@@ -1,0 +1,33 @@
+[model]
+name = "recharge"
+category = "scifi"
+doc = "Pit-lane energy recharge: a pulsing hum that climbs in pitch and brightness as the ship fills up."
+
+[inputs]
+active = { default = 0.0, doc = "1 while the ship is over the recharge strip", smooth = 0.15 }
+charge = { default = 0.0, doc = "Ship energy 0..1; drives pitch, pulse rate and shimmer", smooth = 0.1 }
+
+[params]
+base_hz = { default = 110, min = 40, max = 400, scale = "exp", group = "hum" }
+rise = { default = 1.0, min = 0, max = 2, group = "hum" }
+pulse_hz = { default = 5, min = 1, max = 20, group = "pulse" }
+pulse_depth = { default = 0.5, min = 0, max = 1, group = "pulse" }
+shimmer = { default = 0.5, min = 0, max = 1, group = "shimmer" }
+gain = { default = 0.8, min = 0, max = 2, group = "master" }
+
+[signals]
+f = "base_hz * exp2(rise * charge)"
+pulse = "1 - pulse_depth * (0.5 + 0.5 * lfo(pulse_hz * (1 + 2 * charge)))"
+
+[graph]
+nodes = [
+  { id = "a", type = "saw", freq = "f" },
+  { id = "b", type = "saw", freq = "f * 1.5 * 1.004" },
+  { id = "sub", type = "sine", freq = "f * 0.5" },
+  { id = "body", type = "svf", mode = "lowpass", in = ["a", { from = "b", gain = 0.6 }], cutoff = "300 + 3500 * charge", resonance = 0.45 },
+  { id = "white", type = "noise" },
+  { id = "glass", type = "resonators", in = ["white"], freqs = [1.0, 1.5, 2.0, 3.0], scale = "f * 8", resonance = 0.97 },
+  { id = "sweep", type = "comb", in = [{ from = "body", gain = 0.35 }, { from = "sub", gain = 0.3 }, { from = "glass", gain = "shimmer * 0.04 * (0.3 + 0.7 * charge)" }], ms = "3 - 1.5 * charge", feedback = 0.6, mix = 0.5 },
+  { id = "out", type = "gain", in = ["sweep"], gain = "gain * active * pulse * 0.7" },
+]
+out = "out"

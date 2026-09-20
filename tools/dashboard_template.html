@@ -122,7 +122,7 @@
   <section style="display:flex;flex-direction:column;gap:12px">
     <div class="section-head">
       <h2>Sound review</h2>
-      <p>Each sound is rendered with the same 10 s sweep (main input ramps up, holds while the second input is raised, ramps down), then scored. Press play to judge it by ear; hover or tap a check for its measurement.</p>
+      <p>Continuous sounds are rendered with a 10 s input sweep; event sounds are fired four times (full power twice, weak, distant). Then each is scored. Press play to judge it by ear; hover or tap a check for its measurement.</p>
       <div class="filters" id="filters" role="group" aria-label="Filter sounds"></div>
     </div>
     <div class="sounds" id="sounds"></div>
@@ -175,7 +175,9 @@ const DATA = /*DATA*/null;
     const n = s.levels.length, pts = s.levels.map((v, i) => `${(i / (n - 1) * 100).toFixed(2)},${(100 - Math.min(v, 0.7) / 0.7 * 100).toFixed(1)}`).join(" ");
     spec.insertAdjacentHTML("beforeend", `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="var(--trace)" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`);
     [["20k", "3%"], ["1k", "44%"], ["30", "88%"]].forEach(([t, top]) => { const h = el("span", "hz", t); h.style.top = top; spec.append(h); });
-    const ruler = el("div", "ruler"); ["0-4 s  ramp up", "4-6 s  hold", "6-10 s  ramp down"].forEach(t => ruler.append(el("span", "", t)));
+    const ruler = el("div", "ruler"); const event = s.kind === "event"; card.dataset.kind = s.kind || "continuous";
+    if (event) ruler.style.gridTemplateColumns = "1fr 1fr 1fr 1fr";
+    (event ? ["full power", "again (must differ)", "power 0.4", s.engine === "native" ? "distance 0.8" : "2nd input 0.8"] : ["0-4 s  ramp up", "4-6 s  hold", "6-10 s  ramp down"]).forEach(t => ruler.append(el("span", "", t)));
     const body = el("div", "body"), head = el("div", "head");
     head.append(el("h3", "", s.name.replace(/_/g, " ")), el("span", "pill plain", s.engine), el("span", "pill " + s.status, s.status === "pass" ? "clean" : "check"));
     const audio = el("audio"); audio.controls = true; audio.preload = "none"; audio.src = s.audio; audio.setAttribute("aria-label", `Play ${s.name}`);
@@ -188,7 +190,7 @@ const DATA = /*DATA*/null;
     if (s.presets && s.presets.length > 1) { const p = el("div", "presets"); p.append(el("b", "", "Presets  "), document.createTextNode(s.presets.map(x => x.name).join(" \u00b7 "))); body.append(p); }
     card.append(spec, ruler, body); $("sounds").append(card); cards.push(card);
   });
-  const filters = [["All", () => true], ["Needs attention", c => c.dataset.state === "fail"], ["Native", c => c.dataset.engine === "native"], ["Model files", c => c.dataset.engine !== "native"]];
+  const filters = [["All", () => true], ["Needs attention", c => c.dataset.state === "fail"], ["Events", c => c.dataset.kind === "event"], ["Continuous", c => c.dataset.kind !== "event"], ["Model files", c => c.dataset.engine !== "native"]];
   let saved = 0; try { saved = +localStorage.getItem("gs-bench-filter") || 0; } catch {}
   const apply = i => { cards.forEach(c => { c.hidden = !filters[i][1](c); }); [...$("filters").children].forEach((b, k) => b.setAttribute("aria-pressed", k === i)); try { localStorage.setItem("gs-bench-filter", i); } catch {} };
   filters.forEach(([label, fn], i) => { const count = cards.filter(fn).length; const b = el("button", "", `${label} ${count}`); b.id = "filter-" + i; b.addEventListener("click", () => apply(i)); $("filters").append(b); });

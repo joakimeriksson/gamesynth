@@ -35,7 +35,7 @@ mod expr;
 use indexmap::IndexMap;
 use serde::Deserialize;
 
-use crate::blocks::{hz_coef, settle_coef, Brown, DelayLine, Dust, OnePole, BLOCK};
+use crate::blocks::{hz_coef, settle_coef, Brown, DelayLine, Dust, OnePole, Reverb, BLOCK};
 use crate::filter::{FilterMode, Svf};
 use crate::math::{limit, soft_clip, Rng, TAU};
 use crate::model::{InputDesc, Model, ModelDesc, PresetDesc};
@@ -98,6 +98,10 @@ pub struct MetaSpec {
     pub doc: String,
     #[serde(default)]
     pub version: u32,
+    /// Event sound: silent until triggered. Formulas use `t` (seconds since the trigger) and
+    /// `rnd` (0..1, re-rolled per trigger) to shape envelopes and variation.
+    #[serde(default)]
+    pub one_shot: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -205,6 +209,7 @@ const NODE_TYPES: &[NodeInfo] = &[
     ("gain", &[("gain", REQ)], &[], "Smoothed gain"),
     ("mix", &[], &[], "Sum of inputs (each input may carry its own gain)"),
     ("mul", &[], &[], "sum(in) * sum(by): ring modulation, envelopes, gating"),
+    ("reverb", &[("time", 1.2), ("mix", 0.3), ("damping", 0.4)], &[], "Small room reverb; gives one-shots a tail"),
     ("limiter", &[], &[], "Soft limiter, never exceeds +-1"),
 ];
 
@@ -229,6 +234,7 @@ enum Kind {
     Gain { last: f32 },
     Mix,
     Mul,
+    Reverb(Box<Reverb>),
     Limiter,
 }
 
@@ -258,7 +264,7 @@ struct Node {
 pub struct GraphModel {
     desc: ModelDesc,
     sample_rate: f32,
-    /// Value table read by programs: `[sr, inputs.., params.., signals..]`.
+    /// Value table read by programs: `[sr, t, rnd, inputs.., params.., signals..]`.
     vars: Vec<f32>,
     input_target: Vec<f32>,
     input_secs: Vec<f32>,
@@ -274,7 +280,15 @@ pub struct GraphModel {
     out: usize,
     peak: f32,
     peak_decay: f32,
+    trigger_rng: Rng,
 }
+
+/// Slots of the built-in variables in the value table.
+const VAR_T: usize = 1;
+const VAR_RND: usize = 2;
+const INPUT_OFF: usize = 3;
+/// `t` before the first trigger of a one-shot: long enough for any envelope to be silent.
+const NEVER: f32 = 1.0e6;
 
 impl GraphModel {
     /// Parse and compile a TOML or JSON model file.
@@ -299,8 +313,9 @@ impl GraphModel {
     fn render_block(&mut self, out: &mut [f32]) {
         let n = out.len();
         let (sr, dt) = (self.sample_rate, n as f32 / self.sample_rate);
+        self.vars[VAR_T] += dt;
         for (i, target) in self.input_target.iter().enumerate() {
-            let v = &mut self.vars[1 + i];
+            let v = &mut self.vars[INPUT_OFF + i];
             *v += (*target - *v) * settle_coef(self.input_secs[i], dt);
         }
         for k in 0..self.signals.len() {
@@ -375,7 +390,7 @@ impl Model for GraphModel {
 
     fn snap(&mut self) {
         for (i, t) in self.input_target.iter().enumerate() {
-            self.vars[1 + i] = *t;
+            self.vars[INPUT_OFF + i] = *t;
         }
         self.states.iter_mut().for_each(|s| s.snap());
         for node in self.nodes.iter_mut() {
@@ -388,9 +403,31 @@ impl Model for GraphModel {
         }
     }
 
+    fn trigger(&mut self) {
+        self.vars[VAR_T] = 0.0;
+        self.vars[VAR_RND] = self.trigger_rng.next_f32();
+        // An event takes its inputs as they are at that instant.
+        for (i, t) in self.input_target.iter().enumerate() {
+            self.vars[INPUT_OFF + i] = *t;
+        }
+    }
+
+    fn is_finished(&self) -> bool {
+        // -60 dB: exponential tails take forever to reach true silence.
+        self.desc.one_shot && self.vars[VAR_T] > 0.1 && self.peak < 1e-3
+    }
+
     fn render_mono(&mut self, out: &mut [f32]) {
+        if self.desc.one_shot && self.vars[VAR_T] >= NEVER {
+            out.iter_mut().for_each(|s| *s = 0.0);
+            return;
+        }
         for chunk in out.chunks_mut(BLOCK) {
             self.render_block(chunk);
+        }
+        if self.is_finished() {
+            // Park it: the next render is free until the next trigger.
+            self.vars[VAR_T] = NEVER;
         }
     }
 
@@ -436,6 +473,7 @@ fn reset(kind: &mut Kind) {
         Kind::Comb { line, .. } => line.clear(),
         Kind::Resonators { f, .. } => f.iter_mut().for_each(|r| r.reset()),
         Kind::Decay { env } => *env = 0.0,
+        Kind::Reverb(r) => r.clear(),
         Kind::Noise { brown, .. } => *brown = Brown::default(),
         _ => {}
     }
@@ -580,6 +618,12 @@ fn process(kind: &mut Kind, pv: &[f32; 4], x: &[f32], by: &[f32], out: &mut [f32
                 *o = a * b;
             }
         }
+        Kind::Reverb(r) => {
+            let mix = pv[1].clamp(0.0, 1.0);
+            for (o, s) in out.iter_mut().zip(x) {
+                *o = *s + r.tick(*s, pv[0].clamp(0.05, 10.0), pv[2]) * mix;
+            }
+        }
         Kind::Limiter => {
             for (o, s) in out.iter_mut().zip(x) {
                 *o = limit(*s);
@@ -593,7 +637,7 @@ fn process(kind: &mut Kind, pv: &[f32; 4], x: &[f32], by: &[f32], out: &mut [f32
 // ---------------------------------------------------------------------------------------------
 
 const RESERVED: &[&str] = &[
-    "sr", "pi", "tau", "abs", "sqrt", "exp", "exp2", "ln", "sin", "cos", "floor", "db", "midi", "min", "max", "pow", "clamp", "lerp", "select",
+    "sr", "t", "rnd", "pi", "tau", "abs", "sqrt", "exp", "exp2", "ln", "sin", "cos", "floor", "db", "midi", "min", "max", "pow", "clamp", "lerp", "select",
     "smoothstep", "slew", "lag", "noise", "sh", "lfo", "ramp",
 ];
 
@@ -670,7 +714,7 @@ fn compile(spec: &ModelSpec, sr: f32) -> Result<GraphModel, ModelError> {
     }
 
     // ---- names and the value table: [sr, inputs.., params.., signals..] ----
-    let mut names = vec!["sr".to_string()];
+    let mut names = vec!["sr".to_string(), "t".to_string(), "rnd".to_string()];
     let sections: [(&str, Vec<&String>); 3] =
         [("inputs", spec.inputs.keys().collect()), ("params", spec.params.keys().collect()), ("signals", spec.signals.keys().collect())];
     for (section, keys) in sections {
@@ -682,10 +726,12 @@ fn compile(spec: &ModelSpec, sr: f32) -> Result<GraphModel, ModelError> {
             names.push(key.clone());
         }
     }
-    let param_off = 1 + spec.inputs.len();
+    let param_off = INPUT_OFF + spec.inputs.len();
     let signal_off = param_off + spec.params.len();
     let mut vars = vec![0.0f32; names.len()];
     vars[0] = sr;
+    vars[VAR_T] = if spec.model.one_shot { NEVER } else { 0.0 };
+    vars[VAR_RND] = 0.5;
 
     // ---- description ----
     let mut params = Vec::new();
@@ -722,13 +768,14 @@ fn compile(spec: &ModelSpec, sr: f32) -> Result<GraphModel, ModelError> {
         inputs.push(InputDesc { name: key.clone(), default: d, doc: inp.doc.clone() });
         input_target.push(d);
         input_secs.push(inp.smooth.unwrap_or(0.05).clamp(0.0, 10.0));
-        vars[1 + i] = d;
+        vars[INPUT_OFF + i] = d;
     }
     let desc = ModelDesc {
         name: if spec.model.name.is_empty() { "custom".into() } else { spec.model.name.clone() },
         category: if spec.model.category.is_empty() { "custom".into() } else { spec.model.category.clone() },
         doc: spec.model.doc.clone(),
         engine: "graph",
+        one_shot: spec.model.one_shot,
         inputs,
         params,
         presets,
@@ -822,6 +869,7 @@ fn compile(spec: &ModelSpec, sr: f32) -> Result<GraphModel, ModelError> {
         out,
         peak: 0.0,
         peak_decay: (-9.21 / (0.25 * sr)).exp(),
+        trigger_rng: Rng::new(crate::blocks::mix_seed(spec.graph.nodes.len() as u32 ^ 0x7E57)),
     })
 }
 
@@ -930,6 +978,7 @@ fn build_node(n: &NodeSpec, inputs: Vec<Source>, by: Vec<Source>, ctx: &mut Ctx,
         "gain" => Kind::Gain { last: f32::NAN },
         "mix" => Kind::Mix,
         "mul" => Kind::Mul,
+        "reverb" => Kind::Reverb(Box::new(Reverb::new(sr))),
         _ => Kind::Limiter,
     };
     Ok(Node { kind, params, inputs, by })

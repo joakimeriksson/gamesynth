@@ -127,7 +127,7 @@ func _init() -> void:
 	print("SoundGenerator")
 	_check(ClassDB.class_exists("SoundGenerator"), "class registered")
 	var gen_names := SoundGenerator.get_generator_names()
-	_check(gen_names.size() >= 15, "generator library: %d" % gen_names.size())
+	_check(gen_names.size() >= 28, "generator library: %d" % gen_names.size())
 	var silent := []
 	for gname in gen_names:
 		var g := SoundGenerator.create(gname)
@@ -137,6 +137,16 @@ func _init() -> void:
 			continue
 		for input_name in gpb.get_input_names():
 			gpb.set_input(input_name, 1.0)
+		if g.is_one_shot():
+			# Events fire on play() and must then finish like a sample would.
+			g.set_start_input("distance", 0.0)
+			gpb = g.instantiate_playback() as SoundGeneratorPlayback
+			gpb.start(0.0)
+			var shot := _peak(gpb.mix_audio(1.0, 24000))
+			gpb.mix_audio(1.0, 48000 * 6)
+			if shot < 0.15 or shot > 1.0 or gpb.is_playing():
+				silent.append("%s (one-shot peak %.3f, still playing %s)" % [gname, shot, gpb.is_playing()])
+			continue
 		gpb.start(0.0)
 		gpb.snap()
 		gpb.mix_audio(1.0, 24000)
@@ -166,6 +176,36 @@ func _init() -> void:
 	_check(not wpb.set_input("nope", 1.0) and wpb.get_input_index("strength") == 0, "input lookup")
 	var round_trip := SoundGenerator.create("wind")
 	_check(round_trip.set_params_json(wind_gen.get_params_json()) and round_trip.get_param("howl/hz") == 800.0, "params json round trip")
+
+	var boom := SoundGenerator.create("explosion")
+	_check(boom.is_one_shot() and not SoundGenerator.create("wind").is_one_shot(), "is_one_shot")
+	var bpb := boom.instantiate_playback() as SoundGeneratorPlayback
+	_check(_peak(bpb.mix_audio(1.0, 4096)) == 0.0, "one-shot is silent before play()")
+	bpb.start(0.0)
+	var boom_peak := _peak(bpb.mix_audio(1.0, 48000))
+	bpb.mix_audio(1.0, 48000 * 5)
+	_check(boom_peak > 0.3 and not bpb.is_playing(), "play() fires it (peak %.2f) and it finishes by itself" % boom_peak)
+	boom.set_start_input("power", 0.2)
+	boom.set_start_input("distance", 0.9)
+	var far_pb := boom.instantiate_playback() as SoundGeneratorPlayback
+	far_pb.start(0.0)
+	var weak_peak := _peak(far_pb.mix_audio(1.0, 48000))
+	_check(weak_peak < boom_peak * 0.5, "set_start_input shapes the event (%.2f vs %.2f)" % [weak_peak, boom_peak])
+	var burst_pb := SoundGenerator.create("cannon").instantiate_playback() as SoundGeneratorPlayback
+	burst_pb.start(0.0)
+	burst_pb.mix_audio(1.0, 48000 * 2)
+	burst_pb.start(0.0)
+	burst_pb.mix_audio(1.0, 9600)
+	burst_pb.trigger()
+	_check(_peak(burst_pb.mix_audio(1.0, 9600)) > 0.15 and burst_pb.is_playing(), "trigger() retriggers a running one-shot")
+	var chime_path := ProjectSettings.globalize_path("res://").path_join("../models/checkpoint.toml")
+	var chime := SoundGenerator.from_file(chime_path)
+	_check(chime.get_error() == "" and chime.is_one_shot(), "a model file can define a one-shot %s" % chime.get_error())
+	var cpb := chime.instantiate_playback() as SoundGeneratorPlayback
+	cpb.start(0.0)
+	var chime_peak := _peak(cpb.mix_audio(1.0, 24000))
+	cpb.mix_audio(1.0, 48000 * 5)
+	_check(chime_peak > 0.1 and not cpb.is_playing(), "file one-shot fires (peak %.2f) and finishes" % chime_peak)
 
 	var model_path := ProjectSettings.globalize_path("res://").path_join("../models/campfire.toml")
 	var fire_gen := SoundGenerator.from_file(model_path)

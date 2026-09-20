@@ -380,6 +380,8 @@ const EXAMPLES: &[(&str, &str)] = &[
     ("shield", include_str!("../../../models/shield.toml")),
     ("geiger", include_str!("../../../models/geiger.toml")),
     ("steam_vent", include_str!("../../../models/steam_vent.toml")),
+    ("recharge", include_str!("../../../models/recharge.toml")),
+    ("checkpoint", include_str!("../../../models/checkpoint.toml")),
 ];
 
 fn desc_json(d: &ModelDesc) -> serde_json::Value {
@@ -388,6 +390,7 @@ fn desc_json(d: &ModelDesc) -> serde_json::Value {
         "category": d.category,
         "doc": d.doc,
         "engine": d.engine,
+        "one_shot": d.one_shot,
         "inputs": d.inputs.iter().enumerate().map(|(i, x)| json!({ "index": i, "name": x.name, "default": x.default, "doc": x.doc })).collect::<Vec<_>>(),
         "params": params_json(&d.params),
         "presets": d.presets.iter().map(|p| json!({ "name": p.name, "values": p.values })).collect::<Vec<_>>(),
@@ -480,6 +483,18 @@ pub unsafe extern "C" fn model_load_preset(m: ModelHandle, index: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn model_snap(m: ModelHandle) {
     (*m).snap();
+}
+
+/// Fire a one-shot with the current inputs (no effect on continuous models).
+#[no_mangle]
+pub unsafe extern "C" fn model_trigger(m: ModelHandle) {
+    (*m).trigger();
+}
+
+/// 1 once a one-shot has rung out.
+#[no_mangle]
+pub unsafe extern "C" fn model_is_finished(m: ModelHandle) -> u32 {
+    (*m).is_finished() as u32
 }
 
 #[no_mangle]

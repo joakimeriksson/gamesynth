@@ -1,0 +1,41 @@
+# A one-shot defined in a file: `t` is seconds since the trigger, `rnd` is re-rolled (0..1)
+# on every trigger so no two checkpoints sound exactly alike.
+[model]
+name = "checkpoint"
+category = "fx"
+doc = "Checkpoint / lap chime: two rising glassy notes with a shimmer tail."
+one_shot = true
+
+[inputs]
+power = { default = 1.0, doc = "1 = lap record flourish, lower = plain checkpoint" }
+
+[params]
+note_hz = { default = 880, min = 200, max = 3000, scale = "exp", group = "chime" }
+interval = { default = 7, min = 0, max = 24, group = "chime" }
+ring_s = { default = 0.22, min = 0.05, max = 2, group = "chime" }
+space = { default = 0.35, min = 0, max = 1, group = "master" }
+gain = { default = 0.8, min = 0, max = 2, group = "master" }
+
+[signals]
+detune = "1 + 0.012 * (rnd - 0.5)"
+env1 = "exp(-t / ring_s)"
+t2 = "t - 0.09"
+env2 = "select(t2 > 0, exp(-max(t2, 0) / (ring_s * (1 + 0.5 * power))), 0)"
+second = "note_hz * exp2(interval / 12) * detune"
+
+[graph]
+nodes = [
+  { id = "n1", type = "sine", freq = "note_hz * detune" },
+  { id = "n1b", type = "sine", freq = "note_hz * detune * 2.76" },
+  { id = "n2", type = "sine", freq = "second" },
+  { id = "n2b", type = "sine", freq = "second * 2.76" },
+  { id = "air", type = "noise" },
+  { id = "sparkle", type = "svf", mode = "highpass", in = ["air"], cutoff = 6000 },
+  { id = "dry", type = "mix", in = [
+      { from = "n1", gain = "env1 * 0.5" }, { from = "n1b", gain = "env1 * env1 * 0.15" },
+      { from = "n2", gain = "env2 * 0.5" }, { from = "n2b", gain = "env2 * env2 * 0.15" },
+      { from = "sparkle", gain = "env2 * 0.06 * power" } ] },
+  { id = "room", type = "reverb", in = ["dry"], time = 0.9, mix = "space" },
+  { id = "out", type = "gain", in = ["room"], gain = "gain * (0.5 + 0.5 * power)" },
+]
+out = "out"

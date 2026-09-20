@@ -496,3 +496,105 @@ impl Generator for Rotor {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Scrape (hull grinding along a wall)
+// ---------------------------------------------------------------------------------------------
+
+model_params! {
+    /// Metal on track wall: noise forced through wandering metallic resonances (the screech),
+    /// stick-slip chatter, a shower of sparks and low body rumble.
+    ScrapeParams / ScrapeParamId {
+        metal_hz: "metal/hz" = 1700.0, exp(400.0, 6000.0);
+        metal_res: "metal/resonance" = 0.93, lin(0.5, 0.99);
+        screech: "metal/wander" = 0.5, UNIT;
+        grind_level: "metal/level" = 0.7, UNIT;
+        chatter: "metal/chatter" = 0.5, UNIT;
+        sparks_rate: "sparks/per_second" = 140.0, exp(5.0, 1500.0);
+        sparks_level: "sparks/level" = 0.6, UNIT;
+        rumble_level: "rumble/level" = 0.5, UNIT;
+        gain: "master/gain" = 0.9, GAIN;
+    }
+}
+
+pub struct Scrape {
+    sr: f32,
+    noise: Noise,
+    sparks: Dust,
+    spark_env: f32,
+    metal: [Svf; 3],
+    wander: [SlowNoise; 3],
+    chatter: SlowNoise,
+    spark_hp: Svf,
+    rumble: Svf,
+    brown: crate::blocks::Brown,
+}
+
+impl Generator for Scrape {
+    type P = ScrapeParams;
+    const NAME: &'static str = "scrape";
+    const CATEGORY: &'static str = "vehicles";
+    const DOC: &'static str = "Hull grinding along a wall: metallic screech, chatter, sparks and rumble.";
+    const INPUTS: &'static [InputSpec] = &[
+        InputSpec { name: "pressure", default: 0.0, doc: "How hard the hull is pressed against the wall; 0 is silent" },
+        InputSpec { name: "speed", default: 0.6, doc: "Sliding speed: pitch, chatter rate and spark count" },
+    ];
+    const INPUT_SMOOTH_SECS: f32 = 0.02;
+
+    fn presets() -> Vec<(&'static str, ScrapeParams)> {
+        vec![
+            ("Heavy hull", ScrapeParams { metal_hz: 900.0, rumble_level: 0.8, sparks_rate: 80.0, ..Default::default() }),
+            ("Wing tip", ScrapeParams { metal_hz: 3200.0, metal_res: 0.96, rumble_level: 0.2, screech: 0.8, ..Default::default() }),
+        ]
+    }
+
+    fn new(sr: f32) -> Self {
+        Scrape {
+            sr,
+            noise: Noise::new(0x44_0001),
+            sparks: Dust::new(0x44_0002),
+            spark_env: 0.0,
+            metal: [Svf::default(); 3],
+            wander: [SlowNoise::new(0x44_0003), SlowNoise::new(0x44_0004), SlowNoise::new(0x44_0005)],
+            chatter: SlowNoise::new(0x44_0006),
+            spark_hp: Svf::default(),
+            rumble: Svf::default(),
+            brown: crate::blocks::Brown::default(),
+        }
+    }
+
+    fn block(&mut self, x: &[f32], p: &ScrapeParams, out: &mut [f32]) {
+        let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
+        let (pressure, speed) = (x[0], x[1]);
+        const RATIOS: [f32; 3] = [1.0, 1.47, 2.09];
+        for ((metal, wander), ratio) in self.metal.iter_mut().zip(self.wander.iter_mut()).zip(RATIOS) {
+            // The contact patch keeps changing, so the resonances never sit still.
+            let w = wander.advance(8.0 + 30.0 * speed, dt);
+            let hz = p.metal_hz * ratio * (0.7 + 0.6 * speed) * (p.screech * 0.35 * w).exp2();
+            metal.set(FilterMode::BandPass, hz.min(sr * 0.4), p.metal_res, sr);
+        }
+        self.spark_hp.set(FilterMode::HighPass, 3000.0, 0.1, sr);
+        self.rumble.set(FilterMode::LowPass, 90.0 + 160.0 * speed, 0.3, sr);
+        let stick = 1.0 - p.chatter * 0.7 * (0.5 + 0.5 * self.chatter.advance(25.0 + 70.0 * speed, dt));
+        let spark_p = p.sparks_rate * pressure * (0.2 + 0.8 * speed) / sr;
+        let spark_decay = (-1.0 / (0.0025 * sr)).exp();
+        let grind = p.grind_level * stick * 0.34;
+        let (spark_gain, rumble_gain) = (p.sparks_level * 1.2, p.rumble_level * 1.0 * stick);
+        let level = pressure.powf(0.7) * (0.4 + 0.6 * speed) * p.gain;
+        for s in out.iter_mut() {
+            let w = self.noise.white();
+            let mut y = 0.0;
+            for m in self.metal.iter_mut() {
+                y += m.tick(w);
+            }
+            let d = self.sparks.tick(spark_p);
+            if d > 0.0 {
+                self.spark_env = self.spark_env.max(d);
+            }
+            self.spark_env *= spark_decay;
+            let sparks = self.spark_hp.tick(self.noise.white() * self.spark_env);
+            let rumble = self.rumble.tick(self.brown.tick(w));
+            *s = soft_clip(y * grind + sparks * spark_gain + rumble * rumble_gain) * level;
+        }
+    }
+}
