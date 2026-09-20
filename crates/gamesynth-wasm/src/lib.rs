@@ -382,6 +382,8 @@ const EXAMPLES: &[(&str, &str)] = &[
     ("steam_vent", include_str!("../../../models/steam_vent.toml")),
     ("recharge", include_str!("../../../models/recharge.toml")),
     ("checkpoint", include_str!("../../../models/checkpoint.toml")),
+    ("mine_armed", include_str!("../../../models/mine_armed.toml")),
+    ("rocket_flight", include_str!("../../../models/rocket_flight.toml")),
 ];
 
 fn desc_json(d: &ModelDesc) -> serde_json::Value {

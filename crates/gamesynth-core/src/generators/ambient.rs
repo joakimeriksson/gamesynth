@@ -473,3 +473,112 @@ impl Generator for Siren {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Beam (held laser / energy weapon)
+// ---------------------------------------------------------------------------------------------
+
+model_params! {
+    /// A beam weapon held on target: ring-modulated buzz, a sizzling resonance that never sits
+    /// still, crackle and a sub. `firing` is the trigger button.
+    BeamParams / BeamParamId {
+        hz: "beam/hz" = 190.0, exp(60.0, 1200.0);
+        edge: "beam/edge" = 0.6, UNIT;
+        ring_ratio: "beam/ring_ratio" = 7.3, lin(1.0, 16.0);
+        sizzle_hz: "sizzle/hz" = 3800.0, exp(800.0, 9000.0);
+        sizzle_level: "sizzle/level" = 0.5, UNIT;
+        crackle_rate: "sizzle/crackle_per_second" = 90.0, exp(1.0, 800.0);
+        sub_level: "beam/sub" = 0.5, UNIT;
+        attack_ms: "beam/attack_ms" = 12.0, lin(1.0, 200.0);
+        release_ms: "beam/release_ms" = 90.0, lin(5.0, 800.0);
+        gain: "master/gain" = 0.8, GAIN;
+    }
+}
+
+pub struct Beam {
+    sr: f32,
+    gate: f32,
+    osc: [Oscillator; 2],
+    ring: Phasor,
+    sub: Phasor,
+    noise: Noise,
+    crackle: Dust,
+    crackle_env: f32,
+    sizzle: Svf,
+    drift: SlowNoise,
+    body: Svf,
+}
+
+impl Generator for Beam {
+    type P = BeamParams;
+    const NAME: &'static str = "beam";
+    const CATEGORY: &'static str = "fx";
+    const DOC: &'static str = "Held laser or energy beam: hold `firing` while the weapon is on.";
+    const INPUTS: &'static [InputSpec] = &[
+        InputSpec { name: "firing", default: 0.0, doc: "1 while the beam is on; it snaps on and releases quickly" },
+        InputSpec { name: "intensity", default: 0.6, doc: "Beam power: pitch, edge and sizzle" },
+    ];
+    const INPUT_SMOOTH_SECS: f32 = 0.0;
+
+    fn presets() -> Vec<(&'static str, BeamParams)> {
+        vec![
+            ("Mining laser", BeamParams { hz: 110.0, edge: 0.8, ring_ratio: 3.1, sizzle_hz: 2400.0, crackle_rate: 200.0, ..Default::default() }),
+            ("Tractor beam", BeamParams { hz: 320.0, edge: 0.25, ring_ratio: 1.5, sizzle_level: 0.25, crackle_rate: 8.0, attack_ms: 120.0, release_ms: 400.0, ..Default::default() }),
+        ]
+    }
+
+    fn new(sr: f32) -> Self {
+        Beam {
+            sr,
+            gate: 0.0,
+            osc: [Oscillator::new(0x65_0001), Oscillator::new(0x65_0002)],
+            ring: Phasor::default(),
+            sub: Phasor::default(),
+            noise: Noise::new(0x65_0003),
+            crackle: Dust::new(0x65_0004),
+            crackle_env: 0.0,
+            sizzle: Svf::default(),
+            drift: SlowNoise::new(0x65_0005),
+            body: Svf::default(),
+        }
+    }
+
+    fn snap(&mut self, x: &[f32], _p: &BeamParams) {
+        self.gate = x[0];
+    }
+
+    fn block(&mut self, x: &[f32], p: &BeamParams, out: &mut [f32]) {
+        let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
+        let (firing, intensity) = (x[0], x[1]);
+        let secs = if firing > self.gate { p.attack_ms } else { p.release_ms } * 0.001;
+        self.gate += (firing - self.gate) * crate::blocks::settle_coef(secs, dt);
+        if self.gate < 1e-4 && firing <= 0.0 {
+            out.iter_mut().for_each(|s| *s = 0.0);
+            return;
+        }
+        let f = p.hz * (0.8 + 0.5 * intensity);
+        let inc = [f / sr, f * 1.011 / sr];
+        self.body.set(FilterMode::LowPass, 600.0 + 5000.0 * p.edge * (0.4 + 0.6 * intensity), 0.35, sr);
+        self.sizzle.set(FilterMode::BandPass, p.sizzle_hz * (0.4 * self.drift.advance(11.0, dt)).exp2(), 0.9, sr);
+        let crackle_p = p.crackle_rate * intensity / sr;
+        let crackle_decay = (-1.0 / (0.004 * sr)).exp();
+        let ring_inc = f * p.ring_ratio / sr;
+        let sizzle_gain = p.sizzle_level * (0.3 + 0.7 * intensity) * 0.35;
+        let level = self.gate * (0.5 + 0.5 * intensity) * p.gain;
+        for s in out.iter_mut() {
+            self.ring.tick(ring_inc);
+            self.sub.tick(inc[0] * 0.5);
+            let saws = self.osc[0].next(Waveform::Saw, inc[0], 0.5) + self.osc[1].next(Waveform::Saw, inc[1], 0.5);
+            // Ring modulation puts inharmonic sidebands around the buzz: the "energy" colour.
+            let buzz = self.body.tick(saws * (1.0 - 0.6 * p.edge + 0.6 * p.edge * self.ring.sin()));
+            let d = self.crackle.tick(crackle_p);
+            if d > 0.0 {
+                self.crackle_env = self.crackle_env.max(d);
+            }
+            self.crackle_env *= crackle_decay;
+            let w = self.noise.white();
+            let sizzle = self.sizzle.tick(w) * sizzle_gain + w * self.crackle_env * 0.5 * p.sizzle_level;
+            *s = (buzz * 0.4 + sizzle + self.sub.sin() * p.sub_level * 0.4) * level;
+        }
+    }
+}

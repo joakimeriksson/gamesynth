@@ -1,0 +1,30 @@
+[model]
+name = "mine_armed"
+category = "fx"
+doc = "Armed mine on the track: a ticking beacon that speeds up as a ship gets closer, over a faint hum."
+
+[inputs]
+proximity = { default = 0.2, doc = "0 = nobody near, 1 = about to go off", smooth = 0.1 }
+
+[params]
+tick_hz = { default = 1900, min = 400, max = 5000, scale = "exp", group = "beacon" }
+slow_rate = { default = 1.2, min = 0.2, max = 5, group = "beacon" }
+fast_rate = { default = 14, min = 4, max = 30, group = "beacon" }
+hum_level = { default = 0.18, min = 0, max = 1, group = "hum" }
+gain = { default = 0.8, min = 0, max = 2, group = "master" }
+
+[signals]
+rate = "lerp(slow_rate, fast_rate, pow(proximity, 2))"
+gate = "lag(ramp(rate) < 0.18, 0.004)"
+
+[graph]
+nodes = [
+  { id = "tick", type = "sine", freq = "tick_hz" },
+  { id = "tick2", type = "sine", freq = "tick_hz * 1.5" },
+  { id = "motor", type = "saw", freq = 58 },
+  { id = "hum", type = "svf", mode = "lowpass", in = ["motor"], cutoff = 220, resonance = 0.3 },
+  { id = "out", type = "gain", gain = "gain", in = [
+      { from = "tick", gain = "gate * 0.35" }, { from = "tick2", gain = "gate * 0.12" },
+      { from = "hum", gain = "hum_level * (0.3 + 0.7 * proximity) * 0.5" } ] },
+]
+out = "out"

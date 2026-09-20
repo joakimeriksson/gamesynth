@@ -1,0 +1,32 @@
+[model]
+name = "rocket_flight"
+category = "fx"
+doc = "Rocket in flight: attach to the projectile with an AudioStreamPlayer3D and let Godot's doppler do the fly-by."
+
+[inputs]
+thrust = { default = 0.8, doc = "Motor burn; 0 once it has burnt out" }
+proximity = { default = 0.5, doc = "Optional: brings up the whistle as it closes on the listener" }
+
+[params]
+roar_hz = { default = 520, min = 120, max = 2500, scale = "exp", group = "motor" }
+roar_res = { default = 0.5, min = 0, max = 0.9, group = "motor" }
+flutter = { default = 0.5, min = 0, max = 1, group = "motor" }
+whistle_hz = { default = 2800, min = 800, max = 8000, scale = "exp", group = "whistle" }
+whistle_level = { default = 0.5, min = 0, max = 1, group = "whistle" }
+gain = { default = 0.7, min = 0, max = 2, group = "master" }
+
+[signals]
+burn = "lag(thrust, 0.08)"
+shake = "1 + flutter * 0.4 * noise(18)"
+
+[graph]
+nodes = [
+  { id = "pink", type = "noise", color = "pink" },
+  { id = "white", type = "noise" },
+  { id = "roar", type = "svf", mode = "bandpass", in = ["pink"], cutoff = "roar_hz * (0.6 + burn) * shake", resonance = "roar_res" },
+  { id = "motor", type = "saw", freq = "90 * (0.8 + 0.5 * burn) * shake" },
+  { id = "body", type = "drive", in = [{ from = "roar", gain = 0.7 }, { from = "motor", gain = 0.12 }], amount = 0.3 },
+  { id = "whistle", type = "svf", mode = "bandpass", in = ["white"], cutoff = "whistle_hz * (0.9 + 0.2 * proximity)", resonance = 0.93 },
+  { id = "out", type = "gain", gain = "gain * burn", in = ["body", { from = "whistle", gain = "whistle_level * proximity * 0.12" }] },
+]
+out = "out"

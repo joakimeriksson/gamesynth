@@ -74,7 +74,7 @@ fn every_generator_and_preset_is_bounded_and_audible() {
 #[test]
 fn inputs_change_the_sound() {
     // Raising the primary input must raise the level for everything driven by intensity.
-    for name in ["hover", "combustion", "motor", "rotor", "scrape", "wind", "rain", "fire", "stream", "electric", "crowd", "radio"] {
+    for name in ["hover", "combustion", "motor", "rotor", "scrape", "beam", "wind", "rain", "fire", "stream", "electric", "crowd", "radio"] {
         let level = |v: f32| {
             let mut m = generators::create(name, SR).unwrap();
             set_all(m.as_mut(), 0.5);

@@ -457,3 +457,51 @@ recipe!(Beep, "beep", "Race UI tone: countdown, lock-on, warning. Presets change
         Layer { src: Src::Tone(Sine), f0: 880.0, fm_ratio: 2.0, fm: 0.25, attack: 0.002, hold: 0.09, decay: 0.06, level: 0.6, vary: 0.05, ..LAYER },
         Layer { src: Src::White, mode: HighPass, f0: 4000.0, hold: 0.001, decay: 0.01, level: 0.15, ..LAYER },
     ]);
+
+recipe!(Laser, "laser", "Laser shot: a bright tone diving several octaves in a few hundredths of a second, with a zing on top.", reverb 0.25 / 0.8,
+    presets [("Heavy laser", fx(1.6, -7.0, 0.45)), ("Needle", fx(0.5, 7.0, 0.7)), ("Charged shot", FxParams { punch: 0.8, tail: 0.7, ..fx(2.2, -12.0, 0.55) })],
+    [
+        Layer { src: Src::Tone(Sine), f0: 4200.0, f1: 350.0, glide: 0.035, fm_ratio: 0.5, fm: 2.0, hold: 0.01, decay: 0.16, level: 0.8, ..LAYER },
+        Layer { src: Src::Tone(Saw), f0: 2100.0, f1: 180.0, glide: 0.04, hold: 0.008, decay: 0.12, level: 0.25, ..LAYER },
+        Layer { src: Src::White, mode: BandPass, f0: 6500.0, f1: 3000.0, glide: 0.05, q: 0.7, hold: 0.005, decay: 0.08, level: 0.35, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 180.0, f1: 70.0, glide: 0.03, hold: 0.004, decay: 0.06, level: 0.35, vary: 0.4, ..LAYER },
+    ]);
+
+recipe!(MineDrop, "mine_drop", "Mine released behind the ship: latch clunk, a short falling whoosh, then three arming beeps.", reverb 0.2 / 0.7,
+    presets [("Heavy mine", fx(1.4, -5.0, 0.4)), ("Cluster", fx(0.6, 5.0, 0.6))],
+    [
+        Layer { src: Src::Tone(Sine), f0: 150.0, f1: 70.0, glide: 0.04, hold: 0.008, decay: 0.12, level: 0.9, vary: 0.4, ..LAYER },
+        Layer { src: Src::White, mode: HighPass, f0: 2800.0, hold: 0.002, decay: 0.025, level: 0.5, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 1100.0, f1: 260.0, glide: 0.12, q: 0.5, attack: 0.02, hold: 0.05, decay: 0.3, level: 1.4, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1500.0, fm_ratio: 2.0, fm: 0.3, delay: 0.38, attack: 0.002, hold: 0.04, decay: 0.03, level: 0.4, vary: 0.05, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1500.0, fm_ratio: 2.0, fm: 0.3, delay: 0.52, attack: 0.002, hold: 0.04, decay: 0.03, level: 0.4, vary: 0.05, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 2000.0, fm_ratio: 2.0, fm: 0.3, delay: 0.66, attack: 0.002, hold: 0.09, decay: 0.08, level: 0.45, vary: 0.05, ..LAYER },
+    ]);
+
+recipe!(MineBlast, "mine_blast", "Mine going off: a hard crack, a short fat body and a spray of ringing metal shrapnel.", reverb 0.3 / 1.1,
+    presets [("Proximity cluster", fx(0.6, 5.0, 0.65)), ("Magnetic mine", fx(1.5, -5.0, 0.4))],
+    [
+        Layer { src: Src::White, mode: HighPass, f0: 2500.0, hold: 0.003, decay: 0.05, level: 1.1, drive: 0.6, ..LAYER },
+        Layer { src: Src::Pink, mode: LowPass, f0: 5000.0, f1: 250.0, glide: 0.09, q: 0.25, hold: 0.015, decay: 0.45, level: 1.6, drive: 0.8, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 140.0, f1: 45.0, glide: 0.1, hold: 0.02, decay: 0.35, level: 0.9, vary: 0.4, ..LAYER },
+        Layer { src: Src::Debris, f0: 6000.0, f1: 2500.0, glide: 0.4, rate: 220.0, spread: 1.2, q: 0.85, delay: 0.02, hold: 0.05, decay: 0.7, level: 0.7, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1900.0, fm_ratio: 1.41, fm: 0.8, hold: 0.0, decay: 0.4, level: 0.12, vary: 1.5, ..LAYER },
+    ]);
+
+recipe!(LockOn, "lock_on", "Missile lock acquired: three quick pips, then a held tone.", reverb 0.05 / 0.3,
+    presets [("Incoming!", FxParams { variation: 0.0, ..fx(0.7, 7.0, 0.65) })],
+    [
+        Layer { src: Src::Tone(Sine), f0: 1200.0, fm_ratio: 2.0, fm: 0.3, attack: 0.002, hold: 0.04, decay: 0.02, level: 0.45, vary: 0.02, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1200.0, fm_ratio: 2.0, fm: 0.3, delay: 0.09, attack: 0.002, hold: 0.04, decay: 0.02, level: 0.45, vary: 0.02, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1200.0, fm_ratio: 2.0, fm: 0.3, delay: 0.18, attack: 0.002, hold: 0.04, decay: 0.02, level: 0.45, vary: 0.02, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1800.0, fm_ratio: 2.0, fm: 0.3, delay: 0.3, attack: 0.002, hold: 0.28, decay: 0.08, level: 0.45, vary: 0.02, ..LAYER },
+    ]);
+
+recipe!(ShieldUp, "shield_up", "Shield powering up: a rising swell with glassy shimmer and sparkle.", reverb 0.4 / 1.4,
+    presets [("Autopilot engage", fx(0.7, 7.0, 0.6))],
+    [
+        Layer { src: Src::Tone(Sine), f0: 180.0, f1: 520.0, glide: 0.35, fm_ratio: 2.0, fm: 1.0, attack: 0.25, hold: 0.1, decay: 0.5, level: 0.5, vary: 0.3, ..LAYER },
+        Layer { src: Src::White, mode: BandPass, f0: 3000.0, f1: 7000.0, glide: 0.4, q: 0.85, attack: 0.3, hold: 0.1, decay: 0.6, level: 0.5, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 60.0, f1: 90.0, glide: 0.3, attack: 0.2, hold: 0.1, decay: 0.4, level: 0.5, vary: 0.3, ..LAYER },
+        Layer { src: Src::Debris, f0: 7000.0, rate: 120.0, spread: 0.8, q: 0.8, attack: 0.3, hold: 0.1, decay: 0.5, level: 0.3, ..LAYER },
+    ]);

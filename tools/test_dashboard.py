@@ -34,7 +34,8 @@ OUT = os.path.join(ROOT, "dashboard")
 WAV = os.path.join(OUT, "wav")
 
 # Sounds whose character legitimately breaks a generic rule.
-FLAT_BY_DESIGN = {"drone": "level is constant by design; tension changes the timbre"}
+FLAT_BY_DESIGN = {"drone": "level is constant by design; tension changes the timbre",
+                  "mine_armed": "proximity changes the tick rate, not the level"}
 SPARSE_BY_DESIGN = {"geiger": "isolated clicks are the sound", "radio": "clicks over quiet hiss"}
 # Noise-based sounds that must not ring at fixed pitches (the "glass chime" fault).
 BROADBAND = {"wind", "rain", "fire", "stream", "ocean", "crowd", "rain_on_tent", "campfire"}
@@ -231,8 +232,8 @@ def review_event(name, path, engine):
         {"name": "Rings out", "status": "pass" if tail < 0.01 else "fail", "detail": f"rms {tail:.4f} by 2.7 s after the trigger (want < 0.01)"},
         {"name": "Responds to power", "status": "pass" if rms(ev[2]) < rms(ev[0]) * 0.8 else "fail", "detail": f"rms {rms(ev[0]):.3f} at power 1, {rms(ev[2]):.3f} at 0.4"},
     ]
-    if name == "beep":
-        checks.append({"name": "Varies", "status": "exempt", "detail": "UI tones are meant to repeat; its presets set variation to 0"})
+    if name in ("beep", "lock_on"):
+        checks.append({"name": "Varies", "status": "exempt", "detail": "UI tones are meant to repeat, so their layers barely vary"})
     else:
         checks.append({"name": "Varies", "status": "pass" if differ > 0.02 else "fail", "detail": f"two identical triggers differ by {differ * 100:.0f}% of peak (want > 2%)"})
     if engine == "native":
@@ -312,7 +313,7 @@ def sounds():
         if file.startswith("graph_"):
             name = file[len("graph_"):-4]
             result.append((review_event if name in events else review)(name, os.path.join(WAV, file), "model file"))
-    order = ["jet", "hover", "combustion", "motor", "rotor", "scrape", "explosion", "rocket", "plasma", "cannon", "impact", "shield_hit", "emp", "quake", "boost", "airbrake", "pickup", "beep", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
+    order = ["jet", "hover", "combustion", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
     result.sort(key=lambda c: (c["engine"] != "native", order.index(c["name"]) if c["name"] in order else 99, c["name"]))
     return result
 

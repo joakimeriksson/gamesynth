@@ -136,8 +136,8 @@ tiers behind the same `SoundGenerator` class:
 
 | Tier | What | Cost |
 |---|---|---|
-| **Native** (28) | continuous: `jet` `hover` `combustion` `motor` `rotor` `scrape` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: `explosion` `rocket` `plasma` `cannon` `impact` `shield_hit` `emp` `quake` `boost` `airbrake` `pickup` `beep`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
-| **Model files** | your own, as TOML/JSON: a graph of nodes plus control formulas. See [`models/README.md`](models/README.md) and the examples in `models/` | about 2.5x a native generator |
+| **Native** (34) | continuous: `jet` `hover` `combustion` `motor` `rotor` `scrape` `beam` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
+| **Model files** | your own, as TOML/JSON: a graph of nodes plus control formulas. See [`models/README.md`](models/README.md) and the examples in `models/` (`mine_armed` proximity ticker, `rocket_flight` for the projectile, `recharge`, `checkpoint`, `shield`…) | about 2.5x a native generator |
 
 ```gdscript
 var gen := SoundGenerator.create("combustion")       # or SoundGenerator.from_file("res://sounds/shield.toml")
