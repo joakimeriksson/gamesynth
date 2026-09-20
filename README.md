@@ -207,6 +207,23 @@ instantiates it on the audio thread, one node per tab.
 **GitHub Pages:** `.github/workflows/pages.yml` builds the wasm and deploys `web/` on every
 push to `main` (it enables Pages itself on the first run).
 
+## Test bench
+
+```
+tools/test_dashboard.py            # everything -> dashboard/index.html (open it in a browser)
+tools/test_dashboard.py --sounds   # only re-render and re-review the sounds
+```
+
+One page with every test surface (core suites, clippy, the wasm build exercised as the web lab
+uses it, the headless Godot smoke test), release-build speed figures, and a **sound review**:
+each generator and model file rendered with a standard 10 s input sweep, shown as a
+spectrogram with a play button, and scored by detectors for faults found by reading
+spectrograms: *Bounded*, *Follows input*, *No dropouts*, *Not a chime* (noise-like sounds
+ringing at fixed pitches; calibrated at 0.9 dB for the shipped rain vs 6.6 dB for rain forced
+to one pitch), *Audible*, *Presets in range*. Sounds that legitimately break a rule are marked
+exempt with the reason. The script exits non-zero when anything needs attention, so it can
+gate CI. Needs numpy, scipy, matplotlib; uses node, godot and ffmpeg when present.
+
 ## Tests
 
 ```

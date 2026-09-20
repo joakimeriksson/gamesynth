@@ -1,0 +1,197 @@
+<title>GameSynth Test Bench</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F1F4F7; --panel: #FFFFFF; --panel-2: #E8EDF2; --line: #D3DBE4; --ink: #16202B; --muted: #5A697A;
+    --accent: #C94D15; --pass: #1B874A; --pass-bg: #DDF1E5; --fail: #C2352B; --fail-bg: #FADFDC; --exempt: #7D6414; --exempt-bg: #F4EBCB; --skip-bg: #E3E8EE;
+    --trace: #35C4F0;
+    --display: "Saira Condensed", "Barlow Condensed", "Arial Narrow", sans-serif;
+    --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0F141B; --panel: #161D27; --panel-2: #1C2532; --line: #2A3542; --ink: #E8ECF1; --muted: #8593A5;
+      --accent: #FF6A1F; --pass: #7BC67E; --pass-bg: #17301F; --fail: #FF7A6B; --fail-bg: #3A1B18; --exempt: #E0B341; --exempt-bg: #332A10; --skip-bg: #222C39;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0F141B; --panel: #161D27; --panel-2: #1C2532; --line: #2A3542; --ink: #E8ECF1; --muted: #8593A5;
+    --accent: #FF6A1F; --pass: #7BC67E; --pass-bg: #17301F; --fail: #FF7A6B; --fail-bg: #3A1B18; --exempt: #E0B341; --exempt-bg: #332A10; --skip-bg: #222C39;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 22px 56px; display: flex; flex-direction: column; gap: 22px; }
+  h1, h2, h3 { font-family: var(--display); text-transform: uppercase; letter-spacing: 0.04em; margin: 0; text-wrap: balance; }
+  code { font-family: var(--mono); font-size: 12px; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- verdict ---- */
+  .verdict { display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+  .verdict .word { font-family: var(--display); font-weight: 700; font-size: clamp(40px, 7vw, 64px); line-height: 0.9; letter-spacing: 0.01em; text-transform: uppercase; }
+  .verdict[data-state="pass"] .word { color: var(--pass); }
+  .verdict[data-state="fail"] .word { color: var(--fail); }
+  .verdict .eyebrow { font-family: var(--display); font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .verdict .facts { display: flex; gap: 22px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .verdict .facts b { display: block; font-size: 20px; font-weight: 500; color: var(--ink); }
+  .verdict .spacer { flex: 1; }
+  .verdict .build { text-align: right; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .verdict .build b { color: var(--ink); font-weight: 500; }
+
+  .section-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .section-head h2 { font-size: 22px; font-weight: 600; }
+  .section-head p { margin: 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
+
+  .pill { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; border-radius: 3px; padding: 1px 6px; }
+  .pill.pass { background: var(--pass-bg); color: var(--pass); } .pill.fail { background: var(--fail-bg); color: var(--fail); }
+  .pill.exempt { background: var(--exempt-bg); color: var(--exempt); } .pill.skip, .pill.plain { background: var(--skip-bg); color: var(--muted); }
+
+  /* ---- suites ---- */
+  .suites { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; align-items: start; }
+  details.suite { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; }
+  details.suite[data-state="fail"] { border-color: var(--fail); }
+  details.suite summary { list-style: none; cursor: pointer; padding: 11px 13px; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: baseline; }
+  details.suite summary::-webkit-details-marker { display: none; }
+  .suite .name { font-family: var(--display); font-size: 18px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+  .suite .count { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .suite .what { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+  .suite .meter { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--skip-bg); overflow: hidden; display: flex; margin-top: 4px; }
+  .suite .meter i { display: block; height: 100%; background: var(--pass); } .suite .meter i.bad { background: var(--fail); }
+  .suite ul { list-style: none; margin: 0; padding: 4px 13px 12px; border-top: 1px solid var(--line); max-height: 300px; overflow-y: auto; }
+  .suite li { display: grid; grid-template-columns: 10px 1fr; gap: 8px; padding: 3px 0; font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+  .suite li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; background: var(--pass); }
+  .suite li.fail::before { background: var(--fail); } .suite li.fail { color: var(--fail); }
+  .suite li small { display: block; color: var(--muted); font-size: 11px; white-space: pre-wrap; }
+
+  /* ---- benchmarks ---- */
+  .bench { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); }
+  .bench div { padding: 12px 16px; border-right: 1px solid var(--line); }
+  .bench div:last-child { border-right: 0; }
+  .bench b { display: block; font-family: var(--mono); font-weight: 500; font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .bench b span { font-size: 12px; color: var(--muted); margin-left: 4px; }
+  .bench small { color: var(--muted); font-size: 12px; }
+
+  /* ---- sounds ---- */
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+  .filters button { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 3px 12px; cursor: pointer; font-family: var(--display); font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .filters button[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+  .sounds { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+  .sound { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; overflow: hidden; display: flex; flex-direction: column; }
+  .sound[data-state="fail"] { border-color: var(--fail); }
+  .spec { position: relative; background: #000; aspect-ratio: 900 / 230; max-width: 100%; }
+  .spec img { display: block; width: 100%; height: 100%; }
+  .spec svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .spec .hz { position: absolute; left: 5px; font-family: var(--mono); font-size: 9px; color: rgba(255,255,255,0.65); text-shadow: 0 0 3px #000; }
+  .ruler { display: grid; grid-template-columns: 4fr 2fr 4fr; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em; color: var(--muted); background: var(--panel-2); }
+  .ruler span { padding: 2px 6px; border-right: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ruler span:last-child { border-right: 0; }
+  .sound .body { padding: 11px 13px 13px; display: flex; flex-direction: column; gap: 9px; flex: 1; }
+  .sound .head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .sound .head h3 { font-size: 21px; font-weight: 600; }
+  .sound .head .pill:last-child { margin-left: auto; }
+  .sound audio { width: 100%; height: 34px; }
+  .checks { display: flex; flex-wrap: wrap; gap: 5px; }
+  .check { border: 0; border-radius: 3px; padding: 2px 7px; font-family: var(--mono); font-size: 11px; cursor: help; background: var(--pass-bg); color: var(--pass); }
+  .check.fail { background: var(--fail-bg); color: var(--fail); font-weight: 500; } .check.exempt { background: var(--exempt-bg); color: var(--exempt); }
+  .why { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--muted); min-height: 1.45em; overflow-wrap: anywhere; }
+  .presets { font-size: 12px; color: var(--muted); }
+  .presets b { color: var(--ink); font-weight: 500; }
+  .foot { color: var(--muted); font-size: 12px; max-width: 90ch; }
+  @media (max-width: 480px) { .sounds { grid-template-columns: 1fr; } .bench div { border-right: 0; border-bottom: 1px solid var(--line); } .verdict .build { text-align: left; } }
+</style>
+
+<div class="wrap">
+  <header class="verdict" id="verdict" data-state="pass">
+    <div><div class="eyebrow">GameSynth test bench</div><div class="word" id="word">&#x2013;</div></div>
+    <div class="facts" id="facts"></div>
+    <div class="spacer"></div>
+    <div class="build" id="build"></div>
+  </header>
+
+  <section style="display:flex;flex-direction:column;gap:12px">
+    <div class="section-head"><h2>Test suites</h2><p>Open a suite to see every test in it. Anything failing is listed first, with its message.</p></div>
+    <div class="suites" id="suites"></div>
+  </section>
+
+  <section id="bench-section" style="display:flex;flex-direction:column;gap:12px">
+    <div class="section-head"><h2>Speed</h2><p>Release build, one core. "&#xD7; real time" is how many seconds of audio render per second; model files trade speed for not needing Rust.</p></div>
+    <div class="bench" id="bench"></div>
+  </section>
+
+  <section style="display:flex;flex-direction:column;gap:12px">
+    <div class="section-head">
+      <h2>Sound review</h2>
+      <p>Each sound is rendered with the same 10 s sweep (main input ramps up, holds while the second input is raised, ramps down), then scored. Press play to judge it by ear; hover or tap a check for its measurement.</p>
+      <div class="filters" id="filters" role="group" aria-label="Filter sounds"></div>
+    </div>
+    <div class="sounds" id="sounds"></div>
+  </section>
+
+  <p class="foot">How to read a spectrogram here: time runs left to right, pitch bottom (30 Hz) to top (20 kHz), brightness is loudness, and the blue line is overall level. Horizontal stripes at fixed heights in a noise-like sound mean it rings like a chime; black vertical gaps mean dropouts; a glowing bottom edge means heavy sub-bass. Rebuild with <code>tools/test_dashboard.py</code>.</p>
+</div>
+
+<script>
+const DATA = /*DATA*/null;
+(() => {
+  const $ = id => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  if (!DATA) { $("word").textContent = "No data"; return; }
+
+  // ---- verdict ----
+  const ran = DATA.suites.filter(s => s.status !== "skip");
+  const passed = ran.reduce((n, s) => n + s.passed, 0), failed = ran.reduce((n, s) => n + s.failed, 0);
+  const badSounds = DATA.sounds.filter(s => s.status === "fail"), skipped = DATA.suites.filter(s => s.status === "skip");
+  const ok = failed === 0 && badSounds.length === 0;
+  $("verdict").dataset.state = ok ? "pass" : "fail";
+  $("word").textContent = ok ? "All clear" : "Needs attention";
+  const fact = (value, label) => { const d = el("div"); d.append(el("b", "", value), document.createTextNode(label)); return d; };
+  $("facts").append(fact(`${passed}/${passed + failed}`, "tests passing"), fact(`${DATA.sounds.length - badSounds.length}/${DATA.sounds.length}`, "sounds clean"), fact(String(ran.length), skipped.length ? `suites run, ${skipped.length} skipped` : "suites run"));
+  const build = $("build"); build.append(el("b", "", DATA.commit + (DATA.dirty ? " + uncommitted changes" : "")), el("div", "", DATA.subject), el("div", "", "generated " + DATA.generated));
+
+  // ---- suites ----
+  const order = { fail: 0, pass: 1, skip: 2 };
+  [...DATA.suites].sort((a, b) => order[a.status] - order[b.status]).forEach(s => {
+    const d = el("details", "suite"); d.dataset.state = s.status; if (s.status === "fail") d.open = true;
+    const sum = el("summary"); const total = s.passed + s.failed;
+    const count = el("span", "count"); count.append(el("span", "pill " + s.status, s.status === "skip" ? "skipped" : s.status === "pass" ? "pass" : "fail"), document.createTextNode(s.status === "skip" ? "" : `  ${s.passed}/${total}`));
+    const meter = el("div", "meter"); if (total) { const a = el("i"); a.style.width = (s.passed / total * 100) + "%"; const b = el("i", "bad"); b.style.width = (s.failed / total * 100) + "%"; meter.append(a, b); }
+    sum.append(el("span", "name", s.name), count, el("span", "what", [s.what, s.note, s.seconds ? s.seconds + " s" : ""].filter(Boolean).join(" \u00b7 ")), meter);
+    const ul = el("ul");
+    [...s.tests].sort((a, b) => (a.status === "fail" ? 0 : 1) - (b.status === "fail" ? 0 : 1)).forEach(t => { const li = el("li", t.status === "fail" ? "fail" : ""); const body = el("span", "", t.name); if (t.detail) body.append(el("small", "", t.detail)); li.append(body); ul.append(li); });
+    if (!s.tests.length) ul.append(el("li", "", s.note || "nothing ran"));
+    d.append(sum, ul); $("suites").append(d);
+  });
+
+  // ---- benchmarks ----
+  if (!DATA.benchmarks.length) $("bench-section").hidden = true;
+  DATA.benchmarks.forEach(b => { const d = el("div"); const v = el("b", "", b.value >= 100 ? Math.round(b.value) : b.value.toFixed(b.value < 10 ? 2 : 1)); v.append(el("span", "", b.unit)); d.append(v, el("small", "", b.label)); $("bench").append(d); });
+
+  // ---- sounds ----
+  const cards = [];
+  DATA.sounds.forEach(s => {
+    const card = el("article", "sound"); card.dataset.state = s.status; card.dataset.engine = s.engine;
+    const spec = el("div", "spec"); const img = el("img"); img.src = s.spec; img.alt = `Spectrogram of ${s.name}`; img.loading = "lazy"; spec.append(img);
+    const n = s.levels.length, pts = s.levels.map((v, i) => `${(i / (n - 1) * 100).toFixed(2)},${(100 - Math.min(v, 0.7) / 0.7 * 100).toFixed(1)}`).join(" ");
+    spec.insertAdjacentHTML("beforeend", `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="var(--trace)" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`);
+    [["20k", "3%"], ["1k", "44%"], ["30", "88%"]].forEach(([t, top]) => { const h = el("span", "hz", t); h.style.top = top; spec.append(h); });
+    const ruler = el("div", "ruler"); ["0-4 s  ramp up", "4-6 s  hold", "6-10 s  ramp down"].forEach(t => ruler.append(el("span", "", t)));
+    const body = el("div", "body"), head = el("div", "head");
+    head.append(el("h3", "", s.name.replace(/_/g, " ")), el("span", "pill plain", s.engine), el("span", "pill " + s.status, s.status === "pass" ? "clean" : "check"));
+    const audio = el("audio"); audio.controls = true; audio.preload = "none"; audio.src = s.audio; audio.setAttribute("aria-label", `Play ${s.name}`);
+    audio.addEventListener("play", () => document.querySelectorAll("audio").forEach(a => { if (a !== audio) a.pause(); }));
+    const why = el("p", "why"), checks = el("div", "checks");
+    const firstBad = s.checks.find(c => c.status === "fail");
+    why.textContent = firstBad ? `${firstBad.name}: ${firstBad.detail}` : "";
+    s.checks.forEach(c => { const b = el("button", "check " + (c.status === "pass" ? "" : c.status), (c.status === "fail" ? "\u2715 " : c.status === "exempt" ? "\u2013 " : "\u2713 ") + c.name); b.title = c.detail; b.addEventListener("click", () => { why.textContent = `${c.name}: ${c.detail}`; }); checks.append(b); });
+    body.append(head, audio, checks, why);
+    if (s.presets && s.presets.length > 1) { const p = el("div", "presets"); p.append(el("b", "", "Presets  "), document.createTextNode(s.presets.map(x => x.name).join(" \u00b7 "))); body.append(p); }
+    card.append(spec, ruler, body); $("sounds").append(card); cards.push(card);
+  });
+  const filters = [["All", () => true], ["Needs attention", c => c.dataset.state === "fail"], ["Native", c => c.dataset.engine === "native"], ["Model files", c => c.dataset.engine !== "native"]];
+  let saved = 0; try { saved = +localStorage.getItem("gs-bench-filter") || 0; } catch {}
+  const apply = i => { cards.forEach(c => { c.hidden = !filters[i][1](c); }); [...$("filters").children].forEach((b, k) => b.setAttribute("aria-pressed", k === i)); try { localStorage.setItem("gs-bench-filter", i); } catch {} };
+  filters.forEach(([label, fn], i) => { const count = cards.filter(fn).length; const b = el("button", "", `${label} ${count}`); b.id = "filter-" + i; b.addEventListener("click", () => apply(i)); $("filters").append(b); });
+  apply(badSounds.length ? 1 : filters[saved] ? saved : 0);
+})();
+</script>

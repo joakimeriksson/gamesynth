@@ -120,5 +120,6 @@ fn whole_library_renders_in_real_time() {
         }
     }
     let elapsed = start.elapsed().as_secs_f32();
+    println!("library: all {} generators together render at {:.1}x real time", all.len(), secs / elapsed);
     assert!(elapsed < secs * 0.5, "all {} generators took {elapsed}s for {secs}s", all.len());
 }
