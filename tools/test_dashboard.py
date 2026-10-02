@@ -190,6 +190,35 @@ def stereo_review():
     return rows
 
 
+# Presets worth hearing beyond each generator's Default: (generator, preset file stem, label, note).
+AUDITION = [
+    ("combustion", "blown_v8", "Combustion \u00b7 Blown V8", "throttle sweep (revs follow the throttle)"),
+    ("combustion", "buggy_flat-four", "Combustion \u00b7 Buggy flat-four", "throttle sweep"),
+    ("combustion", "dirt_bike_2-stroke", "Combustion \u00b7 Dirt bike 2-stroke", "throttle sweep; ring-ding off the pipe"),
+    ("combustion", "rattletrap_v8", "Combustion \u00b7 Rattletrap V8", "throttle sweep; worn out"),
+    ("wind", "canyon", "Wind \u00b7 Canyon", "strength sweep"),
+    ("crowd", "festival", "Crowd \u00b7 Festival", "size and excitement sweep; air horns"),
+]
+
+
+def audition():
+    """Extra listening: chosen presets, and the tyre rolling then sliding on each surface."""
+    folder = os.path.join(OUT, "audition_wav")
+    rows = []
+    run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_models", "--", folder] + sorted({a[0] for a in AUDITION}))
+    for gen, stem, label, note in AUDITION:
+        path = os.path.join(folder, f"{gen}_{stem}.wav")
+        if os.path.exists(path):
+            rows.append({"label": label, "note": note, "audio": encode(f"audition_{gen}_{stem}", path)})
+    run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_tyre_surfaces", "--", folder])
+    for surface in ["dirt", "gravel", "sand", "mud", "rock"]:
+        path = os.path.join(folder, f"tyre_{surface}.wav")
+        if os.path.exists(path):
+            rows.append({"label": f"Tyre \u00b7 {surface}", "note": "speed 0.7: rolling 0-3 s, sliding 3-6 s", "audio": encode(f"audition_tyre_{surface}", path)})
+    shutil.rmtree(folder, ignore_errors=True)
+    return rows
+
+
 def benchmarks():
     rows = []
     code, out, _ = run(["cargo", "test", "-p", "gamesynth-core", "--release", "--test", "graph", "--", "graph_cost", "--nocapture"])
@@ -414,11 +443,12 @@ def main():
     data = {
         "commit": head.strip(), "dirty": bool(dirty.strip()), "subject": subject.strip(),
         "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "suites": suites, "sounds": cards, "stereo": stereo_review(), "benchmarks": previous["benchmarks"] if previous else [] if quick else benchmarks(),
+        "suites": suites, "sounds": cards, "stereo": stereo_review(), "audition": audition(), "benchmarks": previous["benchmarks"] if previous else [] if quick else benchmarks(),
     }
     write_page(data)
     files = {c[k]: f"dashboard/{c[k]}" for c in cards for k in ("spec", "audio")}
     files.update({row[k]: f"dashboard/{row[k]}" for row in data["stereo"] for k in ("before", "after")})
+    files.update({row["audio"]: f"dashboard/{row['audio']}" for row in data["audition"]})
     json.dump(files, open(os.path.join(OUT, "files.json"), "w"), indent=1)
     shutil.rmtree(WAV, ignore_errors=True)
     bad = [s["name"] for s in suites if s["status"] == "fail"] + [c["name"] for c in cards if c["status"] == "fail"]
