@@ -90,6 +90,11 @@ pub trait Model: Send {
     fn set_pitch_ratio(&mut self, _ratio: f32) {}
     /// Recent output peak 0..1, decays over ~250 ms.
     fn peak(&self) -> f32;
+    /// Engines: current revs as 0..1 (combustion: between idle and max RPM; jet: the spool
+    /// fraction; model files: their `rpm` signal). `None` for models without revs.
+    fn rpm(&self) -> Option<f32> {
+        None
+    }
     fn sample_rate(&self) -> f32;
 
     fn set_input_by_name(&mut self, name: &str, value: f32) -> bool {
@@ -166,6 +171,10 @@ pub trait Generator: Send + 'static {
         None
     }
     fn set_pitch_ratio(&mut self, _ratio: f32) {}
+    /// Engines: current revs as 0..1, see [`Model::rpm`].
+    fn rpm(&self) -> Option<f32> {
+        None
+    }
     /// Stereo version of [`Generator::block`]; the default is mono in both channels.
     fn block_stereo(&mut self, x: &[f32], p: &Self::P, left: &mut [f32], right: &mut [f32]) {
         self.block(x, p, left);
@@ -341,6 +350,10 @@ impl<G: Generator> Model for Native<G> {
 
     fn length_secs(&self) -> Option<f32> {
         G::length(&self.p)
+    }
+
+    fn rpm(&self) -> Option<f32> {
+        self.g.rpm()
     }
 
     fn set_pitch_ratio(&mut self, ratio: f32) {

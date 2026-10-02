@@ -136,7 +136,7 @@ tiers behind the same `SoundGenerator` class:
 
 | Tier | What | Cost |
 |---|---|---|
-| **Native** (36) | continuous: `jet` `hover` `combustion` `motor` `rotor` `scrape` `beam` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep` `finish`, and a struck `bell`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
+| **Native** (42) | continuous: `jet` `hover` `combustion` `motor` `rotor` `scrape` `beam` `tyre` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep` `finish`, a struck `bell`, and off-road `metal_crash` `mud_splash` `suspension_thud` `debris` `rock_hit`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
 | **Model files** | your own, as TOML/JSON: a graph of nodes plus control formulas. See [`models/README.md`](models/README.md) and the examples in `models/` (`mine_armed` proximity ticker, `rocket_flight` for the projectile, `recharge`, `checkpoint`, `shield`…) | about 2.5x a native generator |
 
 ```gdscript
@@ -182,6 +182,21 @@ tail included (measured by an offline render for model files). The player's `pit
 transposes events, as it does for `SynthStream`; continuous generators ignore it. A new native effect is a table of `Layer`s in
 `generators/fx.rs`, not new DSP.
 
+**Wheeled vehicles.** `combustion` normally revs with its own inertia from `throttle`. A geared
+vehicle knows its RPM, so turn on `engine/external_rpm` and feed `rpm` (0..1 between idle and
+max RPM) every frame: upshifts drop the revs, `engine/rev_limiter` bounces off the redline,
+clutch-in falls to idle. `throttle` then only sets how hard it burns (lift-off backfires with
+`exhaust/backfire`). Further inputs: `damage` (misfires, a dead cylinder, rattle, exhaust-leak
+hiss; `damage/wear` sets a baseline) and `boost` (blower whine at `blower/ratio` x crank, more
+drive). `engine/cycle` switches to two-stroke, `engine/cam_lope` gives a lumpy idle. Presets
+`Blown V8`, `Buggy flat-four`, `Dirt bike 2-stroke`, `Rattletrap V8`. `pb.get_rpm()` reads
+the revs back. At their defaults all of this is off and the engine sounds as it always did.
+
+`tyre` is one per vehicle (sum its wheels into the inputs): `speed`, `slip`, `load` and
+`surface` (0 packed dirt, 0.25 gravel, 0.5 sand, 0.75 mud, 1 rock/tarmac; values in between
+blend neighbours). Gravel crunches and pings stones, sand hisses and sprays, mud squelches and
+sucks, rock squeals when sliding, and knobbly tread hums at speed.
+
 `gen.get_input_names()` tells you what a model wants; params appear in the inspector under
 their groups and reach running playbacks live. Start from a native generator; move to a
 model file when you need something the library does not have; ask for a native port if a
@@ -202,7 +217,7 @@ generator is one `model_params!` table plus a `Generator::block` function.
 | `JetEngineStream` | `AudioStream` | `patch`, `initial_throttle`, `start_spooled`; `from_preset(name)` |
 | `JetEnginePlayback` | `AudioStreamPlayback` | `set_throttle`, `set_boost`, `set_speed`, `set_damage`, `set_state`, `snap_rpm`, `set_param`, `set_patch`, `set_master_gain`, `get_rpm`, `get_peak` |
 | `SoundGenerator` | `AudioStream` | `generator`, `config_file`, `config`, `preset`, `start_snapped`, params as properties; `create`, `from_file`, `is_one_shot`, `set_start_input`, `get_generator_names`, `get_input_names`, `get_input_default`, `get_param_names`, `get_preset_names`, `set_param`/`get_param`, `get_params_json`/`set_params_json`, `get_error`, `is_native` |
-| `SoundGeneratorPlayback` | `AudioStreamPlayback` | `trigger`, `set_input`, `set_inputs`, `set_input_index`, `get_input_index`, `get_input_names`, `set_param`, `load_preset`, `snap`, `get_peak` |
+| `SoundGeneratorPlayback` | `AudioStreamPlayback` | `trigger`, `get_rpm`, `set_input`, `set_inputs`, `set_input_index`, `get_input_index`, `get_input_names`, `set_param`, `load_preset`, `snap`, `get_peak` |
 
 SFX presets: `Pickup`, `Laser`, `Explosion`, `PowerUp`, `Hit`, `Jump`, `Blip`, `Arrow`, `Shoot`, `Throw`, `Random`.
 Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.

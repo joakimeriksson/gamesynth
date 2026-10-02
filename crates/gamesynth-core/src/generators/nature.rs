@@ -53,6 +53,7 @@ impl Generator for Wind {
         vec![
             ("Blizzard", WindParams { howl_hz: 800.0, howl_res: 0.75, hiss_level: 0.7, whistle_level: 0.5, gust_rate: 0.5, ..Default::default() }),
             ("Desert", WindParams { howl_hz: 320.0, howl_res: 0.4, hiss_level: 0.6, whistle_level: 0.0, rumble_level: 0.7, ..Default::default() }),
+            ("Canyon", WindParams { howl_hz: 650.0, howl_res: 0.88, howl_level: 0.8, gust_rate: 0.6, rumble_level: 0.45, hiss_level: 0.35, whistle_hz: 2300.0, whistle_level: 0.75, ..Default::default() }),
             ("Drafty corridor", WindParams { howl_hz: 420.0, howl_res: 0.85, rumble_level: 0.2, hiss_level: 0.1, whistle_hz: 1300.0, whistle_level: 0.6, gust_rate: 0.12, ..Default::default() }),
         ]
     }

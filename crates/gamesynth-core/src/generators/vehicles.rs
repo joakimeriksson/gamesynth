@@ -8,7 +8,7 @@ use crate::math::{soft_clip, TAU};
 use crate::model::{Generator, InputSpec};
 use crate::noise::Noise;
 use crate::osc::{Oscillator, Waveform};
-use crate::params::{exp, int, lin, GAIN, UNIT};
+use crate::params::{exp, int, lin, ParamKind, GAIN, UNIT};
 
 #[inline]
 fn fade_in(x: f32) -> f32 {
@@ -61,6 +61,10 @@ impl Generator for Jet {
         self.engine.set_boost(x[1]);
         self.engine.set_speed(x[2]);
         self.engine.snap_rpm();
+    }
+
+    fn rpm(&self) -> Option<f32> {
+        Some(self.engine.rpm())
     }
 
     fn block(&mut self, x: &[f32], p: &JetParams, out: &mut [f32]) {
@@ -185,8 +189,16 @@ impl Generator for Hover {
 // Combustion engine
 // ---------------------------------------------------------------------------------------------
 
+pub const ENGINE_CYCLES: [&str; 2] = ["Four-stroke", "Two-stroke"];
+pub const OFF_ON: [&str; 2] = ["Off", "On"];
+
 model_params! {
     /// Piston engine: per-cylinder firing pulses with combustion noise through exhaust resonances.
+    ///
+    /// Revs either follow `throttle` with rev_up / rev_down inertia, or, with
+    /// `engine/external_rpm` on, come straight from the `rpm` input (a geared vehicle knows its
+    /// RPM: shifts, limiter bounces, clutch-in). The parameters after `master/gain` were added
+    /// later; at their defaults the engine sounds exactly as before.
     CombustionParams / CombustionParamId {
         cylinders: "engine/cylinders" = 4.0, int(1, 12);
         idle_rpm: "engine/idle_rpm" = 900.0, lin(300.0, 3000.0);
@@ -202,8 +214,24 @@ model_params! {
         burble: "exhaust/overrun_burble" = 0.5, UNIT;
         intake_level: "intake/level" = 0.3, UNIT;
         gain: "master/gain" = 0.9, GAIN;
+        external_rpm: "engine/external_rpm" = 0.0, ParamKind::Enum(&OFF_ON);
+        cycle: "engine/cycle" = 0.0, ParamKind::Enum(&ENGINE_CYCLES);
+        lope: "engine/cam_lope" = 0.0, UNIT;
+        limiter: "engine/rev_limiter" = 0.0, UNIT;
+        backfire: "exhaust/backfire" = 0.0, UNIT;
+        blower_level: "blower/level" = 0.0, UNIT;
+        blower_ratio: "blower/ratio" = 16.0, lin(4.0, 40.0);
+        boost_drive: "boost/drive" = 0.5, UNIT;
+        wear: "damage/wear" = 0.0, UNIT;
+        misfire: "damage/misfire" = 0.6, UNIT;
+        rattle: "damage/rattle" = 0.5, UNIT;
+        leak: "damage/exhaust_leak" = 0.5, UNIT;
     }
 }
+
+/// Firing-interval pattern of a lumpy cam: alternating early and late cylinders.
+const LOPE_TIMING: [f32; 12] = [0.9, -0.6, 0.3, -1.0, 0.7, -0.2, 1.0, -0.8, 0.4, -0.5, 0.6, -0.3];
+const LOPE_LEVEL: [f32; 12] = [0.6, -0.4, 1.0, -0.7, 0.2, 0.8, -0.5, 0.3, -0.9, 0.5, -0.2, 0.7];
 
 pub struct Combustion {
     sr: f32,
@@ -220,6 +248,25 @@ pub struct Combustion {
     exhaust: [Svf; 2],
     body: OnePole,
     intake: Svf,
+    // Added features draw from their own random stream, so the original sound is unchanged
+    // while they are off.
+    rng: crate::math::Rng,
+    /// Throttle a moment ago, for detecting a sharp lift-off.
+    thr_slow: f32,
+    backfire_cooldown: f32,
+    pops_left: u32,
+    pop_wait: f32,
+    bang: f32,
+    limiter_phase: f32,
+    rattle_env: f32,
+    rattle: Svf,
+    leak: Svf,
+    bang_pipe: [Svf; 2],
+    blower: [Phasor; 2],
+    /// Two-stroke idle "ring-ding": skip alternate firings at low throttle.
+    skip_next: bool,
+    /// Smoothed inputs, in `INPUTS` order.
+    x: [f32; 5],
 }
 
 impl Combustion {
@@ -227,17 +274,28 @@ impl Combustion {
     pub fn rpm(&self, p: &CombustionParams) -> f32 {
         p.idle_rpm + (p.max_rpm - p.idle_rpm) * self.rev
     }
+
+    /// Current revs as 0..1 between idle and max RPM (the scale of the `rpm` input).
+    pub fn rev(&self) -> f32 {
+        self.rev
+    }
 }
 
 impl Generator for Combustion {
     type P = CombustionParams;
     const NAME: &'static str = "combustion";
     const CATEGORY: &'static str = "vehicles";
-    const DOC: &'static str = "Piston engine: cylinders, rev inertia, exhaust resonance, overrun burble.";
+    const DOC: &'static str = "Piston engine: cylinders, rev inertia or game-driven RPM, exhaust resonance, backfires, blower, damage.";
     const INPUTS: &'static [InputSpec] = &[
-        InputSpec { name: "throttle", default: 0.0, doc: "Revs follow with rev_up / rev_down inertia" },
+        InputSpec { name: "throttle", default: 0.0, doc: "Combustion intensity; also drives the revs (with inertia) unless engine/external_rpm is on" },
         InputSpec { name: "load", default: 0.3, doc: "Engine load: louder, fuller, more intake" },
+        InputSpec { name: "rpm", default: 0.0, doc: "Revs 0..1 between idle_rpm and max_rpm, used when engine/external_rpm is on (gears, limiter, clutch)" },
+        InputSpec { name: "damage", default: 0.0, doc: "Wrecked engine: misfires, a dead cylinder, rattle, exhaust-leak hiss, louder backfires" },
+        InputSpec { name: "boost", default: 0.0, doc: "Nitro / blower boost: supercharger whine and extra drive" },
     ];
+    // Inputs are smoothed in `block`: 50 ms for throttle and load (as before), 12 ms for a
+    // game-driven rpm so it follows shifts and limiter bounces crisply.
+    const INPUT_SMOOTH_SECS: f32 = 0.0;
 
     fn presets() -> Vec<(&'static str, CombustionParams)> {
         vec![
@@ -245,6 +303,22 @@ impl Generator for Combustion {
             ("Motorbike", CombustionParams { cylinders: 2.0, idle_rpm: 1300.0, max_rpm: 11000.0, rev_up: 0.4, rev_down: 0.9, exhaust_hz: 210.0, pulse_sharp: 12.0, ..Default::default() }),
             ("Diesel truck", CombustionParams { cylinders: 6.0, idle_rpm: 600.0, max_rpm: 2800.0, rev_up: 2.2, rev_down: 2.8, exhaust_hz: 70.0, noise_level: 0.7, roughness: 0.5, burble: 0.1, ..Default::default() }),
             ("Lawnmower", CombustionParams { cylinders: 1.0, idle_rpm: 1600.0, max_rpm: 3600.0, exhaust_hz: 260.0, exhaust_res: 0.5, roughness: 0.6, noise_level: 0.6, gain: 1.4, ..Default::default() }),
+            ("Blown V8", CombustionParams {
+                cylinders: 8.0, idle_rpm: 750.0, max_rpm: 6500.0, exhaust_hz: 88.0, exhaust_res: 0.82, roughness: 0.5, noise_level: 0.45, drive: 0.72,
+                burble: 0.7, lope: 0.75, limiter: 0.6, backfire: 0.55, blower_level: 0.55, blower_ratio: 14.0, ..Default::default()
+            }),
+            ("Buggy flat-four", CombustionParams {
+                cylinders: 4.0, idle_rpm: 1000.0, max_rpm: 7500.0, rev_up: 0.5, rev_down: 0.9, exhaust_hz: 185.0, exhaust_res: 0.55, roughness: 0.4,
+                pulse_sharp: 14.0, noise_level: 0.68, drive: 0.62, intake_level: 0.5, lope: 0.3, limiter: 0.5, backfire: 0.3, ..Default::default()
+            }),
+            ("Dirt bike 2-stroke", CombustionParams {
+                cylinders: 1.0, cycle: 1.0, idle_rpm: 1800.0, max_rpm: 12000.0, rev_up: 0.25, rev_down: 0.5, exhaust_hz: 320.0, exhaust_res: 0.78,
+                roughness: 0.45, pulse_sharp: 16.0, noise_level: 0.72, drive: 0.5, limiter: 0.7, backfire: 0.2, gain: 1.15, ..Default::default()
+            }),
+            ("Rattletrap V8", CombustionParams {
+                cylinders: 8.0, idle_rpm: 600.0, max_rpm: 5200.0, exhaust_hz: 82.0, exhaust_res: 0.65, roughness: 0.85, noise_level: 0.6, drive: 0.66,
+                burble: 0.8, lope: 0.4, limiter: 0.4, backfire: 0.7, wear: 0.35, rattle: 0.7, ..Default::default()
+            }),
         ]
     }
 
@@ -266,19 +340,51 @@ impl Generator for Combustion {
             exhaust: [Svf::default(); 2],
             body: OnePole::default(),
             intake: Svf::default(),
+            rng: crate::math::Rng::new(crate::blocks::mix_seed(0x41_0004)),
+            thr_slow: 0.0,
+            backfire_cooldown: 0.0,
+            pops_left: 0,
+            pop_wait: 0.0,
+            bang: 0.0,
+            limiter_phase: 0.0,
+            rattle_env: 0.0,
+            rattle: Svf::default(),
+            leak: Svf::default(),
+            bang_pipe: [Svf::default(); 2],
+            blower: [Phasor::default(); 2],
+            skip_next: false,
+            x: [0.0, 0.3, 0.0, 0.0, 0.0],
         }
     }
 
-    fn snap(&mut self, x: &[f32], _p: &CombustionParams) {
-        self.rev = x[0];
+    fn snap(&mut self, x: &[f32], p: &CombustionParams) {
+        self.x.copy_from_slice(x);
+        self.rev = if p.external_rpm >= 0.5 { x[2] } else { x[0] };
+        self.thr_slow = x[0];
+    }
+
+    fn rpm(&self) -> Option<f32> {
+        Some(self.rev)
     }
 
     fn block(&mut self, x: &[f32], p: &CombustionParams, out: &mut [f32]) {
         let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
-        let (throttle, load) = (x[0], x[1]);
-        let rev = slew(&mut self.rev, throttle, p.rev_up, p.rev_down, dt);
+        for (k, (sm, target)) in self.x.iter_mut().zip(x).enumerate() {
+            *sm += (*target - *sm) * settle_coef(if k == 2 { 0.012 } else { 0.05 }, dt);
+        }
+        let x = self.x;
+        let (throttle, load, damage_in, boost) = (x[0], x[1], x[3], x[4]);
+        let external = p.external_rpm >= 0.5;
+        let rev = if external {
+            self.rev = x[2];
+            self.rev
+        } else {
+            slew(&mut self.rev, throttle, p.rev_up, p.rev_down, dt)
+        };
+        let damage = (damage_in + p.wear).min(1.0);
+        let two_stroke = p.cycle >= 0.5;
         let n_cyl = (p.cylinders.round() as usize).clamp(1, 12);
-        let fire_hz = self.rpm(p) / 60.0 * n_cyl as f32 * 0.5;
+        let fire_hz = self.rpm(p) / 60.0 * n_cyl as f32 * if two_stroke { 1.0 } else { 0.5 };
         let inc = fire_hz / sr;
         self.exhaust[0].set(FilterMode::BandPass, p.exhaust_hz * (0.7 + 0.9 * rev), p.exhaust_res, sr);
         // The second resonance follows the firing fundamental so the tone stays full at high revs.
@@ -288,9 +394,50 @@ impl Generator for Combustion {
         // Lifting off at high revs: unburnt fuel pops in the exhaust.
         let overrun = (rev - throttle - 0.15).max(0.0) * p.burble;
         let pop_p = 40.0 * overrun / sr;
-        let drive = 1.0 + p.drive * 5.0;
-        let intake_gain = p.intake_level * (0.2 + 0.8 * throttle) * 1.5;
-        let level = (0.35 + 0.65 * load.max(throttle * 0.5)) * (0.7 + 0.6 * rev) * p.gain * 1.1;
+        let drive = 1.0 + p.drive * 5.0 + boost * p.boost_drive * 4.0;
+        let intake_gain = p.intake_level * (0.2 + 0.8 * throttle) * 1.5 * (1.0 + boost);
+        let level = (0.35 + 0.65 * load.max(throttle * 0.5)) * (0.7 + 0.6 * rev) * p.gain * 1.1 * (1.0 + 0.25 * boost);
+
+        // ---- added features (all inert at their defaults) ----
+        // Backfire: a sharp lift-off at speed sets off one to three bangs in the exhaust.
+        self.thr_slow += (throttle - self.thr_slow) * settle_coef(0.2, dt);
+        self.backfire_cooldown = (self.backfire_cooldown - dt).max(0.0);
+        if p.backfire > 0.0 && self.pops_left == 0 && self.backfire_cooldown == 0.0 && self.thr_slow - throttle > 0.3 && rev > 0.35 {
+            self.backfire_cooldown = 0.7;
+            if self.rng.chance((p.backfire * (0.7 + 0.6 * damage)).min(1.0)) {
+                self.pops_left = 1 + self.rng.next_u32() % 3;
+                self.pop_wait = self.rng.range(0.0, 0.05);
+            }
+        }
+        // Rev limiter: bouncing off the redline cuts the ignition in bursts. Only with a
+        // game-driven rpm: when throttle drives the revs, max revs just means flat out.
+        let limiting = external && p.limiter > 0.0 && rev > 0.97 && throttle > 0.6;
+        if limiting {
+            self.limiter_phase = (self.limiter_phase + dt * (9.0 + 5.0 * self.rng.next_f32())).fract();
+        }
+        let cut = limiting && self.limiter_phase < 0.25 + 0.45 * p.limiter;
+        let misfire_p = damage.powf(1.5) * 0.35 * p.misfire;
+        // The last cylinder dies as the engine gets wrecked.
+        let dead = ((damage - 0.5) * 2.0).clamp(0.0, 1.0) * p.misfire;
+        let rattle_on = damage * p.rattle > 0.0;
+        if rattle_on {
+            self.rattle.set(FilterMode::BandPass, 2600.0 * (0.6 * self.rng.next_bipolar()).exp2(), 0.9, sr);
+        }
+        let leak_gain = damage * p.leak * 0.5;
+        if leak_gain > 0.0 {
+            self.leak.set(FilterMode::HighPass, 2500.0, 0.3, sr);
+        }
+        let blower_gain = p.blower_level * (0.25 + 0.4 * throttle + 0.6 * boost) * (0.3 + 0.7 * rev) * 0.12;
+        let blower_inc = self.rpm(p) / 60.0 * p.blower_ratio / sr;
+        let rattle_decay = (-1.0 / (0.004 * sr)).exp();
+        let bang_decay = (-1.0 / (0.03 * sr)).exp();
+        let bang_gain = 0.9 * (0.6 + 0.8 * damage) * p.backfire.sqrt();
+        if p.backfire > 0.0 {
+            // A backfire is a bang in the pipe: a low boom plus a crack at the tailpipe.
+            self.bang_pipe[0].set(FilterMode::LowPass, p.exhaust_hz * 3.0, 0.4, sr);
+            self.bang_pipe[1].set(FilterMode::BandPass, 1800.0, 0.3, sr);
+        }
+
         for s in out.iter_mut() {
             if self.fire.tick(inc * self.timing) {
                 self.cyl = (self.cyl + 1) % n_cyl;
@@ -298,14 +445,60 @@ impl Generator for Combustion {
                 // No two combustion cycles take exactly as long; this is what keeps the upper
                 // harmonics from sounding like a clean synth buzz.
                 self.timing = 1.0 + (0.015 + 0.06 * p.roughness) * self.dust.rng().next_bipolar();
+                if p.lope > 0.0 {
+                    // A lumpy cam: an uneven, repeating firing pattern that smooths out with revs.
+                    let lumpy = p.lope * (1.0 - rev).max(0.0);
+                    self.timing *= 1.0 + 0.22 * lumpy * LOPE_TIMING[self.cyl];
+                    self.amp *= 1.0 + 0.4 * lumpy * LOPE_LEVEL[self.cyl];
+                }
+                if two_stroke && throttle < 0.35 {
+                    // Off the pipe a two-stroke fires every other turn, irregularly: ring-ding.
+                    if self.skip_next {
+                        self.amp = 0.0;
+                    }
+                    self.skip_next = !self.skip_next && self.rng.chance(0.8 - throttle);
+                }
+                if cut || (misfire_p > 0.0 && self.rng.chance(misfire_p)) || (dead > 0.0 && self.cyl == n_cyl - 1 && n_cyl > 1) {
+                    self.amp *= if cut { 0.0 } else { 1.0 - if self.cyl == n_cyl - 1 { dead } else { 1.0 } };
+                }
+                if rattle_on && self.rng.chance(damage * p.rattle * 0.6) {
+                    self.rattle_env = self.rattle_env.max(self.rng.range(0.4, 1.0));
+                }
             }
             let pulse = self.amp * (-self.fire.phase * p.pulse_sharp).exp();
             let w = self.noise.white();
             let bang = pulse * (0.6 + p.noise_level * 1.5 * w) + self.dust.tick(pop_p) * 1.5;
+            let mut backfire = 0.0;
+            if self.pops_left > 0 || self.bang > 1e-4 {
+                if self.pops_left > 0 {
+                    self.pop_wait -= 1.0 / sr;
+                    if self.pop_wait <= 0.0 {
+                        self.bang = 1.0;
+                        self.pops_left -= 1;
+                        self.pop_wait = self.rng.range(0.04, 0.16);
+                    }
+                }
+                let b = self.bang * (0.4 + 0.6 * w);
+                backfire = (self.bang_pipe[0].tick(b) * 2.5 + self.bang_pipe[1].tick(b)) * bang_gain;
+                self.bang *= bang_decay;
+            }
             let x0 = self.dc.hp(bang, dc_coef);
             let pipe = self.exhaust[0].tick(x0) + 0.8 * self.exhaust[1].tick(x0) + 0.35 * self.body.lp(x0, body_coef);
             let intake = self.intake.tick(self.noise.pink()) * intake_gain * (0.5 + 0.5 * pulse);
-            *s = soft_clip((pipe + intake) * drive) / (1.0 + 0.2 * (drive - 1.0)) * level;
+            let mut y = soft_clip((pipe + intake) * drive) / (1.0 + 0.2 * (drive - 1.0)) + backfire;
+            if rattle_on {
+                y += self.rattle.tick(w * self.rattle_env) * 1.5;
+                self.rattle_env *= rattle_decay;
+            }
+            if leak_gain > 0.0 {
+                y += self.leak.tick(w) * pulse * leak_gain;
+            }
+            if blower_gain > 0.0 {
+                self.blower[0].tick(blower_inc);
+                self.blower[1].tick(blower_inc * 2.0);
+                y += (self.blower[0].sin() + 0.45 * self.blower[1].sin()) * blower_gain;
+            }
+            *s = y * level;
         }
     }
 }
@@ -595,6 +788,240 @@ impl Generator for Scrape {
             let sparks = self.spark_hp.tick(self.noise.white() * self.spark_env);
             let rumble = self.rumble.tick(self.brown.tick(w));
             *s = soft_clip(y * grind + sparks * spark_gain + rumble * rumble_gain) * level;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tyre (rolling and sliding on loose ground)
+// ---------------------------------------------------------------------------------------------
+
+/// Surfaces along the `surface` input, at 0, 0.25, 0.5, 0.75 and 1.0.
+pub const TYRE_SURFACES: [&str; 5] = ["packed dirt", "gravel", "sand", "mud", "rock / tarmac"];
+
+model_params! {
+    /// Tyres on loose ground: road rumble and knobbly-tread hum under everything, then per
+    /// surface gravel crunch and stone ticks, sand hiss and spray, mud squelch and sucking, and
+    /// on rock or tarmac a squeal when the tyre slides.
+    TyreParams / TyreParamId {
+        rumble_level: "road/rumble" = 0.7, UNIT;
+        hum_level: "tread/hum" = 0.4, UNIT;
+        tread_hz: "tread/hz" = 380.0, exp(60.0, 1500.0);
+        crunch_level: "gravel/crunch" = 0.7, UNIT;
+        crunch_hz: "gravel/hz" = 2600.0, exp(800.0, 6000.0);
+        stones_level: "gravel/stones" = 0.5, UNIT;
+        hiss_level: "sand/hiss" = 0.6, UNIT;
+        squelch_level: "mud/squelch" = 0.8, UNIT;
+        squeal_level: "rock/squeal" = 0.6, UNIT;
+        squeal_hz: "rock/squeal_hz" = 1050.0, exp(400.0, 3000.0);
+        slide_level: "slide/level" = 0.7, UNIT;
+        gain: "master/gain" = 1.0, GAIN;
+    }
+}
+
+/// Per-surface weight of each layer: [dirt, gravel, sand, mud, rock].
+const T_RUMBLE: [f32; 5] = [1.0, 1.0, 0.35, 0.7, 0.8];
+const T_HUM: [f32; 5] = [0.7, 0.45, 0.3, 0.2, 1.0];
+const T_CRUNCH: [f32; 5] = [0.25, 1.0, 0.1, 0.0, 0.12];
+const T_STONES: [f32; 5] = [0.3, 1.0, 0.0, 0.0, 0.45];
+const T_LOOSE: [f32; 5] = [0.8, 1.0, 0.9, 0.3, 0.15];
+
+pub struct Tyre {
+    sr: f32,
+    noise: Noise,
+    brown: crate::blocks::Brown,
+    rumble: Svf,
+    tread: Phasor,
+    tread_bp: Svf,
+    wobble: SlowNoise,
+    crunch_dust: Dust,
+    crunch_env: f32,
+    crunch: [Svf; 3],
+    crunch_next: usize,
+    stone_dust: Dust,
+    stones: [Svf; 3],
+    stone_next: usize,
+    sand: Svf,
+    spray: Svf,
+    mud: Svf,
+    mud_wander: SlowNoise,
+    suck_dust: Dust,
+    sucks: [(f32, f32, f32); 3],
+    suck_next: usize,
+    squeal: [Svf; 2],
+    squeal_wander: SlowNoise,
+    squeal_tone: Phasor,
+    slide: Svf,
+    slide_wander: SlowNoise,
+}
+
+impl Generator for Tyre {
+    type P = TyreParams;
+    const NAME: &'static str = "tyre";
+    const CATEGORY: &'static str = "vehicles";
+    const DOC: &'static str = "Tyres rolling and sliding: dirt, gravel, sand, mud, rock. One per vehicle; sum its wheels into the inputs.";
+    const INPUTS: &'static [InputSpec] = &[
+        InputSpec { name: "speed", default: 0.0, doc: "Rolling speed 0..1" },
+        InputSpec { name: "slip", default: 0.0, doc: "Sliding sideways or spinning 0..1" },
+        InputSpec { name: "load", default: 0.5, doc: "Weight on the tyres: 0 a bike, 1 a war rig (louder, lower)" },
+        InputSpec { name: "surface", default: 0.0, doc: "0 packed dirt, 0.25 gravel, 0.5 sand, 0.75 mud, 1 rock/tarmac; in-between values blend neighbours" },
+    ];
+    const INPUT_SMOOTH_SECS: f32 = 0.06;
+
+    fn presets() -> Vec<(&'static str, TyreParams)> {
+        vec![
+            ("Knobbly", TyreParams { hum_level: 0.65, tread_hz: 300.0, crunch_level: 0.85, stones_level: 0.6, ..Default::default() }),
+            ("Road tyre", TyreParams { hum_level: 0.25, tread_hz: 650.0, crunch_level: 0.5, squeal_level: 0.85, rumble_level: 0.5, ..Default::default() }),
+        ]
+    }
+
+    fn new(sr: f32) -> Self {
+        Tyre {
+            sr,
+            noise: Noise::new(0x45_0001),
+            brown: crate::blocks::Brown::default(),
+            rumble: Svf::default(),
+            tread: Phasor::default(),
+            tread_bp: Svf::default(),
+            wobble: SlowNoise::new(0x45_0002),
+            crunch_dust: Dust::new(0x45_0003),
+            crunch_env: 0.0,
+            crunch: [Svf::default(); 3],
+            crunch_next: 0,
+            stone_dust: Dust::new(0x45_0004),
+            stones: [Svf::default(); 3],
+            stone_next: 0,
+            sand: Svf::default(),
+            spray: Svf::default(),
+            mud: Svf::default(),
+            mud_wander: SlowNoise::new(0x45_0005),
+            suck_dust: Dust::new(0x45_0006),
+            sucks: [(0.0, 0.0, 0.0); 3],
+            suck_next: 0,
+            squeal: [Svf::default(); 2],
+            squeal_wander: SlowNoise::new(0x45_0007),
+            squeal_tone: Phasor::default(),
+            slide: Svf::default(),
+            slide_wander: SlowNoise::new(0x45_0008),
+        }
+    }
+
+    fn block(&mut self, x: &[f32], p: &TyreParams, out: &mut [f32]) {
+        let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
+        let (speed, slip, load) = (x[0], x[1], x[2]);
+        // Blend the two surfaces either side of `surface`.
+        let pos = x[3].clamp(0.0, 1.0) * 4.0;
+        let i0 = (pos.floor() as usize).min(3);
+        let f = pos - i0 as f32;
+        let mut w = [0.0f32; 5];
+        w[i0] = 1.0 - f;
+        w[i0 + 1] += f;
+        let mix = |table: &[f32; 5]| table.iter().zip(&w).map(|(a, b)| a * b).sum::<f32>();
+        let (sand_w, mud_w, rock_w) = (w[2], w[3], w[4]);
+        let roll = speed.powf(0.8);
+        let heavy = 0.5 + 0.7 * load;
+
+        self.rumble.set(FilterMode::LowPass, 40.0 + 170.0 * speed * (1.0 - 0.35 * load), 0.25, sr);
+        let rumble_gain = p.rumble_level * roll * heavy * mix(&T_RUMBLE) * 3.0;
+        let wob = self.wobble.advance(3.0, dt);
+        let tread_inc = p.tread_hz * speed * (1.0 + 0.04 * wob) / sr;
+        self.tread_bp.set(FilterMode::BandPass, (p.tread_hz * speed * 2.0).max(40.0), 0.6, sr);
+        let hum_gain = p.hum_level * speed.powf(1.5) * mix(&T_HUM) * 1.2;
+
+        let crunch_p = (60.0 + 700.0 * speed + 900.0 * slip) * mix(&T_CRUNCH) * (speed + slip).min(1.0) / sr;
+        let stone_p = (2.0 + 25.0 * speed + 40.0 * slip) * mix(&T_STONES) * (speed + slip).min(1.0) / sr;
+        let crunch_decay = (-1.0 / (0.0025 * sr)).exp();
+        let crunch_gain = p.crunch_level * 2.2 * (0.7 + 0.5 * load);
+        let stones_gain = p.stones_level * 2.0;
+
+        self.sand.set(FilterMode::BandPass, 2600.0 + 2200.0 * speed, 0.15, sr);
+        self.spray.set(FilterMode::HighPass, 4500.0, 0.1, sr);
+        let hiss_gain = p.hiss_level * sand_w * (0.15 + 0.85 * speed) * (0.5 + slip) * 1.4;
+        let spray_gain = p.hiss_level * sand_w * slip * 0.6;
+
+        self.mud.set(FilterMode::LowPass, 160.0 + 340.0 * (0.5 + 0.5 * self.mud_wander.advance(6.0, dt)), 0.8, sr);
+        let squelch_gain = p.squelch_level * mud_w * (speed * 3.0).min(1.0) * (0.4 + 0.6 * slip.max(speed)) * 0.45;
+        let suck_p = (1.5 + 14.0 * speed + 25.0 * slip) * mud_w / sr;
+        let suck_decay = (-1.0 / (0.06 * sr)).exp();
+        let suck_fall = 0.5f32.powf(1.0 / (0.05 * sr));
+
+        let sq = self.squeal_wander.advance(4.0 + 8.0 * slip, dt);
+        let squeal_hz = p.squeal_hz * (0.25 * sq).exp2() * (0.85 + 0.3 * speed);
+        self.squeal[0].set(FilterMode::BandPass, squeal_hz, 0.985, sr);
+        self.squeal[1].set(FilterMode::BandPass, squeal_hz * 1.51, 0.98, sr);
+        let t = ((slip - 0.25) / 0.45).clamp(0.0, 1.0);
+        let squeal_gain = p.squeal_level * rock_w * t * t * (3.0 - 2.0 * t) * (0.3 + 0.7 * speed);
+        let squeal_inc = squeal_hz / sr;
+
+        self.slide.set(FilterMode::BandPass, (700.0 + 900.0 * slip) * (0.3 * self.slide_wander.advance(9.0, dt)).exp2(), 0.45, sr);
+        let slide_gain = p.slide_level * slip * (0.65 + 0.35 * wob.abs()) * mix(&T_LOOSE) * 1.4;
+
+        let level = p.gain * 0.8;
+        for s in out.iter_mut() {
+            let wn = self.noise.white();
+            let mut y = self.rumble.tick(self.brown.tick(wn)) * rumble_gain;
+            if hum_gain > 0.0 {
+                self.tread.tick(tread_inc);
+                y += self.tread_bp.tick((-self.tread.phase * 10.0).exp() - 0.1) * hum_gain;
+            }
+            let c = self.crunch_dust.tick(crunch_p);
+            if c > 0.0 {
+                self.crunch_env = self.crunch_env.max(c);
+                self.crunch_next = (self.crunch_next + 1) % 3;
+                let hz = p.crunch_hz * (0.7 * self.crunch_dust.rng().next_bipolar()).exp2() * (0.85 + 0.3 * (1.0 - load));
+                self.crunch[self.crunch_next].set(FilterMode::BandPass, hz.min(sr * 0.4), 0.45, sr);
+            }
+            if self.crunch_env > 1e-4 {
+                let burst = wn * self.crunch_env;
+                let mut g = 0.0;
+                for (k, f) in self.crunch.iter_mut().enumerate() {
+                    g += f.tick(if k == self.crunch_next { burst } else { 0.0 });
+                }
+                y += g * crunch_gain;
+                self.crunch_env *= crunch_decay;
+            }
+            let st = self.stone_dust.tick(stone_p);
+            if st > 0.0 {
+                self.stone_next = (self.stone_next + 1) % 3;
+                let hz = 4200.0 * (0.6 * self.stone_dust.rng().next_bipolar()).exp2();
+                self.stones[self.stone_next].set(FilterMode::BandPass, hz.min(sr * 0.4), 0.93, sr);
+            }
+            if stones_gain > 0.0 {
+                let mut g = 0.0;
+                for (k, f) in self.stones.iter_mut().enumerate() {
+                    g += f.tick(if k == self.stone_next { st } else { 0.0 });
+                }
+                y += g * stones_gain;
+            }
+            if hiss_gain > 0.0 || spray_gain > 0.0 {
+                y += self.sand.tick(self.noise.pink()) * hiss_gain + self.spray.tick(wn) * spray_gain;
+            }
+            if mud_w > 0.0 {
+                y += self.mud.tick(self.brown.tick(wn) * 2.0) * squelch_gain;
+                let sk = self.suck_dust.tick(suck_p);
+                if sk > 0.0 {
+                    self.suck_next = (self.suck_next + 1) % 3;
+                    let hz = self.suck_dust.rng().range(170.0, 300.0);
+                    self.sucks[self.suck_next] = (0.0, hz / sr, sk);
+                }
+                for (ph, inc, env) in self.sucks.iter_mut() {
+                    if *env > 1e-4 {
+                        // A falling sine chirp: the suck of a tyre leaving mud.
+                        y += (*ph * TAU).sin() * *env * p.squelch_level * mud_w * 0.5;
+                        *ph = (*ph + *inc).fract();
+                        *inc = (*inc * suck_fall).max(45.0 / sr);
+                        *env *= suck_decay;
+                    }
+                }
+            }
+            if squeal_gain > 0.0 {
+                self.squeal_tone.tick(squeal_inc);
+                y += (self.squeal[0].tick(wn) + 0.6 * self.squeal[1].tick(wn)) * squeal_gain * 0.3 + self.squeal_tone.sin() * squeal_gain * 0.7;
+            }
+            if slide_gain > 0.0 {
+                y += self.slide.tick(wn) * slide_gain;
+            }
+            *s = y * level;
         }
     }
 }

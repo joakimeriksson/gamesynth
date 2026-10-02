@@ -435,6 +435,11 @@ impl Model for GraphModel {
         self.peak
     }
 
+    /// A model file that defines a signal named `rpm` reports it.
+    fn rpm(&self) -> Option<f32> {
+        self.signal("rpm")
+    }
+
     fn sample_rate(&self) -> f32 {
         self.sample_rate
     }

@@ -37,6 +37,7 @@ registry!(
     vehicles::Motor,
     vehicles::Rotor,
     vehicles::Scrape,
+    vehicles::Tyre,
     nature::Wind,
     nature::Rain,
     nature::Fire,
@@ -67,4 +68,9 @@ registry!(
     fx::OneShot<fx::Beep>,
     fx::OneShot<fx::Bell>,
     fx::OneShot<fx::Finish>,
+    fx::OneShot<fx::MetalCrash>,
+    fx::OneShot<fx::MudSplash>,
+    fx::OneShot<fx::SuspensionThud>,
+    fx::OneShot<fx::Debris>,
+    fx::OneShot<fx::RockHit>,
 );

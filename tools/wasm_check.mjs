@@ -22,7 +22,7 @@ const checks = [];
 const check = (name, ok, detail = "") => checks.push({ name, ok: !!ok, detail });
 
 const lib = JSON.parse(str(w.model_library_json()));
-check("library lists the native generators", lib.models.length >= 36, `${lib.models.length} generators, ${lib.nodes.length} node types`);
+check("library lists the native generators", lib.models.length >= 42, `${lib.models.length} generators, ${lib.nodes.length} node types`);
 for (const d of lib.models) {
   const m = put(d.name, (p, n) => w.model_new(p, n, SR));
   d.inputs.forEach((i) => w.model_set_input(m, i.index, 1));
@@ -72,6 +72,16 @@ for (const e of lib.examples) {
   };
   const [mono, wide] = [corr(0), corr(null)];
   check("stereo: explosion is mono at width 0 and wide as designed", mono > 0.9999 && wide < 0.7, `L/R correlation ${mono.toFixed(3)} at width 0, ${wide.toFixed(3)} as designed`);
+}
+{
+  // Game-driven revs: combustion follows its rpm input and reports it back.
+  const m = put("combustion", (p, n) => w.model_new(p, n, SR));
+  const d = JSON.parse(str(w.model_desc_json(m)));
+  w.model_set_param(m, d.params.find((p) => p.name === "engine/external_rpm").index, 1);
+  w.model_set_input(m, d.inputs.find((i) => i.name === "rpm").index, 0.6);
+  w.model_render(m, buf, 4800);
+  check("combustion follows a game-driven rpm", Math.abs(w.model_rpm(m) - 0.6) < 0.01, `rpm ${w.model_rpm(m).toFixed(3)}`);
+  w.model_free(m);
 }
 const bad = put('[graph]\nnodes = [{ id = "a", type = "wobble" }]\nout = "a"', (p, n) => w.model_from_config(p, n, SR));
 check("a bad model file is rejected with a message", bad === 0 && str(w.gs_str_len()).includes("unknown type"), str(w.gs_str_len()).slice(0, 60));

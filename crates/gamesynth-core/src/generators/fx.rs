@@ -714,3 +714,64 @@ recipe!(Finish, "finish", "Race finished: four rising chime notes into a held, s
         Layer { src: Src::Tone(Sine), f0: 784.0, beat: 2.1, delay: 0.27, attack: 0.01, hold: 0.1, decay: 1.4, level: 0.25, vary: 0.05, pan: 0.4, chorus: 6.0, ..LAYER },
         Layer { src: Src::White, mode: HighPass, f0: 6000.0, delay: 0.27, attack: 0.005, hold: 0.02, decay: 0.6, level: 0.12, ..LAYER },
     ]);
+
+// ---------------------------------------------------------------------------------------------
+// Off-road: crashes and terrain
+// ---------------------------------------------------------------------------------------------
+
+recipe!(MetalCrash, "metal_crash", "Vehicle into vehicle or wall: crunch, sheet metal tearing, ringing panels, loose parts rattling after.", reverb 0.3 / 1.1, width 0.75,
+    presets [
+        ("Side swipe", FxParams { punch: 0.4, ..fx(0.6, 4.0, 0.62) }),
+        ("T-bone", FxParams { punch: 0.85, ..fx(1.3, -4.0, 0.45) }),
+        ("Rollover", FxParams { tail: 0.7, ..fx(2.1, -2.0, 0.45) }),
+    ],
+    [
+        Layer { src: Src::White, mode: HighPass, f0: 2000.0, hold: 0.003, decay: 0.05, level: 1.0, drive: 0.5, wide: 0.0, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 1600.0, f1: 450.0, glide: 0.06, q: 0.35, hold: 0.02, decay: 0.3, level: 1.8, drive: 0.9, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 110.0, f1: 40.0, glide: 0.05, hold: 0.01, decay: 0.3, level: 1.0, vary: 0.4, ..LAYER },
+        Layer { src: Src::White, mode: BandPass, f0: 3200.0, f1: 1100.0, glide: 0.25, q: 0.75, delay: 0.03, attack: 0.02, hold: 0.12, decay: 0.35, level: 0.8, drive: 0.6, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 523.0, fm_ratio: 1.41, fm: 0.6, hold: 0.0, decay: 0.9, level: 0.3, vary: 1.6, pan: -0.4, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1370.0, fm_ratio: 1.41, fm: 0.4, hold: 0.0, decay: 0.6, level: 0.2, vary: 1.6, pan: 0.4, ..LAYER },
+        Layer { src: Src::Debris, f0: 2600.0, f1: 1500.0, glide: 0.8, rate: 45.0, spread: 1.2, q: 0.8, delay: 0.25, attack: 0.05, hold: 0.2, decay: 1.2, level: 0.55, ..LAYER },
+        // A second, smaller hit: the car settling (or, stretched by Rollover's size, tumbling).
+        Layer { src: Src::Pink, mode: LowPass, f0: 900.0, f1: 200.0, glide: 0.04, delay: 0.45, hold: 0.02, decay: 0.25, level: 0.6, drive: 0.5, vary: 1.4, ..LAYER },
+    ]);
+
+recipe!(MudSplash, "mud_splash", "Wheels into a mud pool or a water crossing: slap, a rush of spray, squelch and splatter.", reverb 0.15 / 0.7, width 0.7,
+    presets [("Water crossing", FxParams { space: 0.6, ..fx(1.2, 3.0, 0.7) }), ("Deep mud", fx(1.3, -5.0, 0.3))],
+    [
+        Layer { src: Src::Pink, mode: LowPass, f0: 1800.0, f1: 300.0, glide: 0.03, q: 0.2, hold: 0.01, decay: 0.12, level: 1.6, drive: 0.3, wide: 0.2, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 160.0, f1: 55.0, glide: 0.05, hold: 0.01, decay: 0.18, level: 0.8, vary: 0.4, ..LAYER },
+        Layer { src: Src::White, mode: BandPass, f0: 2500.0, f1: 700.0, glide: 0.3, q: 0.3, attack: 0.02, hold: 0.08, decay: 0.45, level: 1.0, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 400.0, f1: 180.0, glide: 0.2, q: 0.7, delay: 0.05, attack: 0.03, hold: 0.05, decay: 0.3, level: 0.8, ..LAYER },
+        Layer { src: Src::Debris, f0: 1400.0, f1: 900.0, glide: 0.5, rate: 120.0, spread: 1.0, q: 0.6, delay: 0.2, attack: 0.05, hold: 0.1, decay: 0.6, level: 0.5, ..LAYER },
+    ]);
+
+recipe!(SuspensionThud, "suspension_thud", "Big landing: springs bottoming out on the bump stops, lower and boomier than impact.", reverb 0.15 / 0.6, width 0.35,
+    presets [("War rig", fx(1.5, -5.0, 0.4)), ("Bike", fx(0.55, 5.0, 0.55))],
+    [
+        Layer { src: Src::Tone(Sine), f0: 70.0, f1: 32.0, glide: 0.08, hold: 0.02, decay: 0.35, level: 1.0, vary: 0.3, ..LAYER },
+        Layer { src: Src::Pink, mode: LowPass, f0: 400.0, f1: 90.0, glide: 0.05, hold: 0.01, decay: 0.22, level: 1.5, drive: 0.5, wide: 0.3, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 320.0, q: 0.6, delay: 0.015, hold: 0.005, decay: 0.07, level: 1.0, drive: 0.4, wide: 0.0, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 180.0, beat: 3.0, delay: 0.02, hold: 0.0, decay: 0.35, level: 0.2, vary: 0.6, ..LAYER },
+        Layer { src: Src::Debris, f0: 1800.0, rate: 30.0, spread: 1.0, q: 0.75, delay: 0.05, hold: 0.05, decay: 0.3, level: 0.3, ..LAYER },
+    ]);
+
+recipe!(Debris, "debris", "Bits of metal and glass raining down after an explosion, about 1.5 s.", reverb 0.3 / 1.2, width 0.9,
+    presets [("Glass", fx(0.8, 5.0, 0.7)), ("Scrap metal", fx(1.3, -4.0, 0.4))],
+    [
+        Layer { src: Src::Debris, f0: 2200.0, f1: 1600.0, glide: 1.0, rate: 70.0, spread: 1.4, q: 0.8, attack: 0.15, hold: 0.3, decay: 0.9, level: 0.8, ..LAYER },
+        Layer { src: Src::Debris, f0: 5200.0, f1: 4200.0, glide: 1.0, rate: 90.0, spread: 0.8, q: 0.95, delay: 0.05, attack: 0.1, hold: 0.25, decay: 0.8, level: 0.6, ..LAYER },
+        Layer { src: Src::Debris, f0: 700.0, f1: 450.0, glide: 1.0, rate: 18.0, spread: 1.0, q: 0.5, delay: 0.1, attack: 0.1, hold: 0.3, decay: 0.8, level: 0.7, ..LAYER },
+        Layer { src: Src::Pink, mode: LowPass, f0: 1200.0, f1: 300.0, glide: 0.6, attack: 0.2, hold: 0.2, decay: 0.8, level: 0.35, ..LAYER },
+    ]);
+
+recipe!(RockHit, "rock_hit", "Rock or boulder strike: a stony crack, a short dry body and flying chips.", reverb 0.25 / 0.9, width 0.45,
+    presets [("Boulder", fx(1.8, -7.0, 0.35)), ("Pebble", fx(0.45, 7.0, 0.65))],
+    [
+        Layer { src: Src::White, mode: HighPass, f0: 2200.0, hold: 0.002, decay: 0.03, level: 1.0, drive: 0.4, wide: 0.0, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 900.0, f1: 600.0, glide: 0.03, q: 0.45, hold: 0.005, decay: 0.09, level: 1.6, drive: 0.5, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 120.0, f1: 55.0, glide: 0.03, hold: 0.005, decay: 0.14, level: 0.8, vary: 0.4, ..LAYER },
+        Layer { src: Src::Debris, f0: 3500.0, f1: 2500.0, glide: 0.3, rate: 140.0, spread: 1.0, q: 0.7, delay: 0.01, hold: 0.03, decay: 0.25, level: 0.5, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1700.0, fm_ratio: 2.7, fm: 0.6, hold: 0.0, decay: 0.12, level: 0.15, vary: 1.5, ..LAYER },
+    ]);

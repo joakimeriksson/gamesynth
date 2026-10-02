@@ -218,7 +218,17 @@ model_params! {
         cheer_hz: "cheer/hz" = 2600.0, exp(1000.0, 6000.0);
         roar_level: "cheer/roar" = 0.4, UNIT;
         gain: "master/gain" = 1.0, GAIN;
+        horns_rate: "horns/per_minute" = 0.0, lin(0.0, 60.0);
+        horns_level: "horns/level" = 0.6, UNIT;
     }
+}
+
+#[derive(Clone, Copy, Default)]
+struct Horn {
+    /// Seconds left; <= 0 is idle.
+    left: f32,
+    len: f32,
+    hz: f32,
 }
 
 const VOICES: usize = 8;
@@ -233,6 +243,11 @@ pub struct Crowd {
     cheer: Svf,
     cheer_swell: SlowNoise,
     roar: Svf,
+    // Air horns have their own random stream, so a crowd without them sounds exactly as before.
+    horn_rng: crate::math::Rng,
+    horns: [Horn; 2],
+    horn_osc: [[Oscillator; 2]; 2],
+    horn_tone: Svf,
 }
 
 impl Generator for Crowd {
@@ -249,6 +264,7 @@ impl Generator for Crowd {
         vec![
             ("Tavern", CrowdParams { formant_hz: 560.0, syllable_hz: 3.2, cheer_level: 0.3, roar_level: 0.1, ..Default::default() }),
             ("Stadium", CrowdParams { formant_hz: 850.0, formant_spread: 1.2, cheer_level: 0.9, roar_level: 0.8, ..Default::default() }),
+            ("Festival", CrowdParams { formant_hz: 760.0, formant_spread: 1.1, syllable_hz: 4.6, murmur_level: 0.8, cheer_level: 0.85, roar_level: 0.6, horns_rate: 14.0, horns_level: 0.6, ..Default::default() }),
         ]
     }
 
@@ -263,6 +279,10 @@ impl Generator for Crowd {
             cheer: Svf::default(),
             cheer_swell: SlowNoise::new(0x62_0300),
             roar: Svf::default(),
+            horn_rng: crate::math::Rng::new(crate::blocks::mix_seed(0x62_0400)),
+            horns: [Horn::default(); 2],
+            horn_osc: [[Oscillator::new(0x62_0401), Oscillator::new(0x62_0402)], [Oscillator::new(0x62_0403), Oscillator::new(0x62_0404)]],
+            horn_tone: Svf::default(),
         }
     }
 
@@ -289,13 +309,40 @@ impl Generator for Crowd {
         let roar_gain = p.roar_level * ex * 2.0;
         let murmur_gain = p.murmur_level * 4.5 / (1.0 + 2.0 * size);
         let level = (0.4 + 0.6 * size) * p.gain;
+        let horns = p.horns_rate > 0.0 && p.horns_level > 0.0;
+        if horns {
+            // A rowdy outdoor crowd: someone always has an air horn. More of them when excited.
+            let start_p = p.horns_rate / 60.0 * (0.4 + 0.6 * ex) * (0.5 + 0.5 * size) * dt;
+            for h in self.horns.iter_mut() {
+                if h.left <= 0.0 && self.horn_rng.chance(start_p) {
+                    let len = self.horn_rng.range(0.35, 1.4);
+                    *h = Horn { left: len, len, hz: self.horn_rng.range(330.0, 480.0) };
+                }
+            }
+            self.horn_tone.set(FilterMode::LowPass, 2200.0, 0.3, sr);
+        }
         for o in out.iter_mut() {
             let (w, pk) = (self.noise.white(), self.noise.pink());
             let mut y = 0.0;
             for (voice, a) in self.voice.iter_mut().zip(amp) {
                 y += voice.tick(pk) * a;
             }
-            *o = (y * murmur_gain + self.cheer.tick(w) * cheer_gain + self.roar.tick(self.brown.tick(w)) * roar_gain) * level;
+            let mut horn = 0.0;
+            if horns {
+                for (h, osc) in self.horns.iter_mut().zip(self.horn_osc.iter_mut()) {
+                    if h.left > 0.0 {
+                        let age = h.len - h.left;
+                        // Quick attack, a breathy end that sags in pitch as the can runs out.
+                        let env = (age / 0.025).min(1.0) * (h.left / 0.12).min(1.0);
+                        let sag = 1.0 - 0.06 * (1.0 - h.left / h.len).powi(3);
+                        let f = h.hz * sag / sr;
+                        horn += (osc[0].next(Waveform::Saw, f, 0.5) + osc[1].next(Waveform::Pulse, f * 1.005, 0.4)) * env;
+                        h.left -= 1.0 / sr;
+                    }
+                }
+                horn = soft_clip(self.horn_tone.tick(horn) * 1.5) * p.horns_level * 0.55;
+            }
+            *o = (y * murmur_gain + self.cheer.tick(w) * cheer_gain + self.roar.tick(self.brown.tick(w)) * roar_gain) * level + horn * p.gain;
         }
     }
 }

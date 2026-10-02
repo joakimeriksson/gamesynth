@@ -530,6 +530,12 @@ pub unsafe extern "C" fn model_set_pitch_ratio(m: ModelHandle, ratio: f32) {
     (*m).set_pitch_ratio(ratio);
 }
 
+/// Engines: current revs 0..1; -1 for models without revs.
+#[no_mangle]
+pub unsafe extern "C" fn model_rpm(m: ModelHandle) -> f32 {
+    (*m).rpm().unwrap_or(-1.0)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn model_peak(m: ModelHandle) -> f32 {
     (*m).peak()

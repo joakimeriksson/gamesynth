@@ -626,6 +626,13 @@ impl SoundGeneratorPlayback {
     fn get_peak(&self) -> f64 {
         self.model.peak() as f64
     }
+
+    /// Engines: current revs 0..1 (combustion: between idle and max RPM, the scale of its `rpm`
+    /// input; jet: spool fraction; model files: their `rpm` signal). -1 for models without revs.
+    #[func]
+    fn get_rpm(&self) -> f64 {
+        self.model.rpm().map(|r| r as f64).unwrap_or(-1.0)
+    }
 }
 
 #[godot_api]

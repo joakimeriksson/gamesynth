@@ -18,7 +18,7 @@ fn set_all(m: &mut dyn Model, v: f32) {
 
 #[test]
 fn registry_is_consistent() {
-    assert!(generators::NAMES.len() >= 36);
+    assert!(generators::NAMES.len() >= 42);
     let descs = generators::describe_all();
     assert_eq!(descs.len(), generators::NAMES.len());
     for (name, d) in generators::NAMES.iter().zip(&descs) {
@@ -77,7 +77,7 @@ fn every_generator_and_preset_is_bounded_and_audible() {
 #[test]
 fn inputs_change_the_sound() {
     // Raising the primary input must raise the level for everything driven by intensity.
-    for name in ["hover", "combustion", "motor", "rotor", "scrape", "beam", "wind", "rain", "fire", "stream", "electric", "crowd", "radio"] {
+    for name in ["hover", "combustion", "motor", "rotor", "scrape", "beam", "tyre", "wind", "rain", "fire", "stream", "electric", "crowd", "radio"] {
         let level = |v: f32| {
             let mut m = generators::create(name, SR).unwrap();
             set_all(m.as_mut(), 0.5);
@@ -257,4 +257,285 @@ fn pitch_ratio_transposes_events() {
     m.set_pitch_ratio(f32::NAN);
     m.trigger();
     assert!(render(m.as_mut(), 0.1).iter().all(|x| x.is_finite()));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Off-road requests (Dirtrace): game-driven revs, engine character, tyres
+// ---------------------------------------------------------------------------------------------
+
+fn engine(preset: &str) -> Box<dyn Model> {
+    let mut m = generators::create("combustion", SR).unwrap();
+    let k = m.desc().preset_index(preset).unwrap_or_else(|| panic!("no preset {preset}"));
+    m.load_preset(k);
+    m
+}
+
+fn set(m: &mut dyn Model, param: &str, v: f32) {
+    assert!(m.set_param_by_name(param, v), "no param {param}");
+}
+
+/// Strongest frequency between `lo` and `hi` Hz (zero-padded DFT scan, 2 Hz steps).
+fn dominant(x: &[f32], lo: f32, hi: f32) -> f32 {
+    let mut best = (0.0, lo);
+    let mut f = lo;
+    while f <= hi {
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (n, v) in x.iter().enumerate() {
+            let w = 0.5 - 0.5 * (core::f32::consts::TAU * n as f32 / x.len() as f32).cos();
+            let a = core::f32::consts::TAU * f * n as f32 / SR;
+            re += v * w * a.cos();
+            im += v * w * a.sin();
+        }
+        let m = re * re + im * im;
+        if m > best.0 {
+            best = (m, f);
+        }
+        f += 2.0;
+    }
+    best.1
+}
+
+fn band_energy(x: &[f32], lo: f32, hi: f32) -> f32 {
+    // Crude band power: difference of two one-pole low-passes, averaged.
+    let (a, b) = (1.0 - (-core::f32::consts::TAU * hi / SR).exp(), 1.0 - (-core::f32::consts::TAU * lo / SR).exp());
+    let (mut ya, mut yb, mut acc) = (0.0f32, 0.0f32, 0.0f32);
+    for v in x {
+        ya += (v - ya) * a;
+        yb += (v - yb) * b;
+        acc += (ya - yb) * (ya - yb);
+    }
+    acc / x.len() as f32
+}
+
+#[test]
+fn combustion_follows_a_game_driven_rpm_within_30_ms() {
+    let mut m = engine("V8 muscle");
+    set(m.as_mut(), "engine/external_rpm", 1.0);
+    set(m.as_mut(), "engine/roughness", 0.0);
+    m.set_input_by_name("throttle", 0.6);
+    m.set_input_by_name("load", 0.6);
+    m.set_input_by_name("rpm", 1.0);
+    m.snap();
+    render(m.as_mut(), 0.3);
+    // V8 at 6200 rpm fires 8 / 2 * 6200 / 60 = 413 Hz.
+    let high = dominant(&render(m.as_mut(), 0.25), 250.0, 600.0);
+    assert!((high - 413.0).abs() < 25.0, "firing at full revs {high} Hz");
+    assert!((m.rpm().unwrap() - 1.0).abs() < 0.01, "rpm() reports the revs");
+    // Upshift: revs drop to 0.4 (700 + 0.4 * 5500 = 2900 rpm, 193 Hz). After 30 ms it is there.
+    m.set_input_by_name("rpm", 0.4);
+    render(m.as_mut(), 0.03);
+    assert!((m.rpm().unwrap() - 0.4).abs() < 0.04, "after 30 ms revs are {}", m.rpm().unwrap());
+    let low = dominant(&render(m.as_mut(), 0.25), 120.0, 300.0);
+    assert!((low - 193.0).abs() < 20.0, "firing after the shift {low} Hz");
+    // Without external rpm the same input does nothing: throttle drives the revs as before.
+    let mut inert = engine("V8 muscle");
+    inert.set_input_by_name("rpm", 1.0);
+    inert.set_input_by_name("throttle", 0.0);
+    render(inert.as_mut(), 0.5);
+    assert!(inert.rpm().unwrap() < 0.01);
+}
+
+#[test]
+fn two_stroke_fires_every_turn() {
+    let rate = |cycle: f32| {
+        let mut m = engine("Lawnmower");
+        set(m.as_mut(), "engine/external_rpm", 1.0);
+        set(m.as_mut(), "engine/cycle", cycle);
+        set(m.as_mut(), "engine/roughness", 0.0);
+        m.set_input_by_name("throttle", 0.9);
+        m.set_input_by_name("rpm", 1.0);
+        m.snap();
+        render(m.as_mut(), 0.2);
+        dominant(&render(m.as_mut(), 0.3), 20.0, 90.0)
+    };
+    // Single cylinder at 3600 rpm: 30 Hz four-stroke, 60 Hz two-stroke.
+    let (four, two) = (rate(0.0), rate(1.0));
+    assert!((four - 30.0).abs() < 4.0 && (two - 60.0).abs() < 6.0, "four-stroke {four} Hz, two-stroke {two} Hz");
+}
+
+#[test]
+fn blower_whines_at_its_drive_ratio_and_boost_adds_drive() {
+    let mut m = engine("Blown V8");
+    set(m.as_mut(), "engine/external_rpm", 1.0);
+    m.set_input_by_name("throttle", 0.8);
+    m.set_input_by_name("rpm", 0.5);
+    m.set_input_by_name("boost", 1.0);
+    m.snap();
+    render(m.as_mut(), 0.2);
+    let x = render(m.as_mut(), 0.3);
+    // 750 + 0.5 * 5750 = 3625 rpm -> 60.4 rev/s x 14 = 846 Hz.
+    let whine = dominant(&x, 700.0, 1000.0);
+    assert!((whine - 846.0).abs() < 20.0, "blower whine at {whine} Hz");
+    let level = |boost: f32| {
+        let mut e = engine("Buggy flat-four");
+        e.set_input_by_name("throttle", 0.8);
+        e.set_input_by_name("boost", boost);
+        e.snap();
+        render(e.as_mut(), 0.2);
+        rms(&render(e.as_mut(), 0.5))
+    };
+    assert!(level(1.0) > level(0.0) * 1.1, "boost should push the engine harder");
+}
+
+#[test]
+fn lifting_off_sets_off_backfires() {
+    let peak_after_lift = |backfire: f32| {
+        let mut worst = 0.0f32;
+        for trial in 0..6 {
+            let mut m = engine("Blown V8");
+            set(m.as_mut(), "exhaust/backfire", backfire);
+            set(m.as_mut(), "exhaust/overrun_burble", 0.0);
+            set(m.as_mut(), "engine/rev_limiter", 0.0);
+            m.set_input_by_name("throttle", 1.0);
+            m.set_input_by_name("load", 1.0);
+            m.snap();
+            render(m.as_mut(), 0.5 + 0.03 * trial as f32);
+            let before = peak(&render(m.as_mut(), 0.2));
+            m.set_input_by_name("throttle", 0.0);
+            let after = render(m.as_mut(), 0.5);
+            // Revs fall away after a lift, so compare the bang against the engine at full throttle.
+            worst = worst.max(peak(&after) / before);
+        }
+        worst
+    };
+    let (off, on) = (peak_after_lift(0.0), peak_after_lift(1.0));
+    assert!(on > off * 1.25, "backfire bangs: {on:.2} x the running peak, without {off:.2}");
+}
+
+#[test]
+fn rev_limiter_cuts_the_ignition_at_redline() {
+    let dips = |limiter: f32| {
+        let mut m = engine("Dirt bike 2-stroke");
+        set(m.as_mut(), "engine/external_rpm", 1.0);
+        set(m.as_mut(), "engine/rev_limiter", limiter);
+        m.set_input_by_name("throttle", 1.0);
+        m.set_input_by_name("rpm", 1.0);
+        m.snap();
+        render(m.as_mut(), 0.2);
+        let x = render(m.as_mut(), 1.0);
+        let win = (SR * 0.01) as usize;
+        let env: Vec<f32> = x.chunks(win).map(rms).collect();
+        let mean = env.iter().sum::<f32>() / env.len() as f32;
+        env.iter().filter(|v| **v < 0.4 * mean).count()
+    };
+    let (free, limited) = (dips(0.0), dips(0.8));
+    assert!(limited > free + 10, "limiter cuts: {limited} quiet 10 ms windows vs {free} without");
+}
+
+#[test]
+fn damage_misfires_and_rattles() {
+    let run = |damage: f32| {
+        let mut m = engine("V8 muscle");
+        set(m.as_mut(), "engine/roughness", 0.0);
+        m.set_input_by_name("throttle", 0.5);
+        m.set_input_by_name("damage", damage);
+        m.snap();
+        render(m.as_mut(), 0.3);
+        render(m.as_mut(), 1.0)
+    };
+    let (clean, wrecked) = (run(0.0), run(1.0));
+    // Misfires make the level lurch from window to window.
+    let wobble = |x: &[f32]| {
+        let env: Vec<f32> = x.chunks((SR * 0.02) as usize).map(rms).collect();
+        let mean = env.iter().sum::<f32>() / env.len() as f32;
+        (env.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / env.len() as f32).sqrt() / mean
+    };
+    assert!(wobble(&wrecked) > wobble(&clean) * 1.5, "misfires: {:.3} vs {:.3}", wobble(&wrecked), wobble(&clean));
+    // Rattle and exhaust-leak hiss add top end.
+    assert!(band_energy(&wrecked, 2000.0, 8000.0) > band_energy(&clean, 2000.0, 8000.0) * 1.5);
+}
+
+#[test]
+fn tyre_surfaces_have_their_own_character() {
+    let tyre = |surface: f32, speed: f32, slip: f32| {
+        let mut m = generators::create("tyre", SR).unwrap();
+        m.set_input_by_name("speed", speed);
+        m.set_input_by_name("slip", slip);
+        m.set_input_by_name("surface", surface);
+        m.snap();
+        render(m.as_mut(), 0.3);
+        render(m.as_mut(), 1.5)
+    };
+    let (dirt, gravel, sand, mud, rock) = (tyre(0.0, 0.7, 0.1), tyre(0.25, 0.7, 0.1), tyre(0.5, 0.7, 0.1), tyre(0.75, 0.7, 0.1), tyre(1.0, 0.7, 0.1));
+    let top = |x: &[f32]| band_energy(x, 2500.0, 9000.0) / band_energy(x, 30.0, 9000.0);
+    let low = |x: &[f32]| band_energy(x, 30.0, 300.0) / band_energy(x, 30.0, 9000.0);
+    assert!(top(&gravel) > top(&dirt) * 1.5, "gravel crunches brighter than dirt: {:.3} vs {:.3}", top(&gravel), top(&dirt));
+    assert!(top(&sand) > top(&mud) * 3.0, "sand hisses, mud does not: {:.3} vs {:.3}", top(&sand), top(&mud));
+    assert!(low(&mud) > low(&sand), "mud is the darkest: {:.3} vs sand {:.3}", low(&mud), low(&sand));
+    // Squeal is a rock/tarmac thing, and only when sliding: the squeal band (around
+    // rock/squeal_hz) gains a lot on rock, and gravel's slide noise does not match it.
+    let squeal = |x: &[f32]| band_energy(x, 850.0, 1500.0) / band_energy(x, 30.0, 9000.0);
+    let rock_slide = tyre(1.0, 0.7, 0.9);
+    assert!(squeal(&rock_slide) > squeal(&rock) * 3.0, "sliding on rock squeals: {:.3} vs rolling {:.3}", squeal(&rock_slide), squeal(&rock));
+    // And it is a tone: in the squeal band the strongest bin stands far above the mean, which
+    // gravel's broadband slide noise never does.
+    let peaky = |x: &[f32]| {
+        let w = &x[(SR * 0.5) as usize..(SR * 0.65) as usize];
+        let mags: Vec<f32> = (0..=80).map(|k| {
+            let f = 850.0 + 8.0 * k as f32;
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (n, v) in w.iter().enumerate() {
+                let a = core::f32::consts::TAU * f * n as f32 / SR;
+                re += v * a.cos();
+                im += v * a.sin();
+            }
+            (re * re + im * im).sqrt()
+        }).collect();
+        mags.iter().cloned().fold(0.0, f32::max) / (mags.iter().sum::<f32>() / mags.len() as f32)
+    };
+    // The tread hum is tonal too (on every surface), so silence it to compare just the slides.
+    let slide_only = |surface: f32| {
+        let mut m = generators::create("tyre", SR).unwrap();
+        assert!(m.set_param_by_name("tread/hum", 0.0));
+        m.set_input_by_name("speed", 0.7);
+        m.set_input_by_name("slip", 0.9);
+        m.set_input_by_name("surface", surface);
+        m.snap();
+        render(m.as_mut(), 0.3);
+        render(m.as_mut(), 1.0)
+    };
+    let (rock_only, gravel_only) = (slide_only(1.0), slide_only(0.25));
+    assert!(peaky(&rock_only) > peaky(&gravel_only) * 1.3, "squeal is a tone: {:.2} vs {:.2}", peaky(&rock_only), peaky(&gravel_only));
+    // `band_energy` is two one-pole filters, so rumble leaks into every band; measured 1.9x
+    // here, while the spectrogram shows a clear squeal line on rock and none on gravel.
+    assert!(squeal(&rock_only) > squeal(&gravel_only) * 1.7, "no squeal on gravel: {:.3} vs {:.3}", squeal(&rock_only), squeal(&gravel_only));
+    for (name, x) in [("dirt", &dirt), ("gravel", &gravel), ("sand", &sand), ("mud", &mud), ("rock", &rock)] {
+        assert!(x.iter().all(|v| v.is_finite()) && peak(x) <= 1.0 && rms(x) > 0.02, "{name}: rms {} peak {}", rms(x), peak(x));
+    }
+    // Standing still is silent.
+    assert!(rms(&tyre(0.25, 0.0, 0.0)) < 0.01);
+}
+
+#[test]
+fn festival_crowd_has_air_horns() {
+    let run = |preset: &str| {
+        let mut m = generators::create("crowd", SR).unwrap();
+        let k = m.desc().preset_index(preset).unwrap();
+        m.load_preset(k);
+        m.set_input(0, 0.8);
+        m.set_input(1, 0.8);
+        m.snap();
+        render(m.as_mut(), 12.0)
+    };
+    // An air horn is a loud harmonic tone in 330..480 Hz. Scan 0.15 s windows: the most tonal
+    // window (strongest bin / mean bin) shows a horn; a crowd of voices never gets that peaky.
+    let most_tonal = |x: &[f32]| {
+        let n = (SR * 0.15) as usize;
+        x.chunks(n).filter(|w| w.len() == n).map(|w| {
+            let mags: Vec<f32> = (0..=40).map(|k| {
+                let f = 300.0 + 6.0 * k as f32;
+                let (mut re, mut im) = (0.0f32, 0.0f32);
+                for (i, v) in w.iter().enumerate() {
+                    let a = core::f32::consts::TAU * f * i as f32 / SR;
+                    re += v * a.cos();
+                    im += v * a.sin();
+                }
+                (re * re + im * im).sqrt()
+            }).collect();
+            mags.iter().cloned().fold(0.0, f32::max) / (mags.iter().sum::<f32>() / mags.len() as f32)
+        }).fold(0.0, f32::max)
+    };
+    let (festival, stadium) = (run("Festival"), run("Stadium"));
+    assert!(most_tonal(&festival) > most_tonal(&stadium) * 1.5, "horns: {:.2} vs {:.2}", most_tonal(&festival), most_tonal(&stadium));
+    assert!(peak(&festival) <= 1.0);
 }

@@ -127,7 +127,7 @@ func _init() -> void:
 	print("SoundGenerator")
 	_check(ClassDB.class_exists("SoundGenerator"), "class registered")
 	var gen_names := SoundGenerator.get_generator_names()
-	_check(gen_names.size() >= 36, "generator library: %d" % gen_names.size())
+	_check(gen_names.size() >= 42, "generator library: %d" % gen_names.size())
 	var silent := []
 	for gname in gen_names:
 		var g := SoundGenerator.create(gname)
@@ -240,6 +240,22 @@ func _init() -> void:
 	var chime_peak := _peak(cpb.mix_audio(1.0, 24000))
 	cpb.mix_audio(1.0, 48000 * 5)
 	_check(chime_peak > 0.1 and not cpb.is_playing(), "file one-shot fires (peak %.2f) and finishes" % chime_peak)
+
+	var revs := SoundGenerator.create("combustion")
+	revs.preset = "Blown V8"
+	revs.set_param("engine/external_rpm", 1.0)
+	_check(revs.get_input_names() == PackedStringArray(["throttle", "load", "rpm", "damage", "boost"]), "combustion inputs %s" % [revs.get_input_names()])
+	var rpb := revs.instantiate_playback() as SoundGeneratorPlayback
+	rpb.start(0.0)
+	rpb.set_inputs({"throttle": 0.7, "rpm": 0.65})
+	rpb.mix_audio(1.0, 4800)
+	_check(absf(rpb.get_rpm() - 0.65) < 0.01, "get_rpm follows a game-driven rpm: %.3f" % rpb.get_rpm())
+	_check(SoundGenerator.create("wind").instantiate_playback().get_rpm() == -1.0, "get_rpm is -1 without revs")
+	var tyre := SoundGenerator.create("tyre")
+	_check(tyre.get_input_names() == PackedStringArray(["speed", "slip", "load", "surface"]), "tyre inputs %s" % [tyre.get_input_names()])
+	for preset_name in ["Blown V8", "Buggy flat-four", "Dirt bike 2-stroke", "Rattletrap V8"]:
+		_check(SoundGenerator.create("combustion").set_preset(preset_name), "combustion preset %s" % preset_name)
+	_check(SoundGenerator.create("wind").set_preset("Canyon") and SoundGenerator.create("crowd").set_preset("Festival"), "Canyon wind, Festival crowd")
 
 	var model_path := ProjectSettings.globalize_path("res://").path_join("../models/campfire.toml")
 	var fire_gen := SoundGenerator.from_file(model_path)
