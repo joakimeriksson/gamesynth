@@ -7,6 +7,7 @@ pub mod ambient;
 pub mod fx;
 pub mod nature;
 pub mod piston;
+pub mod sport;
 pub mod vehicles;
 
 use crate::model::{Generator, Model, ModelDesc, Native};
@@ -51,6 +52,7 @@ registry!(
     ambient::Radio,
     ambient::Siren,
     ambient::Beam,
+    sport::Skate,
     fx::OneShot<fx::Laser>,
     fx::OneShot<fx::Plasma>,
     fx::OneShot<fx::Cannon>,
@@ -75,4 +77,11 @@ registry!(
     fx::OneShot<fx::SuspensionThud>,
     fx::OneShot<fx::Debris>,
     fx::OneShot<fx::RockHit>,
+    fx::OneShot<fx::PuckStick>,
+    fx::OneShot<fx::PuckBoards>,
+    fx::OneShot<fx::PuckGlass>,
+    fx::OneShot<fx::PuckPost>,
+    fx::OneShot<fx::PuckPad>,
+    fx::OneShot<fx::GoalHorn>,
+    fx::OneShot<fx::Buzzer>,
 );

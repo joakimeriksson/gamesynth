@@ -775,3 +775,89 @@ recipe!(RockHit, "rock_hit", "Rock or boulder strike: a stony crack, a short dry
         Layer { src: Src::Debris, f0: 3500.0, f1: 2500.0, glide: 0.3, rate: 140.0, spread: 1.0, q: 0.7, delay: 0.01, hold: 0.03, decay: 0.25, level: 0.5, ..LAYER },
         Layer { src: Src::Tone(Sine), f0: 1700.0, fm_ratio: 2.7, fm: 0.6, hold: 0.0, decay: 0.12, level: 0.15, vary: 1.5, ..LAYER },
     ]);
+
+// ---- hockey: tuned against recordings (tools/reference/hockey). A puck on the boards is a
+// knock at 500 Hz to 1 kHz over a low thud, with almost nothing above 2 kHz; nothing here is
+// bright. ----
+
+recipe!(PuckStick, "puck_stick", "Stick on puck: the tick of the blade, the knock of the shaft, a little flex. Presets from a soft pass to a slap shot.", reverb 0.2 / 0.8, width 0.4,
+    presets [
+        ("Pass", fx(0.7, 2.0, 0.45)),
+        ("Receive", fx(0.6, -2.0, 0.35)),
+        ("Wrist", fx(0.9, 0.0, 0.55)),
+        ("Slap", FxParams { punch: 0.85, ..fx(1.5, -3.0, 0.7) }),
+        ("Poke", fx(0.45, 5.0, 0.5)),
+    ],
+    [
+        Layer { src: Src::Pink, mode: BandPass, f0: 1900.0, q: 0.5, hold: 0.001, decay: 0.035, level: 0.9, wide: 0.0, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 480.0, f1: 380.0, glide: 0.02, q: 0.6, hold: 0.003, decay: 0.07, level: 1.5, drive: 0.3, wide: 0.0, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 260.0, f1: 180.0, glide: 0.03, hold: 0.0, decay: 0.09, level: 0.5, vary: 0.4, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1150.0, fm_ratio: 2.4, fm: 0.5, hold: 0.0, decay: 0.05, level: 0.12, vary: 1.2, ..LAYER },
+        Layer { src: Src::Pink, mode: LowPass, f0: 700.0, f1: 250.0, glide: 0.05, delay: 0.004, hold: 0.005, decay: 0.12, level: 0.6, wide: 1.0, ..LAYER },
+    ]);
+
+recipe!(PuckBoards, "puck_boards", "Puck into the boards: a hollow thud and the dasher rattling.", reverb 0.3 / 1.0, width 0.5,
+    presets [("Body check", fx(1.8, -5.0, 0.4)), ("Light", fx(0.6, 3.0, 0.5))],
+    [
+        Layer { src: Src::Pink, mode: BandPass, f0: 620.0, q: 0.45, hold: 0.003, decay: 0.07, level: 2.4, drive: 0.3, wide: 0.0, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 1050.0, q: 0.5, hold: 0.002, decay: 0.04, level: 1.2, wide: 0.0, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 150.0, f1: 95.0, glide: 0.05, hold: 0.01, decay: 0.28, level: 0.45, vary: 0.3, ..LAYER },
+        Layer { src: Src::Pink, mode: LowPass, f0: 320.0, f1: 120.0, glide: 0.08, hold: 0.01, decay: 0.3, level: 0.6, drive: 0.4, wide: 0.3, ..LAYER },
+        Layer { src: Src::Debris, f0: 600.0, rate: 45.0, spread: 0.8, q: 0.7, delay: 0.02, hold: 0.06, decay: 0.35, level: 0.6, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 235.0, beat: 4.0, delay: 0.01, hold: 0.0, decay: 0.3, level: 0.2, vary: 0.4, ..LAYER },
+    ]);
+
+recipe!(PuckGlass, "puck_glass", "Puck against the glass: a dull boom and the pane shivering.", reverb 0.35 / 1.2, width 0.5,
+    presets [("Hard", fx(1.4, -3.0, 0.5))],
+    [
+        Layer { src: Src::Pink, mode: BandPass, f0: 420.0, q: 0.5, hold: 0.003, decay: 0.07, level: 2.0, wide: 0.0, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 110.0, f1: 80.0, glide: 0.06, hold: 0.02, decay: 0.45, level: 0.7, vary: 0.3, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 310.0, beat: 9.0, attack: 0.005, hold: 0.0, decay: 0.7, level: 0.55, vary: 0.3, pan: -0.3, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 470.0, beat: 13.0, delay: 0.01, hold: 0.0, decay: 0.5, level: 0.35, vary: 0.3, pan: 0.3, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 1300.0, q: 0.6, delay: 0.01, hold: 0.02, decay: 0.3, level: 0.5, ..LAYER },
+    ]);
+
+recipe!(PuckPost, "puck_post", "Puck off the post: a short ping of steel tube, not a bell.", reverb 0.3 / 1.0, width 0.3,
+    presets [("Crossbar", fx(1.1, -4.0, 0.5)), ("Glancing", fx(0.6, 4.0, 0.6))],
+    [
+        Layer { src: Src::Pink, mode: BandPass, f0: 1500.0, q: 0.5, hold: 0.001, decay: 0.02, level: 0.5, wide: 0.0, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1320.0, attack: 0.001, hold: 0.0, decay: 0.35, level: 0.5, vary: 0.15, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 2140.0, attack: 0.001, hold: 0.0, decay: 0.22, level: 0.28, vary: 0.15, pan: 0.2, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 2900.0, attack: 0.001, hold: 0.0, decay: 0.1, level: 0.05, vary: 0.15, pan: -0.2, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 590.0, attack: 0.001, hold: 0.0, decay: 0.18, level: 0.3, vary: 0.2, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 500.0, q: 0.5, hold: 0.002, decay: 0.05, level: 0.7, wide: 0.0, ..LAYER },
+    ]);
+
+recipe!(PuckPad, "puck_pad", "Puck into the goalie: the thump of a leg pad, or the pop of the glove.", reverb 0.15 / 0.6, width 0.4,
+    presets [("Glove", fx(0.7, 6.0, 0.65)), ("Blocker", fx(0.9, 3.0, 0.5))],
+    [
+        Layer { src: Src::Pink, mode: LowPass, f0: 600.0, f1: 160.0, glide: 0.03, hold: 0.004, decay: 0.1, level: 1.5, drive: 0.3, wide: 0.0, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 120.0, f1: 70.0, glide: 0.04, hold: 0.0, decay: 0.12, level: 0.8, vary: 0.3, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 900.0, q: 0.4, hold: 0.002, decay: 0.03, level: 0.5, wide: 0.0, ..LAYER },
+        // The pad's foam giving: a soft spread of low noise after the hit.
+        Layer { src: Src::Pink, mode: LowPass, f0: 450.0, f1: 200.0, glide: 0.05, delay: 0.005, hold: 0.01, decay: 0.14, level: 0.6, wide: 1.0, ..LAYER },
+    ]);
+
+// A real arena horn (measured): three trumpets near 140, 203 and 257 Hz whose harmonics fall
+// away the way a sawtooth's do.
+recipe!(GoalHorn, "goal_horn", "Goal horn: a chord of big air horns that swells, holds about two seconds and rings round the arena, with the building shaking under it.", reverb 0.45 / 2.2, width 0.7,
+    presets [("Ship's horn", fx(1.2, -5.0, 0.4)), ("Short blast", fx(0.45, 0.0, 0.5))],
+    [
+        Layer { src: Src::Tone(Saw), f0: 140.0, beat: 1.1, attack: 0.25, hold: 2.0, decay: 0.7, level: 0.42, vary: 0.05, pan: -0.3, ..LAYER },
+        Layer { src: Src::Tone(Saw), f0: 203.0, beat: 1.4, attack: 0.3, hold: 1.95, decay: 0.7, level: 0.36, vary: 0.05, pan: 0.3, ..LAYER },
+        Layer { src: Src::Tone(Saw), f0: 257.0, beat: 0.9, attack: 0.35, hold: 1.9, decay: 0.7, level: 0.28, vary: 0.05, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 70.0, attack: 0.3, hold: 2.0, decay: 0.8, level: 0.25, vary: 0.05, ..LAYER },
+        Layer { src: Src::Pink, mode: LowPass, f0: 500.0, attack: 0.2, hold: 2.0, decay: 0.6, level: 0.25, ..LAYER },
+    ]);
+
+// A real period buzzer (measured): harmonics of 126 Hz, strongest at the third and fourth, with
+// its energy between 250 Hz and 1.3 kHz. Carriers there, modulated at 126 Hz, give that cluster.
+recipe!(Buzzer, "buzzer", "End-of-period buzzer: harsh, flat and steady for a little over a second.", reverb 0.3 / 1.0, width 0.5,
+    presets [("Shot clock", fx(0.5, 7.0, 0.5)), ("Long", fx(1.6, 0.0, 0.5))],
+    [
+        Layer { src: Src::Tone(Sine), f0: 378.0, fm_ratio: 0.33333, fm: 2.0, attack: 0.004, hold: 1.1, decay: 0.2, level: 0.5, vary: 0.02, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 504.0, fm_ratio: 0.25, fm: 1.6, beat: 2.5, attack: 0.004, hold: 1.1, decay: 0.2, level: 0.4, vary: 0.02, pan: 0.3, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1008.0, fm_ratio: 0.125, fm: 2.0, attack: 0.004, hold: 1.1, decay: 0.2, level: 0.14, vary: 0.02, pan: -0.3, ..LAYER },
+        // The rasp: a thin sawtooth at the buzz rate, which is also what distance takes away first.
+        Layer { src: Src::Tone(Saw), f0: 126.0, attack: 0.004, hold: 1.1, decay: 0.2, level: 0.1, vary: 0.02, ..LAYER },
+    ]);

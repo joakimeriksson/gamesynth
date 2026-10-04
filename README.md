@@ -145,7 +145,7 @@ tiers behind the same `SoundGenerator` class:
 
 | Tier | What | Cost |
 |---|---|---|
-| **Native** (43) | continuous: `jet` `hover` `combustion` `piston` `motor` `rotor` `scrape` `beam` `tyre` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep` `finish`, a struck `bell`, and off-road `metal_crash` `mud_splash` `suspension_thud` `debris` `rock_hit`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
+| **Native** (51) | continuous: `jet` `hover` `combustion` `piston` `motor` `rotor` `scrape` `beam` `tyre` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren` · `skate`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep` `finish`, a struck `bell`, off-road `metal_crash` `mud_splash` `suspension_thud` `debris` `rock_hit`, and hockey `puck_stick` `puck_boards` `puck_glass` `puck_post` `puck_pad` `goal_horn` `buzzer`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
 | **Model files** | your own, as TOML/JSON: a graph of nodes plus control formulas. See [`models/README.md`](models/README.md) and the examples in `models/` (`mine_armed` proximity ticker, `rocket_flight` for the projectile, `recharge`, `checkpoint`, `shield`…) | about 2.5x a native generator |
 
 ```gdscript
@@ -255,6 +255,22 @@ tyre is a mid-range sound: on gravel it is loudest between 500 Hz and 1 kHz and 
 5 % of its energy above 2.5 kHz. An earlier version had its gravel and sand layers up at 2.5 to
 5 kHz and read as hiss or rain in a race; if you carried overrides for that (`gravel/hz`,
 `gravel/crunch`, `gravel/stones`, a low-pass on the bus), try without them.
+
+**Ice hockey.** `skate` is one skater's blades: `speed`, `push` (1 while striding), `edge`
+(carving or stopping) and `surface` (fresh to cut-up ice). Each stride is its own "shhk", gliding
+is nearly silent, a stop is a thick dull spray. The default keeps its top down so that several
+skaters for a whole match do not add up to hiss; the `Close up` preset is what a microphone at
+the boards records. The events: `puck_stick` (presets `Pass`, `Receive`, `Wrist`, `Slap`,
+`Poke`), `puck_boards` (`Body check`, `Light`), `puck_glass`, `puck_post` (`Crossbar`,
+`Glancing`), `puck_pad` (`Glove`, `Blocker`), `goal_horn` (`Ship's horn`, `Short blast`) and
+`buzzer` (`Shot clock`, `Long`).
+
+`crowd` has an indoor `Arena` preset (the cheer near 1 kHz, a short slap of room) and four
+inputs for sport: raise `groan` for one "ooohh" of about a second, hold `boo`, hold `chant` for
+clap, clap, clap-clap-clap at `chant/bpm`, and hold `goal` for a roar that swells for a second,
+holds and takes a few seconds to settle. At 0 they do nothing, and the older presets are
+unchanged. All of these were tuned against recordings in
+[`tools/reference/hockey`](tools/reference).
 
 `gen.get_input_names()` tells you what a model wants; params appear in the inspector under
 their groups and reach running playbacks live. Start from a native generator; move to a

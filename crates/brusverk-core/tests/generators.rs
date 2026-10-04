@@ -782,3 +782,135 @@ fn turbo_whistles_lags_and_blows_off() {
     // (The engine's own harmonics share this band, so the bar is a doubling, not silence.)
     assert!(with > without * 2.5, "blow-off: {with:.3} against {without:.3}");
 }
+
+// ---- hockey ----
+
+fn crowd(preset: &str) -> Box<dyn Model> {
+    let mut m = generators::create("crowd", SR).unwrap();
+    let k = m.desc().preset_index(preset).unwrap_or_else(|| panic!("no preset {preset}"));
+    m.load_preset(k);
+    m.set_input_by_name("size", 0.9);
+    m.set_input_by_name("excitement", 0.12);
+    m.snap();
+    m
+}
+
+#[test]
+fn arena_crowd_is_not_bright() {
+    // Recordings of hockey crowds have under 2 % of their energy above 2.5 kHz, cheering or
+    // booing. The outdoor Stadium preset has several times that; indoors it read as hiss.
+    let top = |preset: &str| {
+        let mut m = crowd(preset);
+        m.set_input_by_name("excitement", 1.0);
+        m.snap();
+        render(m.as_mut(), 0.5);
+        let x = render(m.as_mut(), 0.5);
+        spectral_energy(&x, 2500.0, 9000.0, 50.0) / spectral_energy(&x, 50.0, 9000.0, 50.0)
+    };
+    let (arena, stadium) = (top("Arena"), top("Stadium"));
+    assert!(arena < 0.06 && arena < stadium * 0.6, "Arena {arena:.3}, Stadium {stadium:.3}");
+}
+
+#[test]
+fn crowd_groans_once_boos_while_held_and_swells_for_a_goal() {
+    // Each step: (input value, seconds). Returns the level of each step. The crowd underneath
+    // is the same from run to run, so a run without the reaction is an exact baseline.
+    let run = |input: &str, steps: &[(f32, f32)]| {
+        let mut m = crowd("Arena");
+        steps.iter().map(|(v, secs)| { m.set_input_by_name(input, *v); rms(&render(m.as_mut(), *secs)) }).collect::<Vec<f32>>()
+    };
+    // Groan: starts when the input rises, lasts about a second, ends by itself though the input stays up.
+    let steps = [(0.0, 1.0), (1.0, 0.15), (1.0, 0.6), (1.0, 2.5), (1.0, 1.0)];
+    let (base, groan) = (run("groan", &steps.map(|(_, s)| (0.0, s))), run("groan", &steps));
+    assert!(groan[2] > base[2] * 1.3, "groan {:.3} against {:.3} without", groan[2], base[2]);
+    assert!(groan[4] < base[4] * 1.03, "the groan should be over: {:.3} against {:.3}", groan[4], base[4]);
+    // Boo: there while held, gone a couple of seconds after.
+    let steps = [(0.0, 1.0), (1.0, 1.0), (1.0, 1.0), (0.0, 2.5), (0.0, 1.0)];
+    let (base, boo) = (run("boo", &steps.map(|(_, s)| (0.0, s))), run("boo", &steps));
+    assert!(boo[2] > base[2] * 1.3 && boo[4] < base[4] * 1.03, "boo {:.3} / {:.3}, afterwards {:.3} / {:.3}", boo[2], base[2], boo[4], base[4]);
+    // Goal: still building after a quarter of a second, full a second later, and it takes seconds to settle.
+    let steps = [(0.0, 1.0), (1.0, 0.25), (1.0, 1.0), (1.0, 1.0), (0.0, 1.0), (0.0, 9.0), (0.0, 1.0)];
+    let (base, goal) = (run("goal", &steps.map(|(_, s)| (0.0, s))), run("goal", &steps));
+    assert!(goal[3] > goal[1] * 1.25 && goal[3] > base[3] * 1.6, "swell: early {:.3}, full {:.3}, without {:.3}", goal[1], goal[3], base[3]);
+    assert!(goal[4] > base[4] * 1.3 && goal[6] < base[6] * 1.05, "a second after {:.3} / {:.3}, settled {:.3} / {:.3}", goal[4], base[4], goal[6], base[6]);
+}
+
+#[test]
+fn crowd_chant_claps_on_the_beat() {
+    // With the murmur off, the chant is claps on eighths 0, 2, 4, 5, 6 of a two second bar.
+    let mut m = crowd("Arena");
+    for (param, v) in [("murmur/level", 0.0), ("cheer/level", 0.0), ("cheer/roar", 0.0), ("arena/room", 0.0)] {
+        set(m.as_mut(), param, v);
+    }
+    render(m.as_mut(), 0.5);
+    m.set_input_by_name("chant", 1.0);
+    let x = render(m.as_mut(), 4.0);
+    let slot = |bar: usize, eighth: usize| {
+        // The input is smoothed, so the bar starts a few tens of milliseconds late: look late in each slot.
+        let start = ((bar as f32 * 2.0 + eighth as f32 * 0.25 + 0.06) * SR) as usize;
+        rms(&x[start..start + (0.12 * SR) as usize])
+    };
+    for bar in 0..2 {
+        let claps = [0, 2, 4, 5, 6].map(|e| slot(bar, e));
+        let rests = [1, 3, 7].map(|e| slot(bar, e));
+        let (quietest_clap, loudest_rest) = (claps.iter().cloned().fold(f32::MAX, f32::min), rests.iter().cloned().fold(0.0, f32::max));
+        assert!(quietest_clap > loudest_rest * 2.0, "bar {bar}: claps {claps:?}, rests {rests:?}");
+    }
+}
+
+#[test]
+fn skate_strides_glides_and_stops() {
+    let skate = |preset: Option<&str>, push: f32, edge: f32| {
+        let mut m = generators::create("skate", SR).unwrap();
+        if let Some(p) = preset {
+            let k = m.desc().preset_index(p).unwrap();
+            m.load_preset(k);
+        }
+        m.set_input_by_name("speed", 0.7);
+        m.set_input_by_name("push", push);
+        m.set_input_by_name("edge", edge);
+        m.snap();
+        render(m.as_mut(), 3.0)
+    };
+    let (striding, gliding, stopping) = (skate(None, 1.0, 0.0), skate(None, 0.0, 0.0), skate(None, 0.0, 1.0));
+    // Strides are separate cuts: the level in 50 ms windows swings from loud to nearly nothing.
+    let windows: Vec<f32> = striding.chunks((0.05 * SR) as usize).map(rms).collect();
+    let (loud, soft) = (windows.iter().cloned().fold(0.0, f32::max), windows.iter().cloned().fold(f32::MAX, f32::min));
+    assert!(loud > soft * 6.0, "strides should come and go: {loud:.3} to {soft:.3}");
+    assert!(rms(&gliding) < rms(&striding) * 0.3, "gliding is almost silent: {:.3} against {:.3}", rms(&gliding), rms(&striding));
+    assert!(rms(&stopping) > rms(&gliding) * 4.0, "a stop sprays: {:.3} against {:.3}", rms(&stopping), rms(&gliding));
+    // The default keeps its top down for a whole match of four skaters; "Close up" is the
+    // recording, which has about a fifth of its energy above 2.5 kHz.
+    let top = |x: &[f32]| spectral_energy(&x[..(SR * 1.5) as usize], 2500.0, 9000.0, 100.0) / spectral_energy(&x[..(SR * 1.5) as usize], 100.0, 9000.0, 100.0);
+    let (default, close) = (top(&striding), top(&skate(Some("Close up"), 1.0, 0.0)));
+    assert!(default < 0.16 && close > default * 1.4, "default {default:.3}, close up {close:.3}");
+    // The spray of a stop is dull, like snow.
+    assert!(top(&stopping) < 0.06, "stop spray {:.3}", top(&stopping));
+}
+
+#[test]
+fn hockey_events_are_dull_and_the_right_length() {
+    // A puck on the boards, measured: almost nothing above 2 kHz. None of these may hiss or tick bright.
+    for name in ["puck_stick", "puck_boards", "puck_glass", "puck_post", "puck_pad", "buzzer"] {
+        let mut m = generators::create(name, SR).unwrap();
+        let x = event(name, 1.0, 0.0, m.as_mut());
+        let top = spectral_energy(&x, 2500.0, 9000.0, 100.0) / spectral_energy(&x, 100.0, 9000.0, 100.0);
+        // The post is a ping of steel, so it is allowed a little more top than the knocks and thuds.
+        let limit = if name == "puck_post" { 0.2 } else { 0.1 };
+        assert!(top < limit, "{name}: {top:.3} of its energy is above 2.5 kHz");
+    }
+    // Horn: swells (it is not at full level in its first tenth of a second) and lasts over two seconds.
+    let mut horn = generators::create("goal_horn", SR).unwrap();
+    horn.trigger();
+    let x = render(horn.as_mut(), 4.0);
+    let at = |t: f32| rms(&x[(t * SR) as usize..((t + 0.1) * SR) as usize]);
+    assert!(at(0.0) < at(1.0) * 0.5, "the horn should swell: {:.3} then {:.3}", at(0.0), at(1.0));
+    assert!(at(2.0) > at(1.0) * 0.7 && at(3.6) < at(1.0) * 0.2, "about 2.5 s: at 2 s {:.3}, at 3.6 s {:.3}", at(2.0), at(3.6));
+    // Buzzer: flat for about 1.2 s.
+    let mut buzzer = generators::create("buzzer", SR).unwrap();
+    buzzer.trigger();
+    let x = render(buzzer.as_mut(), 3.0);
+    let at = |t: f32| rms(&x[(t * SR) as usize..((t + 0.1) * SR) as usize]);
+    assert!((at(0.2) / at(0.9) - 1.0).abs() < 0.25, "flat: {:.3} and {:.3}", at(0.2), at(0.9));
+    assert!(at(1.0) > at(0.2) * 0.7 && at(1.8) < at(0.2) * 0.25, "about 1.2 s: at 1 s {:.3}, at 1.8 s {:.3}", at(1.0), at(1.8));
+}

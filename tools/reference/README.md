@@ -34,3 +34,25 @@ is loudest at 500 Hz and 1 kHz, 12 dB down by 2 kHz and 20 dB down by 8 kHz, wit
 its energy above 2.5 kHz. Sliding on gravel is the same band, louder. Tarmac squeal is a steady
 tone near 1.1 kHz with its octave above it. No usable recording of tyres on sand was found, so
 sand follows the same rule (soft, low-mid, no hiss) without a reference.
+
+## Hockey
+
+`hockey/` holds what the hockey sounds (`skate`, the `puck_*` events, `goal_horn`, `buzzer` and
+the crowd's `Arena` preset) were tuned against: public-domain (CC0) excerpts from
+[Freesound](https://freesound.org), cut and levelled like the tyre ones. `skate_script.csv` and
+`arena_script.csv` are the input scripts the test bench plays.
+
+| File | What | Source | Excerpt |
+|---|---|---|---|
+| `skates_strides.ogg` | A skater's strides on ice, close | [Skates on Ice.wav](https://freesound.org/people/Rehanjo/sounds/593623/) by Rehanjo | 0 to 6.6 s, +10 dB |
+| `puck_on_boards.ogg` | A puck hitting the boards of an outdoor rink, three times | [hockey outdoor puck hit board clean cu.flac](https://freesound.org/people/kyles/sounds/450719/) by kyles | 0 to 9 s, +0 dB |
+| `stick_hit.ogg` | A hockey stick striking | [Hitting with a hockey stick](https://freesound.org/people/Luisa_Sanchez/sounds/813416/) by Luisa_Sanchez | 0.9 to 2.7 s, +27 dB |
+| `goal_horn.ogg` | An arena goal horn, then the crowd | [Hockey arena goal horn with crowd applause](https://freesound.org/people/SEF7/sounds/702099/) by SEF7 | 2.5 to 16 s, -5 dB |
+| `buzzer.ogg` | A buzzer | [buzzer.wav](https://freesound.org/people/Jared_DiCarlo/sounds/581374/) by Jared_DiCarlo | 0 to 5.5 s, +1 dB |
+| `crowd_outrage_boo.ogg` | A hockey crowd: outrage, then booing | [Crowd, large outrage then booing reaction, hockey game, 2011.wav](https://freesound.org/people/TRP/sounds/577098/) by TRP | 0 to 22 s, +7 dB |
+
+What they show: a skate stride is about a second of broad noise, level from 500 Hz to 4 kHz,
+that flutters by a third. A puck on the boards is a knock at 500 Hz to 1 kHz over a low thud,
+with almost nothing above 2 kHz. The goal horn is three horns near 140, 203 and 257 Hz whose
+harmonics fall off like a sawtooth's. The buzzer is harmonics of 126 Hz between 250 Hz and
+1.3 kHz. A hockey crowd booing peaks at 500 Hz to 1 kHz with under 2 % above 2.5 kHz.

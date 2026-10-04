@@ -220,8 +220,15 @@ model_params! {
         gain: "master/gain" = 1.0, GAIN;
         horns_rate: "horns/per_minute" = 0.0, lin(0.0, 60.0);
         horns_level: "horns/level" = 0.6, UNIT;
+        cheer_dark: "cheer/dark" = 0.0, UNIT;
+        room: "arena/room" = 0.0, UNIT;
+        react_level: "reactions/level" = 0.8, UNIT;
+        chant_bpm: "chant/bpm" = 120.0, lin(60.0, 200.0);
     }
 }
+
+/// Which eighth-notes of the bar the crowd claps on: clap, clap, clap-clap-clap.
+const CHANT_CLAPS: [bool; 8] = [true, false, true, false, true, true, true, false];
 
 #[derive(Clone, Copy, Default)]
 struct Horn {
@@ -248,22 +255,51 @@ pub struct Crowd {
     horns: [Horn; 2],
     horn_osc: [[Oscillator; 2]; 2],
     horn_tone: Svf,
+    // Reactions (groan, boo, chant, goal) have their own noise, for the same reason.
+    react_noise: Noise,
+    react_rng: crate::math::Rng,
+    goal_env: f32,
+    groan_was: f32,
+    /// Seconds into the current groan; negative when there is none.
+    groan_t: f32,
+    groan_bp: [Svf; 2],
+    boo_env: f32,
+    boo_bp: [Svf; 2],
+    boo_drift: SlowNoise,
+    chant_on: bool,
+    /// Position in the chant's bar, 0..1.
+    chant_phase: f32,
+    chant_slot: usize,
+    clap_env: f32,
+    clap_soft: f32,
+    clap_bp: Svf,
+    shout_env: f32,
+    shout_soft: f32,
+    shout_bp: [Svf; 2],
+    room: crate::blocks::Reverb,
 }
 
 impl Generator for Crowd {
     type P = CrowdParams;
     const NAME: &'static str = "crowd";
     const CATEGORY: &'static str = "ambient";
-    const DOC: &'static str = "Crowd walla from a few people to a stadium; excitement adds cheering and roar.";
+    const DOC: &'static str = "Crowd walla from a few people to a stadium; excitement adds cheering and roar. Reactions for sport: groan, boo, a clapping chant, a goal swell.";
     const INPUTS: &'static [InputSpec] = &[
         InputSpec { name: "size", default: 0.5, doc: "A few voices to a packed arena" },
         InputSpec { name: "excitement", default: 0.1, doc: "Murmur to cheering roar" },
+        InputSpec { name: "groan", default: 0.0, doc: "Raise it to make the crowd groan once (a near miss): an 'ooohh' over about a second. Lower it again before the next one" },
+        InputSpec { name: "boo", default: 0.0, doc: "Hold it up and the crowd boos" },
+        InputSpec { name: "chant", default: 0.0, doc: "Hold it up for a clapping chant: clap, clap, clap-clap-clap, with a shout on the first two" },
+        InputSpec { name: "goal", default: 0.0, doc: "Hold it up after a goal: the roar swells for about a second, holds, and dies away after you lower it" },
     ];
 
     fn presets() -> Vec<(&'static str, CrowdParams)> {
         vec![
             ("Tavern", CrowdParams { formant_hz: 560.0, syllable_hz: 3.2, cheer_level: 0.3, roar_level: 0.1, ..Default::default() }),
             ("Stadium", CrowdParams { formant_hz: 850.0, formant_spread: 1.2, cheer_level: 0.9, roar_level: 0.8, ..Default::default() }),
+            // An indoor arena, tuned against recordings of hockey crowds: the cheer sits near
+            // 1 kHz, not up where it hisses, and the room slaps back.
+            ("Arena", CrowdParams { formant_hz: 620.0, formant_spread: 1.0, syllable_hz: 3.6, cheer_level: 0.75, cheer_hz: 1250.0, cheer_dark: 1.0, roar_level: 0.8, room: 0.6, ..Default::default() }),
             ("Festival", CrowdParams { formant_hz: 760.0, formant_spread: 1.1, syllable_hz: 4.6, murmur_level: 0.8, cheer_level: 0.85, roar_level: 0.6, horns_rate: 14.0, horns_level: 0.6, ..Default::default() }),
         ]
     }
@@ -283,6 +319,25 @@ impl Generator for Crowd {
             horns: [Horn::default(); 2],
             horn_osc: [[Oscillator::new(0x62_0401), Oscillator::new(0x62_0402)], [Oscillator::new(0x62_0403), Oscillator::new(0x62_0404)]],
             horn_tone: Svf::default(),
+            react_noise: Noise::new(0x62_0500),
+            react_rng: crate::math::Rng::new(crate::blocks::mix_seed(0x62_0501)),
+            goal_env: 0.0,
+            groan_was: 0.0,
+            groan_t: -1.0,
+            groan_bp: [Svf::default(); 2],
+            boo_env: 0.0,
+            boo_bp: [Svf::default(); 2],
+            boo_drift: SlowNoise::new(0x62_0502),
+            chant_on: false,
+            chant_phase: 0.0,
+            chant_slot: 7,
+            clap_env: 0.0,
+            clap_soft: 0.0,
+            clap_bp: Svf::default(),
+            shout_env: 0.0,
+            shout_soft: 0.0,
+            shout_bp: [Svf::default(); 2],
+            room: crate::blocks::Reverb::new(sr),
         }
     }
 
@@ -290,7 +345,11 @@ impl Generator for Crowd {
     #[allow(clippy::needless_range_loop)]
     fn block(&mut self, x: &[f32], p: &CrowdParams, out: &mut [f32]) {
         let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
-        let (size, ex) = (x[0], x[1]);
+        let size = x[0];
+        // A goal: the roar builds for about a second, holds, and takes a few seconds to settle.
+        let goal_secs = if x[5] > self.goal_env { 0.4 } else { 2.5 };
+        self.goal_env += (x[5] - self.goal_env) * (1.0 - (-dt / goal_secs).exp());
+        let ex = x[1].max(self.goal_env);
         let mut amp = [0.0f32; VOICES];
         for k in 0..VOICES {
             let spot = k as f32 / (VOICES - 1) as f32;
@@ -306,7 +365,7 @@ impl Generator for Crowd {
         self.cheer.set(FilterMode::BandPass, p.cheer_hz, 0.4, sr);
         self.roar.set(FilterMode::LowPass, 400.0, 0.1, sr);
         let cheer_gain = p.cheer_level * ex * ex * (0.7 + 0.3 * self.cheer_swell.advance(0.6, dt)) * 0.8;
-        let roar_gain = p.roar_level * ex * 2.0;
+        let roar_gain = p.roar_level * ex * 2.0 * (1.0 + 0.8 * self.goal_env);
         let murmur_gain = p.murmur_level * 4.5 / (1.0 + 2.0 * size);
         let level = (0.4 + 0.6 * size) * p.gain;
         let horns = p.horns_rate > 0.0 && p.horns_level > 0.0;
@@ -321,6 +380,60 @@ impl Generator for Crowd {
             }
             self.horn_tone.set(FilterMode::LowPass, 2200.0, 0.3, sr);
         }
+        // ---- reactions ----
+        let react = p.react_level * (0.4 + 0.6 * size) * p.gain;
+        // Groan: starts when the input rises, then runs its second or so whatever the input does.
+        if x[2] > 0.5 && self.groan_was <= 0.5 {
+            self.groan_t = 0.0;
+        }
+        self.groan_was = x[2];
+        let mut groan_gain = 0.0;
+        if self.groan_t >= 0.0 {
+            let t = self.groan_t;
+            let rise = (t / 0.3).min(1.0);
+            groan_gain = rise * rise * (3.0 - 2.0 * rise) * (-(t - 0.3).max(0.0) / 0.45).exp() * react * 4.0;
+            // "ooOOohh": the vowel closes and sinks as it dies.
+            let sink = 1.0 - 0.22 * (t / 1.4).min(1.0);
+            self.groan_bp[0].set(FilterMode::BandPass, 480.0 * sink, 0.8, sr);
+            self.groan_bp[1].set(FilterMode::BandPass, 880.0 * sink, 0.8, sr);
+            self.groan_t = if t > 2.2 { -1.0 } else { t + dt };
+        }
+        // Boo: a held "oo", many voices near the same low vowel, drifting.
+        self.boo_env += (x[3] - self.boo_env) * (1.0 - (-dt / 0.35).exp());
+        let boo_gain = if self.boo_env > 1e-3 { self.boo_env * react * 2.8 } else { 0.0 };
+        if boo_gain > 0.0 {
+            let d = (0.1 * self.boo_drift.advance(0.7, dt)).exp2();
+            self.boo_bp[0].set(FilterMode::BandPass, 400.0 * d, 0.85, sr);
+            self.boo_bp[1].set(FilterMode::BandPass, 840.0 / d, 0.8, sr);
+        }
+        // Chant: the bar restarts when the input comes up, so the first clap is on time.
+        let chanting = x[4] > 0.05;
+        if chanting && !self.chant_on {
+            self.chant_phase = 0.0;
+            self.chant_slot = 7;
+        }
+        self.chant_on = chanting;
+        if chanting {
+            let slot = ((self.chant_phase * 8.0) as usize).min(7);
+            if slot != self.chant_slot {
+                self.chant_slot = slot;
+                if CHANT_CLAPS[slot] {
+                    self.clap_env = self.react_rng.range(0.8, 1.0);
+                    self.clap_bp.set(FilterMode::BandPass, self.react_rng.range(1000.0, 1300.0), 0.35, sr);
+                }
+                if slot == 0 || slot == 2 {
+                    self.shout_env = self.react_rng.range(0.8, 1.0);
+                }
+            }
+            self.chant_phase = (self.chant_phase + dt * p.chant_bpm / 240.0).fract();
+            self.shout_bp[0].set(FilterMode::BandPass, 640.0, 0.8, sr);
+            self.shout_bp[1].set(FilterMode::BandPass, 1150.0, 0.75, sr);
+        }
+        let chant_gain = x[4] * react;
+        let (clap_decay, shout_decay) = ((-1.0 / (0.07 * sr)).exp(), (-1.0 / (0.1 * sr)).exp());
+        // A thousand hands are never together: the clap swells in over a few milliseconds.
+        let (clap_attack, shout_attack) = (1.0 - (-1.0 / (0.006 * sr)).exp(), 1.0 - (-1.0 / (0.02 * sr)).exp());
+        let reacting = groan_gain > 0.0 || boo_gain > 0.0 || chanting || self.clap_soft > 1e-4 || self.shout_soft > 1e-4;
         for o in out.iter_mut() {
             let (w, pk) = (self.noise.white(), self.noise.pink());
             let mut y = 0.0;
@@ -342,7 +455,30 @@ impl Generator for Crowd {
                 }
                 horn = soft_clip(self.horn_tone.tick(horn) * 1.5) * p.horns_level * 0.55;
             }
-            *o = (y * murmur_gain + self.cheer.tick(w) * cheer_gain + self.roar.tick(self.brown.tick(w)) * roar_gain) * level + horn * p.gain;
+            // `cheer/dark` swaps the cheer's white noise for pink: less top, as indoors.
+            let cheer_in = w + (pk * 2.5 - w) * p.cheer_dark;
+            *o = (y * murmur_gain + self.cheer.tick(cheer_in) * cheer_gain + self.roar.tick(self.brown.tick(w)) * roar_gain) * level + horn * p.gain;
+            if reacting {
+                let rp = self.react_noise.pink();
+                let mut r = 0.0;
+                if groan_gain > 0.0 {
+                    r += (self.groan_bp[0].tick(rp) + 0.6 * self.groan_bp[1].tick(rp)) * groan_gain;
+                }
+                if boo_gain > 0.0 {
+                    r += (self.boo_bp[0].tick(rp) + self.boo_bp[1].tick(rp)) * boo_gain;
+                }
+                self.clap_soft += (self.clap_env - self.clap_soft) * clap_attack;
+                self.shout_soft += (self.shout_env - self.shout_soft) * shout_attack;
+                r += self.clap_bp.tick(rp * self.clap_soft) * chant_gain * 20.0;
+                r += (self.shout_bp[0].tick(rp * self.shout_soft) + 0.7 * self.shout_bp[1].tick(rp * self.shout_soft)) * chant_gain * 5.0;
+                self.clap_env *= clap_decay;
+                self.shout_env *= shout_decay;
+                *o += r;
+            }
+            if p.room > 0.0 {
+                // An indoor arena: a short, dense slap back off the far side.
+                *o += self.room.tick(*o, 0.7, 0.55) * p.room * 0.5;
+            }
         }
     }
 }

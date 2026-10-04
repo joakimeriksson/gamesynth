@@ -267,10 +267,60 @@ def tyre_audition(folder):
     return rows
 
 
+def hockey_audition(folder):
+    """The hockey sounds next to the recordings they were tuned against (tools/reference/hockey)."""
+    os.makedirs(folder, exist_ok=True)
+    ref = "tools/reference/hockey"
+    rows = []
+
+    def real(stem, note):
+        path = os.path.join(ROOT, ref, f"{stem}.ogg")
+        if os.path.exists(path):
+            rows.append({"label": f"Real \u00b7 {stem.replace('_', ' ')}", "note": "recording (public domain): " + note, "audio": encode(f"audition_real_{stem}", path)})
+
+    def scripted(gen, stem, label, note, seconds, settings):
+        path = os.path.join(folder, f"{stem}.wav")
+        code, _, _ = run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_params", "--", gen, path, str(seconds)] + settings)
+        if code == 0 and os.path.exists(path):
+            rows.append({"label": label, "note": note, "audio": encode(f"audition_{stem}", path)})
+
+    events = ["puck_stick", "puck_boards", "puck_glass", "puck_post", "puck_pad", "goal_horn", "buzzer"]
+    run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_models", "--", folder] + events)
+
+    def event(gen, preset, note):
+        path = os.path.join(folder, f"{gen}_{re.sub(r'[^a-z0-9]+', '_', preset.lower()).strip('_')}.wav")
+        if not os.path.exists(path):   # render_models keeps apostrophes in file names
+            path = os.path.join(folder, f"{gen}_{preset.lower().replace(' ', '_')}.wav")
+        if os.path.exists(path):
+            rows.append({"label": f"{gen.replace('_', ' ').capitalize()} \u00b7 {preset}", "note": note, "audio": encode(f"audition_{gen}_{re.sub(r'[^a-z0-9]+', '_', preset.lower()).strip('_')}", path)})
+
+    fired = "fired four times: full power twice, weak, distant"
+    real("skates_strides", "a skater's strides, close")
+    skate = [f"script={ref}/skate_script.csv"]
+    scripted("skate", "skate_close_up", "Skate \u00b7 Close up", "strides 0-5 s, glide 5-7, a hard stop 7-8.5, then strides on cut-up ice", 13, ["preset=Close up"] + skate)
+    scripted("skate", "skate_default", "Skate \u00b7 Default", "the same script; duller, for four skaters all match", 13, skate)
+    real("puck_on_boards", "a puck hitting the boards, three times")
+    event("puck_boards", "Default", fired)
+    event("puck_boards", "Body check", fired)
+    real("stick_hit", "a hockey stick striking")
+    for preset in ["Pass", "Wrist", "Slap"]:
+        event("puck_stick", preset, fired)
+    for gen in ["puck_glass", "puck_post", "puck_pad"]:
+        event(gen, "Default", fired + " (no recording found)")
+    event("puck_pad", "Glove", fired + " (no recording found)")
+    real("goal_horn", "an arena goal horn, then the crowd")
+    event("goal_horn", "Default", fired)
+    real("buzzer", "a buzzer")
+    event("buzzer", "Default", fired)
+    real("crowd_outrage_boo", "a hockey crowd: outrage, then booing")
+    scripted("crowd", "crowd_arena", "Crowd \u00b7 Arena", "calm, a groan at 3 s, booing 6-10 s, the clapping chant 12-20 s, a goal 22-27 s", 33, ["preset=Arena", f"script={ref}/arena_script.csv"])
+    return rows
+
+
 def audition():
-    """Extra listening: tyres against recordings, the engine comparison, and chosen presets."""
+    """Extra listening: hockey and tyres against recordings, the engine comparison, chosen presets."""
     folder = os.path.join(OUT, "audition_wav")
-    rows = tyre_audition(folder) + engine_audition(folder)
+    rows = hockey_audition(folder) + tyre_audition(folder) + engine_audition(folder)
     run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_models", "--", folder] + sorted({a[0] for a in AUDITION}))
     for gen, stem, label, note in AUDITION:
         path = os.path.join(folder, f"{gen}_{stem}.wav")
@@ -469,7 +519,7 @@ def sounds():
             name = file[len("graph_"):-4]
             path = os.path.join(WAV, file)
             result.append(review_event(name, path, "model file", events[name]) if name in events else review(name, path, "model file"))
-    order = ["jet", "hover", "combustion", "piston", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "bell", "finish", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
+    order = ["jet", "hover", "combustion", "piston", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "bell", "finish", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren", "skate", "puck_stick", "puck_boards", "puck_glass", "puck_post", "puck_pad", "goal_horn", "buzzer"]
     result.sort(key=lambda c: (c["engine"] != "native", order.index(c["name"]) if c["name"] in order else 99, c["name"]))
     return result
 
