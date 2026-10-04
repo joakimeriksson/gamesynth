@@ -13,7 +13,7 @@ import { extname, join, resolve } from "node:path";
 
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9300 + Math.floor(Math.random() * 500);
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm" };
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm", ".png": "image/png" };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let url = process.argv[2], server = null;

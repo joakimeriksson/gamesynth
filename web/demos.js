@@ -263,7 +263,7 @@ function fft(re, im) {
 }
 
 // Black through violet to the page's orange, then to pale yellow for the loudest parts.
-const STOPS = [[0, 6, 8, 12], [0.22, 34, 16, 62], [0.48, 132, 38, 86], [0.72, 255, 106, 31], [0.9, 255, 196, 107], [1, 255, 243, 214]];
+const STOPS = [[0, 6, 8, 12], [0.22, 34, 16, 62], [0.48, 132, 38, 86], [0.72, 254, 106, 55], [0.9, 255, 196, 107], [1, 255, 243, 214]];
 const COLOURS = (() => {
   const table = new Uint8Array(256 * 3);
   for (let i = 0; i < 256; i++) {

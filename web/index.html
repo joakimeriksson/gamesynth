@@ -8,6 +8,11 @@
 <meta property="og:title" content="Brusverk: procedural audio for games">
 <meta property="og:description" content="Game sound without sound files: engines, weather, weapons and interface sounds computed live from game state. Rust, Godot 4, WebAssembly.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://joakimeriksson.github.io/gamesynth/">
+<meta property="og:image" content="https://joakimeriksson.github.io/gamesynth/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <script>
   // Links to the Sound Lab from before it moved to lab.html.
   if (/[?&](tab|gen|model)=/.test(location.search)) location.replace("lab.html" + location.search);
@@ -17,7 +22,7 @@
   :root {
     --ground: #0F141B; --panel: #161D27; --panel-2: #1C2532; --line: #2A3542; --line-soft: #202936;
     --text: #E8ECF1; --soft: #C3CCD8; --muted: #8E9BAC; --readout: #BFD8E6;
-    --accent: #FF6A1F; --accent-ink: #1A0E06; --screen: #06080C;
+    --accent: #FE6A37; --accent-ink: #1A0E06; --screen: #06080C;
     --display: "Saira Condensed", "Barlow Condensed", "Arial Narrow", sans-serif;
     --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
     --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
@@ -42,15 +47,15 @@
   /* ---- top bar ---- */
   .top { position: sticky; top: 0; z-index: 10; background: rgba(15, 20, 27, 0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
   .top nav { display: flex; align-items: center; gap: 22px; min-height: 60px; }
-  .mark { display: inline-flex; align-items: center; gap: 10px; font: 700 24px/1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--text); text-decoration: none; }
-  .mark i { display: flex; align-items: flex-end; gap: 2px; height: 20px; }
-  .mark i b { width: 3px; background: var(--accent); border-radius: 1px; }
+  .mark { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; }
+  .mark img { display: block; }
   .links { display: flex; align-items: center; gap: 20px; margin-left: auto; font-size: 15px; }
   .links a { color: var(--muted); text-decoration: none; }
   .links a:hover { color: var(--text); }
-  .links .lab { color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; }
+  .links .lab { color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; white-space: nowrap; }
   .links .lab:hover { border-color: var(--accent); }
   @media (max-width: 760px) { .links .opt { display: none; } }
+  @media (max-width: 420px) { .links { gap: 14px; } .top nav { gap: 12px; } }
 
   .btn { display: inline-flex; align-items: center; gap: 9px; min-height: 46px; padding: 0 20px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-weight: 500; text-decoration: none; cursor: pointer; }
   .btn:hover { border-color: var(--muted); color: var(--text); }
@@ -151,7 +156,7 @@
 </head>
 <body>
 <header class="top"><nav class="wrap" aria-label="Page">
-  <a class="mark" href="./"><i aria-hidden="true"><b style="height:9px"></b><b style="height:20px"></b><b style="height:13px"></b><b style="height:17px"></b><b style="height:6px"></b></i>Brusverk</a>
+  <a class="mark" href="./"><img src="assets/brusverk-symbol.png" width="27" height="34" alt=""><img src="assets/brusverk-wordmark-white.png" width="129" height="22" alt="Brusverk"></a>
   <div class="links">
     <a class="opt" href="#demos">Demos</a>
     <a class="opt" href="#godot">In Godot</a>

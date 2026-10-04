@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="web/assets/brusverk-logo-dark.png">
+    <img src="web/assets/brusverk-logo-light.png" alt="Brusverk: procedural audio for games" width="320">
+  </picture>
+</p>
+
 # Brusverk
 
 **Procedural audio for games.** (Swedish: *brus* is noise, *verk* a works, as in a mill.)

@@ -7,12 +7,14 @@
 <meta name="description" content="Procedural game audio: jet engines, a library of sound generators (wind, rain, fire, engines, crowds...) you can also define in config files, sfxr-style sound effects and a playable synth, all running the Rust brusverk engine as WebAssembly in your browser. Tune and export JSON for Godot.">
 <meta property="og:title" content="Brusverk Sound Lab">
 <meta property="og:description" content="Rust game-audio synth compiled to WebAssembly: engines, sound effects, instruments.">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
     --ground: #0F141B; --panel: #161D27; --panel-2: #1C2532; --line: #2A3542; --line-soft: #202936;
     --text: #E8ECF1; --muted: #8593A5; --readout: #BFD8E6;
-    --accent: #FF6A1F; --accent-dim: #7A3A18; --accent-glow: rgba(255,106,31,0.28);
+    --accent: #FE6A37; --accent-dim: #7A3A18; --accent-glow: rgba(254,106,55,0.28);
     --sfx: #5BD1C8; --sfx-dim: rgba(91,209,200,0.18); --inst: #C9A0FF; --inst-dim: rgba(201,160,255,0.18);
     --gen: #8FD16A; --gen-dim: rgba(143,209,106,0.18);
     --ok: #7BC67E; --warn: #E0B341; --bad: #FF7A6B;
@@ -35,6 +37,7 @@
   .brand { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-right: 8px; }
   .brand h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 28px; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1; }
   .brand .sub { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .brand .home { align-self: center; line-height: 0; }
   .brand .sub a { color: var(--text); text-decoration: none; border-bottom: 1px solid var(--accent); }
   .tabs { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 3px; }
   .tab-btn { border: 0; background: transparent; border-radius: 4px; padding: 7px 16px; cursor: pointer; color: var(--muted);
@@ -194,7 +197,7 @@
 <body>
 <div class="wrap">
   <header class="bar">
-    <div class="brand"><h1>Sound Lab</h1><span class="sub"><a href="./">Brusverk</a> · procedural audio for games</span></div>
+    <div class="brand"><a class="home" href="./" title="Brusverk: back to the front page"><img src="assets/brusverk-symbol.png" width="22" height="28" alt="Brusverk"></a><h1>Sound Lab</h1><span class="sub"><a href="./">Brusverk</a> · procedural audio for games</span></div>
     <div class="tabs" role="tablist" aria-label="Sound categories">
       <button class="tab-btn" role="tab" data-k="engines" aria-selected="true" aria-controls="tab-engines">Engines</button>
       <button class="tab-btn" role="tab" data-k="models" aria-selected="false" aria-controls="tab-models">Generators</button>
