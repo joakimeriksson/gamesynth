@@ -38,7 +38,7 @@ def main():
     recording = sys.argv[1]
     conds = [tuple(float(v) for v in c.split(":")) for c in sys.argv[2:]]
     idle = conds[0][2]
-    subprocess.run(["cargo", "build", "-q", "-p", "gamesynth-core", "--release", "--example", "render_params"], cwd=ROOT, check=True)
+    subprocess.run(["cargo", "build", "-q", "-p", "brusverk-core", "--release", "--example", "render_params"], cwd=ROOT, check=True)
     ref = [quiet(recording, t0, t1, 0, 0, fc=rpm / 120) for t0, t1, rpm, _ in conds]
     tmp = os.path.join(ROOT, "target", "fit_engine.wav")
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/gamesynth-core", "crates/gamesynth-godot", "crates/gamesynth-wasm"]
+members = ["crates/brusverk-core", "crates/brusverk-godot", "crates/brusverk-wasm"]
 
 [workspace.package]
 version = "0.1.0"

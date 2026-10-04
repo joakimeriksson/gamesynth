@@ -44,7 +44,7 @@ func _expect_finished(label: String, stream: AudioStream, at_least: float, at_mo
 func _run() -> void:
 	await process_frame
 	print("Players emit `finished`")
-	# Control: if a plain sample does not finish, the environment is at fault, not gamesynth.
+	# Control: if a plain sample does not finish, the environment is at fault, not brusverk.
 	var wav := AudioStreamWAV.new()
 	wav.format = AudioStreamWAV.FORMAT_16_BITS
 	wav.mix_rate = 44100

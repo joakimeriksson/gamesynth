@@ -1,5 +1,5 @@
 extends Control
-## GameSynth demo: sound-effect presets on buttons, plus a keyboard-playable instrument.
+## Brusverk demo: sound-effect presets on buttons, plus a keyboard-playable instrument.
 ##
 ## SFX: each button creates a one-shot SynthStream from a preset + seed and plays it on a
 ## pooled AudioStreamPlayer, so several effects can overlap.

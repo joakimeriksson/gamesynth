@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GameSynth Sound Lab</title>
-<meta name="description" content="Procedural game audio: jet engines, a library of sound generators (wind, rain, fire, engines, crowds...) you can also define in config files, sfxr-style sound effects and a playable synth, all running the Rust gamesynth engine as WebAssembly in your browser. Tune and export JSON for Godot.">
-<meta property="og:title" content="GameSynth Sound Lab">
+<title>Brusverk Sound Lab</title>
+<meta name="description" content="Procedural game audio: jet engines, a library of sound generators (wind, rain, fire, engines, crowds...) you can also define in config files, sfxr-style sound effects and a playable synth, all running the Rust brusverk engine as WebAssembly in your browser. Tune and export JSON for Godot.">
+<meta property="og:title" content="Brusverk Sound Lab">
 <meta property="og:description" content="Rust game-audio synth compiled to WebAssembly: engines, sound effects, instruments.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -32,7 +32,7 @@
 
   /* ---- top bar + tabs ---- */
   .bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-  .brand { display: flex; align-items: baseline; gap: 12px; margin-right: 8px; }
+  .brand { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-right: 8px; }
   .brand h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 28px; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1; }
   .brand .sub { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
   .tabs { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 3px; }
@@ -193,7 +193,7 @@
 <body>
 <div class="wrap">
   <header class="bar">
-    <div class="brand"><h1>Sound Lab</h1><span class="sub">GameSynth · Rust → WebAssembly</span></div>
+    <div class="brand"><h1>Sound Lab</h1><span class="sub">Brusverk · procedural audio for games</span></div>
     <div class="tabs" role="tablist" aria-label="Sound categories">
       <button class="tab-btn" role="tab" data-k="engines" aria-selected="true" aria-controls="tab-engines">Engines</button>
       <button class="tab-btn" role="tab" data-k="models" aria-selected="false" aria-controls="tab-models">Generators</button>
@@ -364,7 +364,7 @@
 (() => {
   "use strict";
   const $ = id => document.getElementById(id);
-  const WASM_URL = "./pkg/gamesynth_wasm.wasm";
+  const WASM_URL = "./pkg/brusverk_wasm.wasm";
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   let toastTimer;
   const toast = msg => { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2200); };
@@ -881,7 +881,7 @@
       let saved = new URLSearchParams(location.search).get("tab"); try { saved = saved || localStorage.getItem("gs-lab-tab"); } catch {}
       setActive(tabs[saved] ? saved : "engines");
       $("audio").disabled = false; $("audio").textContent = "Start audio";
-      $("foot").innerHTML = `Running <code>gamesynth-core ${host.meta.version}</code> compiled to WebAssembly inside an AudioWorklet at your device's sample rate. Every sound here is generated in real time; nothing is sampled. Source: <code>crates/gamesynth-core</code>.`;
+      $("foot").innerHTML = `Running <code>brusverk-core ${host.meta.version}</code> compiled to WebAssembly inside an AudioWorklet at your device's sample rate. Every sound here is generated in real time; nothing is sampled. Source: <code>crates/brusverk-core</code>.`;
     } catch (err) {
       console.error(err); $("audio").textContent = "Engine unavailable";
       $("foot").textContent = "Could not load the engine module (" + err.message + "). If you opened this as a local file, serve the folder over http.";

@@ -1,13 +1,15 @@
-# gamesynth
+# Brusverk
+
+**Procedural audio for games.** (Swedish: *brus* is noise, *verk* a works, as in a mill.)
 
 A real-time software synthesizer for game audio, written in Rust, with a Godot 4
 GDExtension. One engine covers both **procedural sound effects** (sfxr-style, seed based,
 no audio files) and **playable instruments** (polyphonic subtractive synth).
 
 ```
-crates/gamesynth-core    pure Rust DSP (synth voice, SFX presets, generator library, graph models), #![forbid(unsafe_code)]
-crates/gamesynth-godot   GDExtension: SynthPatch (Resource), SynthStream (AudioStream)
-crates/gamesynth-wasm    C-ABI WebAssembly build of the jet engine (no bindgen)
+crates/brusverk-core    pure Rust DSP (synth voice, SFX presets, generator library, graph models), #![forbid(unsafe_code)]
+crates/brusverk-godot   GDExtension: SynthPatch (Resource), SynthStream (AudioStream)
+crates/brusverk-wasm    C-ABI WebAssembly build of the jet engine (no bindgen)
 godot/                   demo project
 models/                  sound generators defined as TOML files (format: models/README.md)
 web/                     Sound Lab: browser test stand running the wasm build (GitHub Pages)
@@ -29,7 +31,7 @@ Every parameter has a stable name (`"filter/cutoff_hz"`, `"osc1/wave"`, …) wit
 and kind (`ParamId`), which drives both the Godot inspector and `set_param` APIs.
 
 ```rust
-use gamesynth_core::*;
+use brusverk_core::*;
 let mut synth = Synth::with_patch(48000.0, SfxPreset::Laser.generate(seed));
 synth.trigger();                       // or synth.note_on(60.0, 1.0)
 let mut out = vec![StereoFrame::default(); 512];
@@ -39,8 +41,8 @@ synth.render(&mut out);                // call from your audio callback
 Audition without Godot (writes WAVs):
 
 ```
-cargo run -p gamesynth-core --example render_sfx --release -- sfx_out 5
-cargo run -p gamesynth-core --example render_models --release -- models_out   # every generator, inputs swept
+cargo run -p brusverk-core --example render_sfx --release -- sfx_out 5
+cargo run -p brusverk-core --example render_models --release -- models_out   # every generator, inputs swept
 ```
 
 To review sounds by eye, `tools/spectrograms.py models_out sheet.png wind_default rain_default …`
@@ -53,11 +55,11 @@ saturated bottom edge means too much sub.
 Build the extension, then open `godot/` in Godot 4.7:
 
 ```
-cargo build -p gamesynth-godot            # debug; use --release for shipping
+cargo build -p brusverk-godot            # debug; use --release for shipping
 godot --path godot                        # or open in the editor
 ```
 
-`godot/gamesynth.gdextension` points at `target/{debug,release}` relative to the project.
+`godot/brusverk.gdextension` points at `target/{debug,release}` relative to the project.
 Godot registers the extension when it first imports the project (opening it in the editor
 does this; headless: `godot --headless --path godot --import`).
 
@@ -125,7 +127,7 @@ func _physics_process(_dt):
 
 `JetEnginePatch` exposes ~25 parameters (`whine/hz`, `roar/hz`, `tube/feedback`,
 `spool/up`, …) in the inspector with an **Apply preset** button; save as `.tres` per ship
-class. Audition offline: `cargo run -p gamesynth-core --example render_jet --release -- jet_out`
+class. Audition offline: `cargo run -p brusverk-core --example render_jet --release -- jet_out`
 renders an idle → full → boost → damaged spool-down sequence per preset.
 
 ### Generators: wind, rain, fire, engines, crowds…
@@ -215,7 +217,7 @@ about 4 dB on average, and the share of half-order "rumble" harmonics 0.19 and 0
 `render_params` renders any generator from the command line, with inputs scripted over time:
 
 ```sh
-cargo run -p gamesynth-core --release --example render_params -- piston drive.wav 20 \
+cargo run -p brusverk-core --release --example render_params -- piston drive.wav 20 \
     "preset=Muscle V8" engine/external_rpm=1 script=tools/reference/drive_script.csv
 ```
 
@@ -266,7 +268,7 @@ Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.
 
 ## Web: Sound Lab (WebAssembly)
 
-Live at **https://joakimeriksson.github.io/gamesynth/**. `web/` is a static page that runs
+Live at **https://joakimeriksson.github.io/brusverk/**. `web/` is a static page that runs
 the *same* Rust engine compiled to WebAssembly inside an AudioWorklet, in four tabs:
 
 | Tab | What it does | Godot counterpart |
@@ -282,14 +284,14 @@ accept unchanged. `?tab=sfx` deep-links a tab.
 
 ```
 rustup target add wasm32-unknown-unknown     # once
-./web/build.sh                               # -> web/pkg/gamesynth_wasm.wasm (~820 KB, 250 KB gzipped)
+./web/build.sh                               # -> web/pkg/brusverk_wasm.wasm (~820 KB, 250 KB gzipped)
 python3 -m http.server -d web 8000           # open http://localhost:8000
 ```
 
 If your day-to-day `cargo` is Homebrew's (no wasm target) and rustup is the keg-only
 formula: `CARGO=/opt/homebrew/opt/rustup/bin/cargo ./web/build.sh`.
 
-`crates/gamesynth-wasm` exposes a plain C ABI (`jet_*`, `synth_*`, `model_*`, `gs_meta_json`, …), so
+`crates/brusverk-wasm` exposes a plain C ABI (`jet_*`, `synth_*`, `model_*`, `gs_meta_json`, …), so
 the page has no bindgen glue and the module has zero imports; `web/jet-worklet.js`
 instantiates it on the audio thread, one node per tab.
 
@@ -323,5 +325,5 @@ gate CI. Needs numpy, scipy, matplotlib; uses node, godot and ffmpeg when presen
 ## Tests
 
 ```
-cargo test -p gamesynth-core
+cargo test -p brusverk-core
 ```

@@ -1,4 +1,4 @@
-// AudioWorklet processor hosting the Rust gamesynth engine (gamesynth-core compiled to wasm).
+// AudioWorklet processor hosting the Rust brusverk engine (brusverk-core compiled to wasm).
 // One processor class serves every tab: `kind` selects a jet engine, a polyphonic synth, or a
 // sound model (native generator by name, or a TOML/JSON model file compiled in place).
 // The compiled WebAssembly.Module arrives via processorOptions and is instantiated here, on

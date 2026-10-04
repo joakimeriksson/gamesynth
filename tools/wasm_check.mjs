@@ -1,5 +1,5 @@
 // Exercise the WebAssembly build the way the web lab does and print a JSON report:
-//   node tools/wasm_check.mjs web/pkg/gamesynth_wasm.wasm
+//   node tools/wasm_check.mjs web/pkg/brusverk_wasm.wasm
 import { readFileSync } from "node:fs";
 
 const { exports: w } = await WebAssembly.instantiate(await WebAssembly.compile(readFileSync(process.argv[2])), {});

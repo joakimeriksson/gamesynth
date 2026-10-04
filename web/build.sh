@@ -9,10 +9,10 @@ CARGO="${CARGO:-cargo}"
 if [ -z "${RUSTC:-}" ] && [ -x "$(dirname "$CARGO")/rustup" ]; then
   RUSTC="$("$(dirname "$CARGO")/rustup" which rustc)"; export RUSTC
 fi
-"$CARGO" build -p gamesynth-wasm --profile wasm --target wasm32-unknown-unknown
+"$CARGO" build -p brusverk-wasm --profile wasm --target wasm32-unknown-unknown
 mkdir -p web/pkg
-cp target/wasm32-unknown-unknown/wasm/gamesynth_wasm.wasm web/pkg/gamesynth_wasm.wasm
+cp target/wasm32-unknown-unknown/wasm/brusverk_wasm.wasm web/pkg/brusverk_wasm.wasm
 if command -v wasm-opt >/dev/null 2>&1; then
-  wasm-opt -Os -o web/pkg/gamesynth_wasm.wasm web/pkg/gamesynth_wasm.wasm
+  wasm-opt -Os -o web/pkg/brusverk_wasm.wasm web/pkg/brusverk_wasm.wasm
 fi
-ls -la web/pkg/gamesynth_wasm.wasm
+ls -la web/pkg/brusverk_wasm.wasm

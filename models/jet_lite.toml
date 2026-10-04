@@ -1,5 +1,5 @@
 # Graph version of the native `jet` generator. Same idea (whine + roar through a tube comb,
-# afterburner, wind), defined entirely in this file. Compare with crates/gamesynth-core/src/jet.rs.
+# afterburner, wind), defined entirely in this file. Compare with crates/brusverk-core/src/jet.rs.
 [model]
 name = "jet_lite"
 category = "vehicles"

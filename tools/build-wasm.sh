@@ -9,5 +9,5 @@ rustup toolchain list | grep -q "$NIGHTLY" || { rustup toolchain install "$NIGHT
 export EMSDK="${EMSDK:-$HOME/emsdk}"
 export PATH="$HOME/.rustup/toolchains/$NIGHTLY-$HOST/bin:$EMSDK:$EMSDK/upstream/emscripten:$PATH"
 cd "$(dirname "$0")/.."
-cargo build -p gamesynth-godot --no-default-features --features nothreads -Zbuild-std --target wasm32-unknown-emscripten --release
-ls -la target/wasm32-unknown-emscripten/release/gamesynth_godot.wasm
+cargo build -p brusverk-godot --no-default-features --features nothreads -Zbuild-std --target wasm32-unknown-emscripten --release
+ls -la target/wasm32-unknown-emscripten/release/brusverk_godot.wasm

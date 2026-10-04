@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the gamesynth test dashboard.
+"""Build the brusverk test dashboard.
 
     tools/test_dashboard.py            # run everything, write dashboard/index.html
     tools/test_dashboard.py --quick    # skip the release benchmarks
@@ -81,7 +81,7 @@ def suite(name, what, tests, seconds, skipped=None, note=""):
 # ------------------------------------------------------------------------------------------
 
 def core_tests():
-    code, out, secs = run(["cargo", "test", "-p", "gamesynth-core"])
+    code, out, secs = run(["cargo", "test", "-p", "brusverk-core"])
     groups, current = {}, "unit"
     for line in out.splitlines():
         m = re.search(r"Running (?:unittests )?(\S+)", line)
@@ -112,7 +112,7 @@ def clippy():
 
 
 def wasm():
-    wasm_file = os.path.join(ROOT, "web/pkg/gamesynth_wasm.wasm")
+    wasm_file = os.path.join(ROOT, "web/pkg/brusverk_wasm.wasm")
     if not shutil.which("node"):
         return suite("wasm", "WebAssembly build as the web lab uses it", [], 0, skipped="node is not installed")
     cargo = "/opt/homebrew/opt/rustup/bin/cargo" if os.path.exists("/opt/homebrew/opt/rustup/bin/cargo") else "cargo"
@@ -155,7 +155,7 @@ def godot():
              ("godot \u00b7 finished", "One-shots through real AudioStreamPlayers must emit `finished`", "tests/finished.gd")]
     if not shutil.which("godot"):
         return [suite(n, what, [], 0, skipped="godot is not installed") for n, what, _ in names]
-    code, out, build_secs = run(["cargo", "build", "-p", "gamesynth-godot"])
+    code, out, build_secs = run(["cargo", "build", "-p", "brusverk-godot"])
     if code != 0:
         return [suite("godot", names[0][1], [{"name": "extension builds", "status": "fail", "detail": out[-600:]}], build_secs)]
     run(["godot", "--headless", "--path", "godot", "--import"], timeout=300)
@@ -179,7 +179,7 @@ def stereo_review():
     """Before/after pairs for judging the stereo image by ear: the same triggers at width 0 (the
     old mono sound) and at the designed width, with the measured correlation and CPU cost."""
     folder = os.path.join(OUT, "stereo_wav")
-    code, out, _ = run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_stereo", "--", folder])
+    code, out, _ = run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_stereo", "--", folder])
     rows = []
     for name, preset, c0, c1, cost0, cost1 in re.findall(r"^# stereo (\w+) (\S+) (\S+) (\S+) (\S+) (\S+)", out, re.M):
         rows.append({"name": name, "preset": preset.replace("_", " "), "corr_before": float(c0), "corr_after": float(c1),
@@ -212,7 +212,7 @@ def engine_audition(folder):
     every piston preset on the same short drive."""
     os.makedirs(folder, exist_ok=True)
     ref = "tools/reference"
-    render = ["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_params", "--"]
+    render = ["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_params", "--"]
     rows = [{"label": "Real engine \u00b7 Rover 3.5 V8", "note": "recording (public domain): idle, three blips, a hold near 3000 rpm",
              "audio": encode("audition_rover_real", os.path.join(ROOT, ref, "rover_v8.ogg"))}]
 
@@ -240,12 +240,12 @@ def audition():
     """Extra listening: the engine comparison, chosen presets, and the tyre on each surface."""
     folder = os.path.join(OUT, "audition_wav")
     rows = engine_audition(folder)
-    run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_models", "--", folder] + sorted({a[0] for a in AUDITION}))
+    run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_models", "--", folder] + sorted({a[0] for a in AUDITION}))
     for gen, stem, label, note in AUDITION:
         path = os.path.join(folder, f"{gen}_{stem}.wav")
         if os.path.exists(path):
             rows.append({"label": label, "note": note, "audio": encode(f"audition_{gen}_{stem}", path)})
-    run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_tyre_surfaces", "--", folder])
+    run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_tyre_surfaces", "--", folder])
     for surface in ["dirt", "gravel", "sand", "mud", "rock"]:
         path = os.path.join(folder, f"tyre_{surface}.wav")
         if os.path.exists(path):
@@ -256,13 +256,13 @@ def audition():
 
 def benchmarks():
     rows = []
-    code, out, _ = run(["cargo", "test", "-p", "gamesynth-core", "--release", "--test", "graph", "--", "graph_cost", "--nocapture"])
+    code, out, _ = run(["cargo", "test", "-p", "brusverk-core", "--release", "--test", "graph", "--", "graph_cost", "--nocapture"])
     m = re.search(r"graph jet_lite \((\d+) nodes\): ([\d.]+)x real time, native jet: ([\d.]+)x real time, ratio ([\d.]+)", out)
     if m:
         rows += [{"label": "Native jet", "value": float(m.group(3)), "unit": "× real time"},
                  {"label": f"jet_lite model file ({m.group(1)} nodes)", "value": float(m.group(2)), "unit": "× real time"},
                  {"label": "Model file cost vs native", "value": float(m.group(4)), "unit": "× slower"}]
-    code, out, _ = run(["cargo", "test", "-p", "gamesynth-core", "--release", "--test", "generators", "--", "whole_library", "--nocapture"])
+    code, out, _ = run(["cargo", "test", "-p", "brusverk-core", "--release", "--test", "generators", "--", "whole_library", "--nocapture"])
     m = re.search(r"library: all (\d+) generators together render at ([\d.]+)x real time", out)
     if m:
         rows.append({"label": f"All {m.group(1)} generators at once", "value": float(m.group(2)), "unit": "× real time"})
@@ -420,13 +420,13 @@ def encode(name, path):
 
 def sounds():
     os.makedirs(WAV, exist_ok=True)
-    code, out, _ = run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_models", "--", WAV])
+    code, out, _ = run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_models", "--", WAV])
     presets = {}
     for line in out.splitlines():
         m = re.match(r"(\w+)\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)$", line)
         if m and m.group(1) != "model":
             presets.setdefault(m.group(1), []).append({"name": m.group(2).strip(), "rms": float(m.group(5)), "peak": float(m.group(6))})
-    code, graph_out, _ = run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_graphs", "--", WAV])
+    code, graph_out, _ = run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_graphs", "--", WAV])
     events = {name: int(slot) for name, slot in re.findall(r"^# one_shot (\w+) (\d+)", out + graph_out, re.M)}
     result = []
     for file in sorted(os.listdir(WAV)):

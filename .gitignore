@@ -1,6 +1,7 @@
 /target
 *.wav
 godot/.godot/
-godot/addons/gamesynth/bin/
+godot/addons/brusverk/bin/
 web/pkg/
 dashboard/
+__pycache__/

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Spectrogram contact sheet for rendered generator WAVs.
 
-    cargo run -p gamesynth-core --example render_models --release -- models_out
-    cargo run -p gamesynth-core --example render_graphs --release -- models_out
+    cargo run -p brusverk-core --example render_models --release -- models_out
+    cargo run -p brusverk-core --example render_graphs --release -- models_out
     tools/spectrograms.py models_out sheet.png wind_default rain_default graph_shield
 
 Each row: log-frequency spectrogram (30 Hz - 20 kHz) with the 50 ms RMS level in cyan. The

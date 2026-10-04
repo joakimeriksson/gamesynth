@@ -1,0 +1,14 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.7
+reloadable = true
+
+[libraries]
+macos.debug = "res://../target/debug/libbrusverk_godot.dylib"
+macos.release = "res://../target/release/libbrusverk_godot.dylib"
+linux.debug.x86_64 = "res://../target/debug/libbrusverk_godot.so"
+linux.release.x86_64 = "res://../target/release/libbrusverk_godot.so"
+linux.debug.arm64 = "res://../target/debug/libbrusverk_godot.so"
+linux.release.arm64 = "res://../target/release/libbrusverk_godot.so"
+windows.debug.x86_64 = "res://../target/debug/brusverk_godot.dll"
+windows.release.x86_64 = "res://../target/release/brusverk_godot.dll"
