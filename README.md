@@ -334,3 +334,14 @@ gate CI. Needs numpy, scipy, matplotlib; uses node, godot and ffmpeg when presen
 ```
 cargo test -p brusverk-core
 ```
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Sounds you generate with Brusverk are yours; the licence covers the code.
+
+The reference recording in `tools/reference/` is in the public domain (see the README there).
