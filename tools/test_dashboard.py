@@ -284,7 +284,7 @@ def hockey_audition(folder):
         if code == 0 and os.path.exists(path):
             rows.append({"label": label, "note": note, "audio": encode(f"audition_{stem}", path)})
 
-    events = ["puck_stick", "puck_boards", "puck_glass", "puck_post", "puck_pad", "goal_horn", "buzzer"]
+    events = ["puck_stick", "puck_boards", "puck_glass", "puck_post", "puck_pad", "goal_horn", "buzzer", "organ_charge", "organ_lets_go"]
     run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_models", "--", folder] + events)
 
     def event(gen, preset, note):
@@ -312,6 +312,9 @@ def hockey_audition(folder):
     event("goal_horn", "Default", fired)
     real("buzzer", "a buzzer")
     event("buzzer", "Default", fired)
+    real("organ_charge", "a ballpark organ playing the Charge! call (a much brighter organ than ours)")
+    event("organ_charge", "Default", fired)
+    event("organ_lets_go", "Default", fired + " (no recording found)")
     real("crowd_outrage_boo", "a hockey crowd: outrage, then booing")
     scripted("crowd", "crowd_arena", "Crowd \u00b7 Arena", "calm, a groan at 3 s, booing 6-10 s, the clapping chant 12-20 s, a goal 22-27 s", 33, ["preset=Arena", f"script={ref}/arena_script.csv"])
     return rows
@@ -519,7 +522,7 @@ def sounds():
             name = file[len("graph_"):-4]
             path = os.path.join(WAV, file)
             result.append(review_event(name, path, "model file", events[name]) if name in events else review(name, path, "model file"))
-    order = ["jet", "hover", "combustion", "piston", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "bell", "finish", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren", "skate", "puck_stick", "puck_boards", "puck_glass", "puck_post", "puck_pad", "goal_horn", "buzzer"]
+    order = ["jet", "hover", "combustion", "piston", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "bell", "finish", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren", "skate", "puck_stick", "puck_boards", "puck_glass", "puck_post", "puck_pad", "goal_horn", "buzzer", "organ_charge", "organ_lets_go"]
     result.sort(key=lambda c: (c["engine"] != "native", order.index(c["name"]) if c["name"] in order else 99, c["name"]))
     return result
 

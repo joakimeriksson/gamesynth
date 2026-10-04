@@ -861,3 +861,32 @@ recipe!(Buzzer, "buzzer", "End-of-period buzzer: harsh, flat and steady for a li
         // The rasp: a thin sawtooth at the buzz rate, which is also what distance takes away first.
         Layer { src: Src::Tone(Saw), f0: 126.0, attack: 0.004, hold: 1.1, decay: 0.2, level: 0.1, vary: 0.02, ..LAYER },
     ]);
+
+// The arena organ's "Charge!", as recorded: sol, do, mi, SOL, mi, SOL in C sharp, each key held
+// so the arpeggio piles up into the chord, the top note lifted once and struck again.
+recipe!(OrganCharge, "organ_charge", "Arena organ: the six-note \"Charge!\" call, about two seconds.", reverb 0.3 / 1.1, width 0.5,
+    presets [("Fast", fx(0.8, -1.93, 0.5)), ("Grand", fx(1.4, 2.91, 0.5))],
+    [
+        Layer { src: Src::Tone(Sine), f0: 207.65, fm_ratio: 2.0, fm: 1.3, attack: 0.008, hold: 1.9, decay: 0.22, level: 0.24, vary: 0.05, chorus: 6.0, pan: -0.3, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 277.18, fm_ratio: 2.0, fm: 1.3, delay: 0.17, attack: 0.008, hold: 1.73, decay: 0.22, level: 0.24, vary: 0.05, chorus: 6.0, pan: 0.3, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 349.23, fm_ratio: 2.0, fm: 1.3, delay: 0.34, attack: 0.008, hold: 1.56, decay: 0.22, level: 0.24, vary: 0.05, chorus: 6.0, pan: -0.2, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 415.30, fm_ratio: 2.0, fm: 1.4, delay: 0.51, attack: 0.006, hold: 0.22, decay: 0.06, level: 0.3, vary: 0.05, pan: 0.2, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 415.30, fm_ratio: 2.0, fm: 1.4, delay: 1.0, attack: 0.006, hold: 0.9, decay: 0.22, level: 0.32, vary: 0.05, chorus: 8.0, pan: 0.2, ..LAYER },
+        // The upper drawbars on the last note: its octave, the fifth above that, and two octaves.
+        Layer { src: Src::Tone(Sine), f0: 830.61, delay: 1.0, attack: 0.006, hold: 0.9, decay: 0.22, level: 0.12, vary: 0.05, chorus: 8.0, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1245.9, delay: 1.0, attack: 0.006, hold: 0.9, decay: 0.22, level: 0.07, vary: 0.05, pan: -0.4, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 1661.2, delay: 1.0, attack: 0.006, hold: 0.9, decay: 0.22, level: 0.05, vary: 0.05, pan: 0.4, ..LAYER },
+    ]);
+
+recipe!(OrganLetsGo, "organ_lets_go", "Arena organ prompt: two chords for \"Let's go\", then the crowd's two claps. One bar at 120 bpm.", reverb 0.4 / 1.4, width 0.6,
+    presets [("Fast", fx(0.8, -1.93, 0.5))],
+    [
+        Layer { src: Src::Tone(Sine), f0: 277.18, fm_ratio: 2.0, fm: 1.3, attack: 0.006, hold: 0.28, decay: 0.08, level: 0.26, vary: 0.05, pan: -0.3, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 349.23, fm_ratio: 2.0, fm: 1.3, attack: 0.006, hold: 0.28, decay: 0.08, level: 0.24, vary: 0.05, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 415.30, fm_ratio: 2.0, fm: 1.3, attack: 0.006, hold: 0.28, decay: 0.08, level: 0.24, vary: 0.05, pan: 0.3, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 277.18, fm_ratio: 2.0, fm: 1.3, delay: 0.5, attack: 0.006, hold: 0.3, decay: 0.08, level: 0.26, vary: 0.05, pan: -0.3, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 349.23, fm_ratio: 2.0, fm: 1.3, delay: 0.5, attack: 0.006, hold: 0.3, decay: 0.08, level: 0.24, vary: 0.05, ..LAYER },
+        Layer { src: Src::Tone(Sine), f0: 415.30, fm_ratio: 2.0, fm: 1.3, delay: 0.5, attack: 0.006, hold: 0.3, decay: 0.08, level: 0.24, vary: 0.05, pan: 0.3, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 1150.0, q: 0.4, delay: 1.0, attack: 0.006, hold: 0.01, decay: 0.14, level: 1.3, vary: 0.4, ..LAYER },
+        Layer { src: Src::Pink, mode: BandPass, f0: 1150.0, q: 0.4, delay: 1.5, attack: 0.006, hold: 0.01, decay: 0.14, level: 1.3, vary: 0.4, ..LAYER },
+    ]);

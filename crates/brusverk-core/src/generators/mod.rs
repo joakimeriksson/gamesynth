@@ -84,4 +84,6 @@ registry!(
     fx::OneShot<fx::PuckPad>,
     fx::OneShot<fx::GoalHorn>,
     fx::OneShot<fx::Buzzer>,
+    fx::OneShot<fx::OrganCharge>,
+    fx::OneShot<fx::OrganLetsGo>,
 );

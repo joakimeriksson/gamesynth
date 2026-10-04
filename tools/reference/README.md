@@ -50,9 +50,13 @@ the crowd's `Arena` preset) were tuned against: public-domain (CC0) excerpts fro
 | `goal_horn.ogg` | An arena goal horn, then the crowd | [Hockey arena goal horn with crowd applause](https://freesound.org/people/SEF7/sounds/702099/) by SEF7 | 2.5 to 16 s, -5 dB |
 | `buzzer.ogg` | A buzzer | [buzzer.wav](https://freesound.org/people/Jared_DiCarlo/sounds/581374/) by Jared_DiCarlo | 0 to 5.5 s, +1 dB |
 | `crowd_outrage_boo.ogg` | A hockey crowd: outrage, then booing | [Crowd, large outrage then booing reaction, hockey game, 2011.wav](https://freesound.org/people/TRP/sounds/577098/) by TRP | 0 to 22 s, +7 dB |
+| `organ_charge.ogg` | A ballpark organ playing the "Charge!" call | [Baseball cavalry sting short sustain.wav](https://freesound.org/people/vckhaze/sounds/380695/) by vckhaze | whole clip, +0 dB |
 
 What they show: a skate stride is about a second of broad noise, level from 500 Hz to 4 kHz,
 that flutters by a third. A puck on the boards is a knock at 500 Hz to 1 kHz over a low thud,
 with almost nothing above 2 kHz. The goal horn is three horns near 140, 203 and 257 Hz whose
 harmonics fall off like a sawtooth's. The buzzer is harmonics of 126 Hz between 250 Hz and
-1.3 kHz. A hockey crowd booing peaks at 500 Hz to 1 kHz with under 2 % above 2.5 kHz.
+1.3 kHz. A hockey crowd booing peaks at 500 Hz to 1 kHz with under 2 % above 2.5 kHz. The organ call is sol, do, mi, sol in C sharp (about 213, 283, 358
+and 426 Hz as played), each key held so the arpeggio builds the chord; that organ is far brighter
+than ours, which was kept to the level of a second, duller organ recording to stay out of the
+hiss range.
