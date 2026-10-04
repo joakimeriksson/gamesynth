@@ -268,7 +268,7 @@ Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.
 
 ## Web: Sound Lab (WebAssembly)
 
-Live at **https://joakimeriksson.github.io/brusverk/**. `web/` is a static page that runs
+Live at **https://joakimeriksson.github.io/gamesynth/**. `web/` is a static page that runs
 the *same* Rust engine compiled to WebAssembly inside an AudioWorklet, in four tabs:
 
 | Tab | What it does | Godot counterpart |
