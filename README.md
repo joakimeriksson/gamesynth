@@ -197,7 +197,7 @@ the revs back. At their defaults all of this is off and the engine sounds as it 
 of generator name, but it is built the way an engine makes sound. `engine/layout` picks the
 firing order and which exhaust bank each cylinder fires into: a cross-plane V8 (L R R L R L L R)
 gets its rumble from the uneven pulses per bank, a flat-plane V8 fires each bank evenly and
-screams; also inline four and six, boxer four, V-twin and single. Each firing is a blowdown pulse
+screams; also inline four and six, boxer four, V-twin, single and V12. Each firing is a blowdown pulse
 (`pulse/degrees`, `pulse/turbulence`, `pulse/steepening`) sent down a header and an exhaust pipe
 that are real quarter-wave resonators: `exhaust/header_m` and `exhaust/length_m` are metres,
 and their formants stay put while the revs sweep through them. `exhaust/muffling` goes from
@@ -219,8 +219,19 @@ cargo run -p gamesynth-core --release --example render_params -- piston drive.wa
     "preset=Muscle V8" engine/external_rpm=1 script=tools/reference/drive_script.csv
 ```
 
+**Heavy engines.** For trucks and anything bigger, `piston` has what makes a big diesel sound
+big. `turbo/level` adds a turbocharger: the whistle (`turbo/hz` at full speed) spools with
+throttle and revs, lags behind by `turbo/lag_s`, and a lift-off dumps the boost
+(`turbo/blowoff`). `engine/jake_brake` is the compression-release brake: 0.3 s after the
+throttle closes (so not on a gear change) every cylinder barks into the pipe until the revs are
+back near idle; the game switches it by setting the parameter. `mechanical/clatter` is injection
+knock, most obvious at idle, and `engine/cycle` = two-stroke runs the firing order every turn.
+All are off by default, so the engines above are unchanged.
+
 Presets: `Stock V8`, `Muscle V8`, `Blown V8`, `Flat-plane V8`, `Boxer rumble`, `Inline four`,
-`Diesel six`, `V-twin`, `Thumper`. It costs a few times what `combustion` does (two pipes,
+`Diesel six`, `V-twin`, `Thumper`, and the heavy ones: `Heavy truck` (big-rig turbo six with an
+engine brake), `War rig V8` (huge diesel V8 on open stacks), `Two-stroke diesel V8` (blown,
+fires every turn) and `Tank V12`. It costs a few times what `combustion` does (two pipes,
 per-sample filters), still a small fraction of a core.
 
 `tyre` is one per vehicle (sum its wheels into the inputs): `speed`, `slip`, `load` and

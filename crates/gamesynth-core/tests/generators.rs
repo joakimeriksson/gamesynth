@@ -688,3 +688,86 @@ fn piston_pipe_length_moves_the_formants() {
     let (short, long) = (shape(1.0), shape(2.0));
     assert!(long > short * 1.5, "195 Hz against 130 Hz: 2 m pipe {long:.2}, 1 m pipe {short:.2}");
 }
+
+/// Spectral energy between `lo` and `hi` Hz by direct transform every `step` Hz.
+fn spectral_energy(x: &[f32], lo: f32, hi: f32, step: f32) -> f32 {
+    let mut sum = 0.0f32;
+    let mut f = lo;
+    while f <= hi {
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (n, v) in x.iter().enumerate() {
+            let a = core::f32::consts::TAU * f * n as f32 / SR;
+            re += v * a.cos();
+            im += v * a.sin();
+        }
+        sum += re * re + im * im;
+        f += step;
+    }
+    sum
+}
+
+#[test]
+fn piston_v12_and_two_stroke_fire_at_their_own_rate() {
+    // 3000 rpm is 25 cycles a second: a V12 fires 300 times a second.
+    let mut v12 = bare_piston(7.0, 0.35);
+    set(v12.as_mut(), "exhaust/crossover", 1.0);
+    render(v12.as_mut(), 0.3);
+    let hz = dominant(&render(v12.as_mut(), 0.4), 240.0, 360.0);
+    assert!((hz - 300.0).abs() < 8.0, "V12 firing at 3000 rpm: {hz} Hz");
+    // A two-stroke V8 fires all eight every turn: 400 a second, not 200.
+    let mut two = bare_piston(0.0, 0.35);
+    set(two.as_mut(), "exhaust/crossover", 1.0);
+    set(two.as_mut(), "engine/cycle", 1.0);
+    render(two.as_mut(), 0.3);
+    let hz = dominant(&render(two.as_mut(), 0.4), 150.0, 450.0);
+    assert!((hz - 400.0).abs() < 10.0, "two-stroke V8 firing at 3000 rpm: {hz} Hz");
+}
+
+#[test]
+fn engine_brake_barks_only_on_a_closed_throttle() {
+    let run = |throttle: f32, jake: f32| {
+        let mut m = bare_piston(4.0, 0.6);
+        set(m.as_mut(), "engine/jake_brake", jake);
+        m.set_input_by_name("throttle", throttle);
+        m.snap();
+        render(m.as_mut(), 0.5);
+        render(m.as_mut(), 0.5)
+    };
+    let (coast, brake) = (rms(&run(0.0, 0.0)), rms(&run(0.0, 1.0)));
+    assert!(brake > coast * 2.0, "engine brake {brake:.3} against coasting {coast:.3}");
+    assert_eq!(run(0.6, 0.0), run(0.6, 1.0), "the brake must not touch an engine under power");
+}
+
+#[test]
+fn turbo_whistles_lags_and_blows_off() {
+    let turbo = |throttle: f32, blowoff: f32| {
+        let mut m = bare_piston(4.0, 1.0);
+        for (name, v) in [("turbo/level", 1.0), ("turbo/hz", 5000.0), ("turbo/lag_s", 0.5), ("turbo/blowoff", blowoff)] {
+            set(m.as_mut(), name, v);
+        }
+        m.set_input_by_name("throttle", throttle);
+        m.snap();
+        m
+    };
+    // Snapped at full throttle and full revs the turbine is at speed.
+    let mut m = turbo(1.0, 0.0);
+    let hz = dominant(&render(m.as_mut(), 0.2)[4800..], 4800.0, 5200.0);
+    assert!((hz - 5000.0).abs() < 30.0, "whistle at full spool: {hz} Hz");
+    // From a closed throttle it has to spool up first.
+    let mut m = turbo(0.0, 0.0);
+    m.set_input_by_name("throttle", 1.0);
+    let early = spectral_energy(&render(m.as_mut(), 0.1), 4700.0, 5100.0, 20.0);
+    render(m.as_mut(), 2.5);
+    let late = spectral_energy(&render(m.as_mut(), 0.1), 4700.0, 5100.0, 20.0);
+    assert!(late > early * 20.0, "whistle should arrive with the boost: early {early:.3}, late {late:.3}");
+    // Lifting off a spooled turbo dumps the boost: a burst of air around 2.6 kHz.
+    let lift = |blowoff: f32| {
+        let mut m = turbo(1.0, blowoff);
+        render(m.as_mut(), 0.2);
+        m.set_input_by_name("throttle", 0.0);
+        spectral_energy(&render(m.as_mut(), 0.25)[2400..], 2000.0, 3200.0, 20.0)
+    };
+    let (with, without) = (lift(1.0), lift(0.0));
+    // (The engine's own harmonics share this band, so the bar is a doubling, not silence.)
+    assert!(with > without * 2.5, "blow-off: {with:.3} against {without:.3}");
+}

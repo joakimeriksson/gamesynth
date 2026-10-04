@@ -203,6 +203,8 @@ AUDITION = [
 
 # Piston presets played through tools/reference/drive_script.csv.
 DRIVE = ["Default", "Muscle V8", "Blown V8", "Flat-plane V8", "Boxer rumble", "Inline four", "Diesel six", "V-twin", "Thumper"]
+# Heavy engines on the same drive: turbo, blow-off and engine brake have their moments in it.
+HEAVY = ["Heavy truck", "War rig V8", "Two-stroke diesel V8", "Tank V12"]
 
 
 def engine_audition(folder):
@@ -227,6 +229,9 @@ def engine_audition(folder):
     for preset in DRIVE:
         stem = "piston_drive_" + re.sub(r"\W+", "_", preset.lower())
         add("piston", stem, f"Piston \u00b7 {preset}", "drive: idle, two blips, three gears flat out, lift-off", [f"preset={preset}"] + drive)
+    for preset in HEAVY:
+        stem = "piston_drive_" + re.sub(r"\W+", "_", preset.lower())
+        add("piston", stem, f"Heavy \u00b7 {preset}", "same drive: clatter at idle, turbo or blower on the pulls, blow-off on the shifts, engine brake on the lift-off", [f"preset={preset}"] + drive)
     add("combustion", "combustion_drive_v8", "Combustion \u00b7 V8 muscle", "the same drive on the older generator", ["preset=V8 muscle"] + drive)
     return rows
 

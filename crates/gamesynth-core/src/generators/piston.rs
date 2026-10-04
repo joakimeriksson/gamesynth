@@ -14,6 +14,9 @@
 //!   the flow noisier.
 //! * **Everything else you hear near an engine:** intake roar through the throttle, valvetrain
 //!   ticking, block knock, a blower.
+//! * **Heavy engines.** A turbocharger that spools with exhaust flow, lags behind the throttle
+//!   and dumps its boost on a lift; an engine (compression-release) brake that barks on a closed
+//!   throttle; diesel injection clatter; two-stroke operation (the firing order every turn).
 //!
 //! The banks go to the two channels (`stereo/width`), which is most of the fun on headphones.
 //! Inputs, their order and the shared parameter names match `combustion`, so a game can switch
@@ -21,7 +24,7 @@
 
 use core::f32::consts::E;
 
-use super::vehicles::OFF_ON;
+use super::vehicles::{ENGINE_CYCLES, OFF_ON};
 use crate::blocks::{hz_coef, mix_seed, settle_coef, DelayLine, OnePole, Phasor, BLOCK};
 use crate::filter::{FilterMode, Svf};
 use crate::math::{soft_clip, Rng};
@@ -29,7 +32,7 @@ use crate::model::{Generator, InputSpec};
 use crate::noise::Noise;
 use crate::params::{exp, lin, ParamKind, GAIN, UNIT};
 
-pub const PISTON_LAYOUTS: [&str; 7] = ["Crossplane V8", "Flat-plane V8", "Inline 4", "Boxer 4", "Inline 6", "V-twin", "Single"];
+pub const PISTON_LAYOUTS: [&str; 8] = ["Crossplane V8", "Flat-plane V8", "Inline 4", "Boxer 4", "Inline 6", "V-twin", "Single", "V12"];
 
 /// One firing: (crank angle as a fraction of the 720 degree cycle, exhaust bank).
 type Firing = (f32, usize);
@@ -44,6 +47,8 @@ const INLINE_6: [Firing; 6] = [(0.0, 0), (1.0 / 6.0, 0), (2.0 / 6.0, 0), (0.5, 0
 /// 45 degree twin on one crank pin: 315 then 405 degrees.
 const V_TWIN: [Firing; 2] = [(0.0, 0), (315.0 / 720.0, 1)];
 const SINGLE: [Firing; 1] = [(0.0, 0)];
+/// 60 degree V12: a firing every 60 degrees, banks alternating, each bank an even inline six.
+const V12: [Firing; 12] = [(0.0, 0), (1.0 / 12.0, 1), (2.0 / 12.0, 0), (0.25, 1), (4.0 / 12.0, 0), (5.0 / 12.0, 1), (0.5, 0), (7.0 / 12.0, 1), (8.0 / 12.0, 0), (0.75, 1), (10.0 / 12.0, 0), (11.0 / 12.0, 1)];
 
 fn layout(index: usize) -> &'static [Firing] {
     match index {
@@ -53,7 +58,8 @@ fn layout(index: usize) -> &'static [Firing] {
         3 => &BOXER_4,
         4 => &INLINE_6,
         5 => &V_TWIN,
-        _ => &SINGLE,
+        6 => &SINGLE,
+        _ => &V12,
     }
 }
 
@@ -100,6 +106,13 @@ model_params! {
         misfire: "damage/misfire" = 0.6, UNIT;
         rattle: "damage/rattle" = 0.5, UNIT;
         leak: "damage/exhaust_leak" = 0.5, UNIT;
+        cycle: "engine/cycle" = 0.0, ParamKind::Enum(&ENGINE_CYCLES);
+        jake: "engine/jake_brake" = 0.0, UNIT;
+        clatter: "mechanical/clatter" = 0.0, UNIT;
+        turbo_level: "turbo/level" = 0.0, UNIT;
+        turbo_hz: "turbo/hz" = 5200.0, exp(1500.0, 12000.0);
+        turbo_lag: "turbo/lag_s" = 0.8, lin(0.1, 4.0);
+        blowoff: "turbo/blowoff" = 0.5, UNIT;
         width: "stereo/width" = 0.6, UNIT;
         gain: "master/gain" = 0.9, GAIN;
     }
@@ -157,6 +170,18 @@ pub struct Piston {
     pops_left: u32,
     pop_wait: f32,
     limiter_phase: f32,
+    /// Seconds the throttle has been closed (the engine brake waits out gear changes).
+    closed_secs: f32,
+    /// Turbocharger speed 0..1.
+    spool: f32,
+    turbo_phase: Phasor,
+    turbo_bp: Svf,
+    /// Blow-off burst after a lift, and its flutter.
+    bov: f32,
+    bov_cooldown: f32,
+    bov_phase: Phasor,
+    bov_bp: Svf,
+    clatter: [Svf; 2],
 }
 
 impl Piston {
@@ -188,21 +213,27 @@ impl Piston {
         let two_banks = fir.iter().any(|f| f.1 == 1);
 
         let rpm = p.idle_rpm + (p.max_rpm - p.idle_rpm) * rev;
+        // Crank speed as four-stroke cycles per second; a two-stroke runs its firing order every turn.
         let cycle_hz = rpm / 120.0;
-        let step = cycle_hz / sr;
+        let step = cycle_hz * if p.cycle >= 0.5 { 2.0 } else { 1.0 } / sr;
+
+        // Engine brake: after a moment on a closed throttle the exhaust valves release each
+        // cylinder's compression into the pipe, a bark far louder than coasting.
+        self.closed_secs = if throttle < 0.08 { self.closed_secs + dt } else { 0.0 };
+        let jake = p.jake * ((self.closed_secs - 0.15) / 0.15).clamp(0.0, 1.0) * ((rev - 0.12) / 0.1).clamp(0.0, 1.0);
 
         // Blowdown pulse: a critically damped two-pole response. At speed its length is a
         // crank angle; at idle gas dynamics end it after a couple of milliseconds, which is
         // why an idling engine pops instead of humming. Load makes it shorter and stronger.
-        let tau = ((p.pulse_deg / 720.0) / cycle_hz / 3.0).min(0.0022 - 0.0012 * throttle);
+        let tau = ((p.pulse_deg / 720.0) / cycle_hz / 3.0).min(0.0022 - 0.0012 * throttle) * (1.0 - 0.45 * jake);
         let a = 1.0 - (-1.0 / (tau * sr)).exp();
         let inject = E / a;
         let strength = 0.35 + 0.65 * throttle.powf(0.8);
         let variation = p.roughness * (0.1 + 0.25 * (1.0 - throttle));
         let lumpy = p.lope * (1.0 - rev).max(0.0).powf(1.5) * (1.0 - 0.6 * throttle);
         let overrun = (rev - throttle - 0.15).max(0.0) * p.burble;
-        let steep = p.steepening * (0.3 + 0.7 * throttle) * 1.5 * tau * sr;
-        let turb = p.turbulence * 1.5;
+        let steep = p.steepening * (0.3 + 0.7 * throttle.max(jake)) * 1.5 * tau * sr;
+        let turb = p.turbulence * 1.5 * (1.0 + jake);
 
         // Lift-off backfire, rev limiter, damage: as in `combustion`.
         self.thr_slow += (throttle - self.thr_slow) * settle_coef(0.2, dt);
@@ -230,6 +261,27 @@ impl Piston {
             self.leak.set(FilterMode::HighPass, 2500.0, 0.3, sr);
         }
         let backfire_gain = 2.2 * (0.6 + 0.8 * damage) * p.backfire.sqrt();
+
+        // Turbocharger: the turbine spools with exhaust flow and lags behind the throttle.
+        let (mut whistle_gain, mut whistle_inc, mut bov_gain) = (0.0, 0.0, 0.0);
+        if p.turbo_level > 0.0 {
+            let target = (throttle * (0.25 + 0.75 * rev) + 0.3 * boost).min(1.0);
+            // Lifting off a spooled turbo dumps the boost through the blow-off valve.
+            self.bov_cooldown = (self.bov_cooldown - dt).max(0.0);
+            if p.blowoff > 0.0 && self.bov_cooldown == 0.0 && self.thr_slow - throttle > 0.25 && self.spool > 0.3 {
+                self.bov = self.spool;
+                self.bov_cooldown = 0.6;
+            }
+            let secs = if target > self.spool { p.turbo_lag } else { p.turbo_lag * 1.5 };
+            self.spool += (target - self.spool) * settle_coef(secs, dt);
+            let hz = (p.turbo_hz * (0.3 + 0.7 * self.spool)).min(sr * 0.4);
+            self.turbo_bp.set(FilterMode::BandPass, hz, 0.97, sr);
+            self.bov_bp.set(FilterMode::BandPass, 2600.0, 0.2, sr);
+            whistle_inc = hz / sr;
+            whistle_gain = p.turbo_level * self.spool.powf(1.5) * 0.2;
+            bov_gain = p.blowoff * p.turbo_level.sqrt() * 1.5;
+        }
+        let bov_decay = (-1.0 / (0.13 * sr)).exp();
 
         // Exhaust: header and pipe as quarter-wave resonators, then the muffler.
         let unequal = p.unequal_ms * 0.001 * sr;
@@ -262,6 +314,12 @@ impl Piston {
         let valve_gain = p.valvetrain * (0.5 + 0.5 * rev) * 0.5;
         let knock_gain = p.block * (0.25 + 0.75 * throttle) * 0.25;
         let tick_gap = 0.5 / ncyl as f32 / step;
+        // Diesel injection clatter: a hard tick per firing, most obvious at idle.
+        let clatter_gain = p.clatter * (1.0 - 0.5 * rev) * 1.6;
+        if clatter_gain > 0.0 {
+            self.clatter[0].set(FilterMode::BandPass, 1150.0, 0.85, sr);
+            self.clatter[1].set(FilterMode::BandPass, 2700.0, 0.8, sr);
+        }
         // Cooling fan, belts and air rushing through the bay: broadband, rising fast with revs.
         self.fan.set(FilterMode::BandPass, 1800.0 + 2500.0 * rev, 0.0, sr);
         let fan_gain = p.fan * (0.1 + 0.9 * rev.powf(1.3)) * 1.6;
@@ -270,7 +328,7 @@ impl Piston {
         let blower_gain = p.blower_level * (0.25 + 0.4 * throttle + 0.6 * boost) * (0.3 + 0.7 * rev) * 0.12;
         let blower_inc = rpm / 60.0 * p.blower_ratio / sr;
 
-        let level = (0.5 + 0.5 * load.max(throttle * 0.5)) * (0.7 + 0.3 * rev) * p.gain * (1.0 + 0.25 * boost) * 1.5;
+        let level = (0.5 + 0.5 * load.max(throttle * 0.5)) * (0.7 + 0.3 * rev) * p.gain * (1.0 + 0.25 * boost) * 1.5 * (1.0 + 0.5 * jake);
         let (wa, wb) = (0.5 * (1.0 + width), 0.5 * (1.0 - width));
         let ring_len = self.ring[0].len();
 
@@ -282,7 +340,7 @@ impl Piston {
                 ph -= 1.0;
                 self.next = 0;
             }
-            let (mut knock_in, mut tick_in, mut intake_in) = (0.0f32, 0.0f32, 0.0f32);
+            let (mut knock_in, mut tick_in, mut intake_in, mut clatter_in) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
             while self.next < ncyl && ph >= fir[self.next].0 {
                 let cyl = self.next;
                 let (angle, bank) = fir[cyl];
@@ -310,6 +368,12 @@ impl Piston {
                     amp *= 1.0 - dead;
                 }
                 let mut fire = amp * strength;
+                if jake > 0.0 {
+                    fire = fire.max(self.cyl_gain[cyl] * jake * (0.75 + 0.5 * rev));
+                }
+                if clatter_gain > 0.0 {
+                    clatter_in += self.rng.range(0.6, 1.0);
+                }
                 if overrun > 0.0 && self.rng.chance((overrun * 0.6).min(0.7)) {
                     // Unburnt fuel lighting in the pipe: a pop that owes nothing to the throttle.
                     fire = self.rng.range(0.5, 1.1);
@@ -401,6 +465,19 @@ impl Piston {
                 self.blower[1].tick(blower_inc * 2.0);
                 shared += (self.blower[0].sin() + 0.45 * self.blower[1].sin()) * blower_gain;
             }
+            if clatter_gain > 0.0 {
+                shared += (self.clatter[0].tick(clatter_in) + 0.7 * self.clatter[1].tick(clatter_in)) * clatter_gain;
+            }
+            if whistle_gain > 0.0 || self.bov > 1e-4 {
+                self.turbo_phase.tick(whistle_inc);
+                shared += (0.5 * self.turbo_phase.sin() + 0.6 * self.turbo_bp.tick(wn)) * whistle_gain;
+                if self.bov > 1e-4 {
+                    // The dumped boost flutters as the compressor surges.
+                    self.bov_phase.tick(24.0 / sr);
+                    shared += self.bov_bp.tick(wn) * self.bov * (0.6 + 0.4 * self.bov_phase.sin()) * bov_gain;
+                    self.bov *= bov_decay;
+                }
+            }
             // Summed pipes first, so that at width 0 both channels are the same number.
             *ol = (shared + (wa * tail[0] + wb * tail[1])) * level;
             *or = (shared + (wa * tail[1] + wb * tail[0])) * level;
@@ -444,7 +521,28 @@ impl Generator for Piston {
             ("Inline four", PistonParams { layout: 2.0, idle_rpm: 850.0, max_rpm: 7500.0, rev_up: 0.5, rev_down: 1.0, lope: 0.05, roughness: 0.3, unequal_ms: 0.4, length_m: 2.4, muffling: 0.4, intake_level: 0.5, ..d }),
             ("Diesel six", PistonParams {
                 layout: 4.0, idle_rpm: 600.0, max_rpm: 2600.0, rev_up: 2.0, rev_down: 2.6, lope: 0.0, roughness: 0.25, pulse_deg: 40.0, unequal_ms: 0.6, length_m: 4.2, muffling: 0.45,
-                burble: 0.0, block: 0.9, valvetrain: 0.5, intake_level: 0.3, gain: 0.55, ..d
+                burble: 0.0, block: 0.9, valvetrain: 0.5, intake_level: 0.3, clatter: 0.5, turbo_level: 0.3, gain: 0.55, ..d
+            }),
+            // A big-rig inline six: turbo whistle and blow-off, engine brake on a closed throttle.
+            ("Heavy truck", PistonParams {
+                layout: 4.0, idle_rpm: 550.0, max_rpm: 2200.0, rev_up: 2.4, rev_down: 3.0, lope: 0.0, roughness: 0.3, pulse_deg: 45.0, unequal_ms: 0.8, header_m: 1.2, length_m: 4.5,
+                resonance: 0.5, muffling: 0.3, burble: 0.0, block: 0.8, valvetrain: 0.4, clatter: 0.7, intake_level: 0.35, fan: 0.4, turbo_level: 0.6, turbo_hz: 4200.0, turbo_lag: 1.2,
+                blowoff: 0.5, jake: 0.9, drive: 0.45, gain: 0.5, ..d
+            }),
+            // A huge diesel V8 on open stacks, built to be heard coming.
+            ("War rig V8", PistonParams {
+                idle_rpm: 520.0, max_rpm: 3000.0, rev_up: 1.6, rev_down: 2.2, lope: 0.7, roughness: 0.6, pulse_deg: 35.0, header_m: 1.0, length_m: 3.4, resonance: 0.55, muffling: 0.04,
+                crossover: 0.0, steepening: 0.7, turbulence: 0.8, burble: 0.3, backfire: 0.4, limiter: 0.4, block: 0.7, clatter: 0.5, turbo_level: 0.5, turbo_hz: 3800.0, turbo_lag: 1.0,
+                blowoff: 0.7, jake: 1.0, drive: 0.6, gain: 0.55, ..d
+            }),
+            // Blown two-stroke V8 diesel: fires every turn, so it sounds revved twice as high.
+            ("Two-stroke diesel V8", PistonParams {
+                cycle: 1.0, idle_rpm: 500.0, max_rpm: 2300.0, rev_up: 1.2, rev_down: 1.8, lope: 0.2, roughness: 0.4, pulse_deg: 50.0, header_m: 0.8, length_m: 3.0, muffling: 0.1,
+                crossover: 0.3, burble: 0.0, block: 0.6, clatter: 0.5, blower_level: 0.6, blower_ratio: 12.0, jake: 0.8, gain: 0.5, ..d
+            }),
+            ("Tank V12", PistonParams {
+                layout: 7.0, idle_rpm: 500.0, max_rpm: 2400.0, rev_up: 2.5, rev_down: 3.2, lope: 0.1, roughness: 0.35, pulse_deg: 45.0, header_m: 1.0, length_m: 2.6, muffling: 0.12,
+                crossover: 0.0, burble: 0.0, block: 0.9, valvetrain: 0.6, clatter: 0.6, fan: 0.6, drive: 0.5, gain: 0.5, ..d
             }),
             ("V-twin", PistonParams {
                 layout: 5.0, idle_rpm: 900.0, max_rpm: 5600.0, lope: 0.25, roughness: 0.4, pulse_deg: 60.0, header_m: 0.5, length_m: 1.2, muffling: 0.08, resonance: 0.5, crossover: 0.0,
@@ -505,6 +603,15 @@ impl Generator for Piston {
             pops_left: 0,
             pop_wait: 0.0,
             limiter_phase: 0.0,
+            closed_secs: 0.0,
+            spool: 0.0,
+            turbo_phase: Phasor::default(),
+            turbo_bp: Svf::default(),
+            bov: 0.0,
+            bov_cooldown: 0.0,
+            bov_phase: Phasor::default(),
+            bov_bp: Svf::default(),
+            clatter: [Svf::default(); 2],
         }
     }
 
@@ -512,6 +619,9 @@ impl Generator for Piston {
         self.x.copy_from_slice(x);
         self.rev = if p.external_rpm >= 0.5 { x[2] } else { x[0] };
         self.thr_slow = x[0];
+        self.spool = (x[0] * (0.25 + 0.75 * self.rev)).min(1.0);
+        self.closed_secs = 0.0;
+        self.bov = 0.0;
     }
 
     fn rpm(&self) -> Option<f32> {
