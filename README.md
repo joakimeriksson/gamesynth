@@ -136,7 +136,7 @@ tiers behind the same `SoundGenerator` class:
 
 | Tier | What | Cost |
 |---|---|---|
-| **Native** (42) | continuous: `jet` `hover` `combustion` `motor` `rotor` `scrape` `beam` `tyre` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep` `finish`, a struck `bell`, and off-road `metal_crash` `mud_splash` `suspension_thud` `debris` `rock_hit`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
+| **Native** (43) | continuous: `jet` `hover` `combustion` `piston` `motor` `rotor` `scrape` `beam` `tyre` · `wind` `rain` `fire` `stream` `ocean` · `electric` `drone` `crowd` `radio` `siren`; events: weapons `laser` `plasma` `cannon` `rocket` `mine_drop` `mine_blast` `explosion` `emp` `quake`, ship `impact` `shield_hit` `shield_up` `boost` `airbrake`, race UI `lock_on` `pickup` `beep` `finish`, a struck `bell`, and off-road `metal_crash` `mud_splash` `suspension_thud` `debris` `rock_hit`. Each with presets (V8 muscle, Tin roof, Ship destroyed, Heavy cannon, Go…) | every continuous generator at once uses a fraction of one core; idle events cost nothing |
 | **Model files** | your own, as TOML/JSON: a graph of nodes plus control formulas. See [`models/README.md`](models/README.md) and the examples in `models/` (`mine_armed` proximity ticker, `rocket_flight` for the projectile, `recharge`, `checkpoint`, `shield`…) | about 2.5x a native generator |
 
 ```gdscript
@@ -191,6 +191,37 @@ hiss; `damage/wear` sets a baseline) and `boost` (blower whine at `blower/ratio`
 drive). `engine/cycle` switches to two-stroke, `engine/cam_lope` gives a lumpy idle. Presets
 `Blown V8`, `Buggy flat-four`, `Dirt bike 2-stroke`, `Rattletrap V8`. `pb.get_rpm()` reads
 the revs back. At their defaults all of this is off and the engine sounds as it always did.
+
+**A physical piston engine.** `piston` takes the same inputs as `combustion` (and the same
+`engine/*` names, external rpm, limiter, backfire, damage and blower), so switching is a change
+of generator name, but it is built the way an engine makes sound. `engine/layout` picks the
+firing order and which exhaust bank each cylinder fires into: a cross-plane V8 (L R R L R L L R)
+gets its rumble from the uneven pulses per bank, a flat-plane V8 fires each bank evenly and
+screams; also inline four and six, boxer four, V-twin and single. Each firing is a blowdown pulse
+(`pulse/degrees`, `pulse/turbulence`, `pulse/steepening`) sent down a header and an exhaust pipe
+that are real quarter-wave resonators: `exhaust/header_m` and `exhaust/length_m` are metres,
+and their formants stay put while the revs sweep through them. `exhaust/muffling` goes from
+open headers to a quiet saloon, `exhaust/crossover` is the H/X-pipe, `exhaust/unequal_ms`
+and `exhaust/interference` set how much of the bank rumble reaches the tailpipe (unequal
+headers are the boxer burble), `exhaust/overrun_burble` pops on a closed throttle. Around the
+exhaust: `intake/level` and `intake/hz`, `mechanical/valvetrain`, `mechanical/block`,
+`mechanical/fan`. The banks go left and right (`stereo/width`; 0 is the mono sound).
+
+The defaults were fitted to a recording of a real 3.5 litre Rover V8
+([`tools/reference`](tools/reference)) at idle and at 3000 rpm: third-octave levels within
+about 4 dB on average, and the share of half-order "rumble" harmonics 0.19 and 0.92 against
+0.21 and 0.92 measured. To fit your own recording: `tools/engine_analysis.py` measures it,
+`tools/fit_engine.py recording.wav 0.3:1.9:835:0 10:13.5:2992:0.25` searches the parameters.
+`render_params` renders any generator from the command line, with inputs scripted over time:
+
+```sh
+cargo run -p gamesynth-core --release --example render_params -- piston drive.wav 20 \
+    "preset=Muscle V8" engine/external_rpm=1 script=tools/reference/drive_script.csv
+```
+
+Presets: `Stock V8`, `Muscle V8`, `Blown V8`, `Flat-plane V8`, `Boxer rumble`, `Inline four`,
+`Diesel six`, `V-twin`, `Thumper`. It costs a few times what `combustion` does (two pipes,
+per-sample filters), still a small fraction of a core.
 
 `tyre` is one per vehicle (sum its wheels into the inputs): `speed`, `slip`, `load` and
 `surface` (0 packed dirt, 0.25 gravel, 0.5 sand, 0.75 mud, 1 rock/tarmac; values in between

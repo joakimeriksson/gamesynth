@@ -18,7 +18,7 @@ fn set_all(m: &mut dyn Model, v: f32) {
 
 #[test]
 fn registry_is_consistent() {
-    assert!(generators::NAMES.len() >= 42);
+    assert!(generators::NAMES.len() >= 43);
     let descs = generators::describe_all();
     assert_eq!(descs.len(), generators::NAMES.len());
     for (name, d) in generators::NAMES.iter().zip(&descs) {
@@ -77,7 +77,7 @@ fn every_generator_and_preset_is_bounded_and_audible() {
 #[test]
 fn inputs_change_the_sound() {
     // Raising the primary input must raise the level for everything driven by intensity.
-    for name in ["hover", "combustion", "motor", "rotor", "scrape", "beam", "tyre", "wind", "rain", "fire", "stream", "electric", "crowd", "radio"] {
+    for name in ["hover", "combustion", "motor", "piston", "rotor", "scrape", "beam", "tyre", "wind", "rain", "fire", "stream", "electric", "crowd", "radio"] {
         let level = |v: f32| {
             let mut m = generators::create(name, SR).unwrap();
             set_all(m.as_mut(), 0.5);
@@ -538,4 +538,153 @@ fn festival_crowd_has_air_horns() {
     let (festival, stadium) = (run("Festival"), run("Stadium"));
     assert!(most_tonal(&festival) > most_tonal(&stadium) * 1.5, "horns: {:.2} vs {:.2}", most_tonal(&festival), most_tonal(&stadium));
     assert!(peak(&festival) <= 1.0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Physical piston engine
+// ---------------------------------------------------------------------------------------------
+
+/// A piston engine reduced to its exhaust pulses: no noise, no variation, no other sources.
+fn bare_piston(layout: f32, rev: f32) -> Box<dyn Model> {
+    let mut m = generators::create("piston", SR).unwrap();
+    for (name, v) in [
+        ("engine/layout", layout), ("engine/external_rpm", 1.0), ("engine/idle_rpm", 900.0), ("engine/max_rpm", 6900.0), ("engine/roughness", 0.0), ("engine/cam_lope", 0.0),
+        ("pulse/turbulence", 0.0), ("exhaust/unequal_ms", 0.0), ("exhaust/interference", 0.0), ("exhaust/crossover", 0.0), ("exhaust/overrun_burble", 0.0),
+        ("intake/level", 0.0), ("mechanical/valvetrain", 0.0), ("mechanical/block", 0.0), ("mechanical/fan", 0.0), ("stereo/width", 1.0),
+    ] {
+        set(m.as_mut(), name, v);
+    }
+    m.set_input_by_name("throttle", 0.5);
+    m.set_input_by_name("rpm", rev);
+    m.snap();
+    m
+}
+
+/// Share of the energy on harmonics of the 720 degree cycle that are not multiples of `every`.
+fn off_harmonic_share(x: &[f32], cycle_hz: f32, every: usize) -> f32 {
+    let (mut on, mut off) = (0.0f32, 0.0f32);
+    for k in 1..=24 {
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (n, v) in x.iter().enumerate() {
+            let a = core::f32::consts::TAU * cycle_hz * k as f32 * n as f32 / SR;
+            re += v * a.cos();
+            im += v * a.sin();
+        }
+        *(if k % every == 0 { &mut on } else { &mut off }) += re * re + im * im;
+    }
+    off / (on + off)
+}
+
+#[test]
+fn piston_matches_combustion_as_a_drop_in() {
+    let (p, c) = (generators::create("piston", SR).unwrap(), generators::create("combustion", SR).unwrap());
+    let names = |m: &dyn Model| m.desc().inputs.iter().map(|i| i.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(p.as_ref()), names(c.as_ref()), "same inputs in the same order");
+    for shared in ["engine/idle_rpm", "engine/max_rpm", "engine/external_rpm", "engine/rev_limiter", "exhaust/backfire", "blower/level", "blower/ratio", "damage/misfire", "damage/wear", "master/gain"] {
+        assert!(p.desc().param_index(shared).is_some(), "piston lacks {shared}");
+    }
+}
+
+#[test]
+fn piston_fires_at_the_crank_speed_it_is_given() {
+    // 900 + 0.35 * 6000 = 3000 rpm: 25 cycles a second, a V8 fires 200 times a second.
+    let mut m = bare_piston(0.0, 0.35);
+    set(m.as_mut(), "exhaust/crossover", 1.0);
+    render(m.as_mut(), 0.3);
+    let hz = dominant(&render(m.as_mut(), 0.4), 150.0, 250.0);
+    assert!((hz - 200.0).abs() < 6.0, "V8 firing at 3000 rpm: {hz} Hz");
+    assert!((m.rpm().unwrap() - 0.35).abs() < 0.01);
+    // An inline four at the same speed fires half as often.
+    let mut four = bare_piston(2.0, 0.35);
+    render(four.as_mut(), 0.3);
+    let hz = dominant(&render(four.as_mut(), 0.4), 60.0, 140.0);
+    assert!((hz - 100.0).abs() < 4.0, "inline four firing at 3000 rpm: {hz} Hz");
+}
+
+#[test]
+fn crossplane_rumbles_and_flatplane_does_not() {
+    // One bank of a cross-plane V8 gets pulses 270, 180, 90 and 180 degrees apart: every
+    // harmonic of the cycle. One bank of a flat-plane V8 fires evenly: only every fourth.
+    let bank = |layout: f32| {
+        let mut m = bare_piston(layout, 0.35);
+        let n = (SR * 1.5) as usize;
+        let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
+        m.render_stereo(&mut l, &mut r);
+        off_harmonic_share(&l[n / 3..], 25.0, 4)
+    };
+    let (cross, flat) = (bank(0.0), bank(1.0));
+    assert!(cross > 0.5, "one bank of a cross-plane V8 should be mostly half-order rumble: {cross:.2}");
+    assert!(flat < 0.2, "one bank of a flat-plane V8 fires evenly: {flat:.2}");
+    // And as shipped, the rumble survives a mono mix at speed (measured on a real V8: 0.92).
+    let mut stock = generators::create("piston", SR).unwrap();
+    set(stock.as_mut(), "engine/external_rpm", 1.0);
+    stock.set_input_by_name("throttle", 0.25);
+    stock.set_input_by_name("rpm", (3000.0 - 750.0) / (6500.0 - 750.0));
+    stock.snap();
+    render(stock.as_mut(), 0.5);
+    let share = off_harmonic_share(&render(stock.as_mut(), 1.5), 25.0, 8);
+    assert!(share > 0.6, "default V8 at 3000 rpm, mono: rumble share {share:.2}");
+}
+
+#[test]
+fn piston_stereo_puts_a_bank_on_each_side() {
+    let run = |layout: f32, width: f32| {
+        let mut m = generators::create("piston", SR).unwrap();
+        set(m.as_mut(), "engine/layout", layout);
+        set(m.as_mut(), "stereo/width", width);
+        m.set_input_by_name("throttle", 0.6);
+        m.snap();
+        render(m.as_mut(), 0.3);
+        stereo(m.as_mut(), 1.0)
+    };
+    let (l, r) = run(0.0, 0.6);
+    let c = correlation(&l, &r);
+    assert!(c < 0.9 && c > 0.0, "a V8's banks should be heard apart: correlation {c:.2}");
+    assert!((rms(&l) / rms(&r)).ln().abs() < 0.25, "balanced: {:.3} vs {:.3}", rms(&l), rms(&r));
+    let (l, r) = run(0.0, 0.0);
+    assert!(l == r, "width 0 is mono");
+    let mut mono = generators::create("piston", SR).unwrap();
+    set(mono.as_mut(), "stereo/width", 0.0);
+    mono.set_input_by_name("throttle", 0.6);
+    mono.snap();
+    render(mono.as_mut(), 0.3);
+    assert!(render(mono.as_mut(), 1.0) == l, "the mono render is the stereo one at width 0");
+    // One exhaust (inline four): both sides carry the same pulses.
+    let (l, r) = run(2.0, 0.6);
+    assert!(correlation(&l, &r) > 0.85, "an inline four has one pipe: {:.2}", correlation(&l, &r));
+}
+
+#[test]
+fn piston_pipe_length_moves_the_formants() {
+    // Flow noise through the pipe shows its resonances: a quarter-wave pipe of 1 m rings at
+    // 130 Hz and 390 Hz, one of 2 m at 65, 195 and 325 Hz.
+    let shape = |metres: f32| {
+        let mut m = bare_piston(6.0, 0.1);
+        set(m.as_mut(), "pulse/turbulence", 1.0);
+        set(m.as_mut(), "exhaust/length_m", metres);
+        set(m.as_mut(), "exhaust/header_m", 0.2);
+        set(m.as_mut(), "exhaust/resonance", 0.9);
+        set(m.as_mut(), "exhaust/muffling", 0.0);
+        render(m.as_mut(), 0.3);
+        let x = render(m.as_mut(), 1.0);
+        // Spectral energy in a band, by direct transform every 3 Hz (`band_energy` is too leaky here).
+        let energy = |lo: f32, hi: f32| {
+            let mut sum = 0.0f32;
+            let mut f = lo;
+            while f <= hi {
+                let (mut re, mut im) = (0.0f32, 0.0f32);
+                for (n, v) in x.iter().enumerate() {
+                    let a = core::f32::consts::TAU * f * n as f32 / SR;
+                    re += v * a.cos();
+                    im += v * a.sin();
+                }
+                sum += re * re + im * im;
+                f += 3.0;
+            }
+            sum
+        };
+        energy(180.0, 210.0) / energy(115.0, 145.0)
+    };
+    let (short, long) = (shape(1.0), shape(2.0));
+    assert!(long > short * 1.5, "195 Hz against 130 Hz: 2 m pipe {long:.2}, 1 m pipe {short:.2}");
 }

@@ -201,10 +201,40 @@ AUDITION = [
 ]
 
 
+# Piston presets played through tools/reference/drive_script.csv.
+DRIVE = ["Default", "Muscle V8", "Blown V8", "Flat-plane V8", "Boxer rumble", "Inline four", "Diesel six", "V-twin", "Thumper"]
+
+
+def engine_audition(folder):
+    """A real V8 next to the physical model and the old generator following the same revs, then
+    every piston preset on the same short drive."""
+    os.makedirs(folder, exist_ok=True)
+    ref = "tools/reference"
+    render = ["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_params", "--"]
+    rows = [{"label": "Real engine \u00b7 Rover 3.5 V8", "note": "recording (public domain): idle, three blips, a hold near 3000 rpm",
+             "audio": encode("audition_rover_real", os.path.join(ROOT, ref, "rover_v8.ogg"))}]
+
+    def add(gen, stem, label, note, settings):
+        path = os.path.join(folder, f"{stem}.wav")
+        code, out, _ = run(render + [gen, path, "30"] + settings)
+        if code == 0 and os.path.exists(path):
+            rows.append({"label": label, "note": note, "audio": encode(f"audition_{stem}", path)})
+
+    rover = [f"script={ref}/rover_v8_script.csv", "engine/external_rpm=1"]
+    add("piston", "piston_as_rover", "Piston \u00b7 Stock V8, same revs", "the physical model, fitted to that recording, following its revs", ["preset=Stock V8"] + rover)
+    add("combustion", "combustion_as_rover", "Combustion \u00b7 V8 muscle, same revs", "the older generator on the same script", ["preset=V8 muscle", "engine/idle_rpm=835", "engine/max_rpm=6500"] + rover)
+    drive = [f"script={ref}/drive_script.csv", "engine/external_rpm=1"]
+    for preset in DRIVE:
+        stem = "piston_drive_" + re.sub(r"\W+", "_", preset.lower())
+        add("piston", stem, f"Piston \u00b7 {preset}", "drive: idle, two blips, three gears flat out, lift-off", [f"preset={preset}"] + drive)
+    add("combustion", "combustion_drive_v8", "Combustion \u00b7 V8 muscle", "the same drive on the older generator", ["preset=V8 muscle"] + drive)
+    return rows
+
+
 def audition():
-    """Extra listening: chosen presets, and the tyre rolling then sliding on each surface."""
+    """Extra listening: the engine comparison, chosen presets, and the tyre on each surface."""
     folder = os.path.join(OUT, "audition_wav")
-    rows = []
+    rows = engine_audition(folder)
     run(["cargo", "run", "-q", "-p", "gamesynth-core", "--release", "--example", "render_models", "--", folder] + sorted({a[0] for a in AUDITION}))
     for gen, stem, label, note in AUDITION:
         path = os.path.join(folder, f"{gen}_{stem}.wav")
@@ -408,7 +438,7 @@ def sounds():
             name = file[len("graph_"):-4]
             path = os.path.join(WAV, file)
             result.append(review_event(name, path, "model file", events[name]) if name in events else review(name, path, "model file"))
-    order = ["jet", "hover", "combustion", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "bell", "finish", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
+    order = ["jet", "hover", "combustion", "piston", "motor", "rotor", "scrape", "laser", "beam", "plasma", "cannon", "rocket", "mine_drop", "mine_blast", "explosion", "emp", "quake", "impact", "shield_hit", "shield_up", "lock_on", "boost", "airbrake", "pickup", "beep", "bell", "finish", "wind", "rain", "fire", "stream", "ocean", "electric", "drone", "crowd", "radio", "siren"]
     result.sort(key=lambda c: (c["engine"] != "native", order.index(c["name"]) if c["name"] in order else 99, c["name"]))
     return result
 

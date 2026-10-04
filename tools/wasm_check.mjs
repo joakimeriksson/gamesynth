@@ -22,7 +22,7 @@ const checks = [];
 const check = (name, ok, detail = "") => checks.push({ name, ok: !!ok, detail });
 
 const lib = JSON.parse(str(w.model_library_json()));
-check("library lists the native generators", lib.models.length >= 42, `${lib.models.length} generators, ${lib.nodes.length} node types`);
+check("library lists the native generators", lib.models.length >= 43, `${lib.models.length} generators, ${lib.nodes.length} node types`);
 for (const d of lib.models) {
   const m = put(d.name, (p, n) => w.model_new(p, n, SR));
   d.inputs.forEach((i) => w.model_set_input(m, i.index, 1));

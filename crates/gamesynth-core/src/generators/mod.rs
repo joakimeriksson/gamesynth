@@ -6,6 +6,7 @@
 pub mod ambient;
 pub mod fx;
 pub mod nature;
+pub mod piston;
 pub mod vehicles;
 
 use crate::model::{Generator, Model, ModelDesc, Native};
@@ -34,6 +35,7 @@ registry!(
     vehicles::Jet,
     vehicles::Hover,
     vehicles::Combustion,
+    piston::Piston,
     vehicles::Motor,
     vehicles::Rotor,
     vehicles::Scrape,

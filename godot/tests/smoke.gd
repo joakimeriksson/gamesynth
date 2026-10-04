@@ -127,7 +127,7 @@ func _init() -> void:
 	print("SoundGenerator")
 	_check(ClassDB.class_exists("SoundGenerator"), "class registered")
 	var gen_names := SoundGenerator.get_generator_names()
-	_check(gen_names.size() >= 42, "generator library: %d" % gen_names.size())
+	_check(gen_names.size() >= 43, "generator library: %d" % gen_names.size())
 	var silent := []
 	for gname in gen_names:
 		var g := SoundGenerator.create(gname)
