@@ -237,20 +237,45 @@ def engine_audition(folder):
     return rows
 
 
+# Recordings the tyre was tuned against (tools/reference/tyres), by the surface they belong to.
+TYRE_REFS = {
+    "dirt": [("dirt_road", "driving fast on a dirt road, microphone at the window (engine and wind in it)")],
+    "gravel": [("gravel_roll", "tyres rolling on a gravel road"), ("gravel_donuts", "a truck pulling away on gravel, then sliding in circles"), ("gravel_skid", "braking to a stop on gravel")],
+    "sand": [],
+    "mud": [("mud_pull_away", "a truck pulling away through mud (engine in it)"), ("mud_wheelspin", "a car stuck in mud, wheels spinning (engine in it)")],
+    "rock": [("tarmac_coasting", "a car coasting on tarmac, engine off"), ("tarmac_squeal", "tyres screeching on tarmac"), ("tarmac_handbrake", "a handbrake turn: the squeal starts at 7.5 s")],
+}
+
+
+def tyre_audition(folder):
+    """Per surface: the real recordings, the tyre generator, and (when dashboard/before holds
+    renders from before a change) what it sounded like before."""
+    os.makedirs(folder, exist_ok=True)
+    rows = []
+    run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_tyre_surfaces", "--", folder])
+    for surface in ["dirt", "gravel", "sand", "mud", "rock"]:
+        for stem, note in TYRE_REFS[surface]:
+            path = os.path.join(ROOT, "tools/reference/tyres", f"{stem}.ogg")
+            if os.path.exists(path):
+                rows.append({"label": f"Real \u00b7 {stem.replace('_', ' ')}", "note": "recording (public domain): " + note, "audio": encode(f"audition_real_{stem}", path)})
+        path = os.path.join(folder, f"tyre_{surface}.wav")
+        if os.path.exists(path):
+            rows.append({"label": f"Tyre \u00b7 {surface}", "note": "the generator at speed 0.7: rolling 0-3 s, sliding 3-6 s" + ("" if TYRE_REFS[surface] else " (no recording found for this surface)"), "audio": encode(f"audition_tyre_{surface}", path)})
+        before = os.path.join(OUT, "before", f"tyre_{surface}.wav")
+        if os.path.exists(before):
+            rows.append({"label": f"Tyre \u00b7 {surface}, before", "note": "the same inputs before the rework", "audio": encode(f"audition_tyre_{surface}_before", before)})
+    return rows
+
+
 def audition():
-    """Extra listening: the engine comparison, chosen presets, and the tyre on each surface."""
+    """Extra listening: tyres against recordings, the engine comparison, and chosen presets."""
     folder = os.path.join(OUT, "audition_wav")
-    rows = engine_audition(folder)
+    rows = tyre_audition(folder) + engine_audition(folder)
     run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_models", "--", folder] + sorted({a[0] for a in AUDITION}))
     for gen, stem, label, note in AUDITION:
         path = os.path.join(folder, f"{gen}_{stem}.wav")
         if os.path.exists(path):
             rows.append({"label": label, "note": note, "audio": encode(f"audition_{gen}_{stem}", path)})
-    run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_tyre_surfaces", "--", folder])
-    for surface in ["dirt", "gravel", "sand", "mud", "rock"]:
-        path = os.path.join(folder, f"tyre_{surface}.wav")
-        if os.path.exists(path):
-            rows.append({"label": f"Tyre \u00b7 {surface}", "note": "speed 0.7: rolling 0-3 s, sliding 3-6 s", "audio": encode(f"audition_tyre_{surface}", path)})
     shutil.rmtree(folder, ignore_errors=True)
     return rows
 

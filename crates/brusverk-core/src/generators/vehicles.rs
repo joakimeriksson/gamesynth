@@ -800,15 +800,21 @@ impl Generator for Scrape {
 pub const TYRE_SURFACES: [&str; 5] = ["packed dirt", "gravel", "sand", "mud", "rock / tarmac"];
 
 model_params! {
-    /// Tyres on loose ground: road rumble and knobbly-tread hum under everything, then per
-    /// surface gravel crunch and stone ticks, sand hiss and spray, mud squelch and sucking, and
-    /// on rock or tarmac a squeal when the tyre slides.
+    /// Tyres on loose ground: road rumble, the tyre's own contact roar and knobbly-tread hum
+    /// under everything, then per surface gravel crunch and stones knocking the underside,
+    /// sand's soft rush, mud squelch, slap and sucking, and on rock or tarmac a squeal when the
+    /// tyre slides.
+    ///
+    /// Tuned against recordings (`tools/reference/tyres`): a real tyre is a mid-range sound.
+    /// On gravel it peaks between 500 Hz and 1 kHz and has only 3 to 5 % of its energy above
+    /// 2.5 kHz, so nothing here is a bright hiss.
     TyreParams / TyreParamId {
         rumble_level: "road/rumble" = 0.7, UNIT;
+        body_level: "road/roar" = 0.7, UNIT;
         hum_level: "tread/hum" = 0.4, UNIT;
         tread_hz: "tread/hz" = 380.0, exp(60.0, 1500.0);
         crunch_level: "gravel/crunch" = 0.7, UNIT;
-        crunch_hz: "gravel/hz" = 2600.0, exp(800.0, 6000.0);
+        crunch_hz: "gravel/hz" = 800.0, exp(300.0, 6000.0);
         stones_level: "gravel/stones" = 0.5, UNIT;
         hiss_level: "sand/hiss" = 0.6, UNIT;
         squelch_level: "mud/squelch" = 0.8, UNIT;
@@ -820,31 +826,54 @@ model_params! {
 }
 
 /// Per-surface weight of each layer: [dirt, gravel, sand, mud, rock].
-const T_RUMBLE: [f32; 5] = [1.0, 1.0, 0.35, 0.7, 0.8];
+const T_RUMBLE: [f32; 5] = [1.0, 0.35, 0.4, 0.6, 0.8];
 const T_HUM: [f32; 5] = [0.7, 0.45, 0.3, 0.2, 1.0];
-const T_CRUNCH: [f32; 5] = [0.25, 1.0, 0.1, 0.0, 0.12];
-const T_STONES: [f32; 5] = [0.3, 1.0, 0.0, 0.0, 0.45];
+const T_CRUNCH: [f32; 5] = [0.12, 1.0, 0.05, 0.0, 0.08];
+const T_STONES: [f32; 5] = [0.08, 1.0, 0.0, 0.0, 0.25];
 const T_LOOSE: [f32; 5] = [0.8, 1.0, 0.9, 0.3, 0.15];
+/// The tyre's own contact roar: level and centre frequency on each surface.
+const T_BODY: [f32; 5] = [0.8, 0.4, 0.4, 0.5, 1.0];
+const T_BODY_HZ: [f32; 5] = [420.0, 650.0, 380.0, 600.0, 850.0];
+
+// Layer levels, set by measuring renders against the recordings (see the tests).
+const RUMBLE_GAIN: f32 = 3.0;
+const BODY_GAIN: f32 = 3.0;
+const CRUNCH_GAIN: f32 = 10.0;
+const STONES_GAIN: f32 = 1.2;
+const SAND_GAIN: f32 = 3.0;
+const SPRAY_GAIN: f32 = 1.5;
+const SLAP_GAIN: f32 = 12.0;
+const SLIDE_GAIN: f32 = 4.0;
 
 pub struct Tyre {
     sr: f32,
     noise: Noise,
     brown: crate::blocks::Brown,
     rumble: Svf,
+    body: Svf,
     tread: Phasor,
     tread_bp: Svf,
     wobble: SlowNoise,
     crunch_dust: Dust,
     crunch_env: f32,
+    /// The envelope the grain is heard through: `crunch_env` with a soft attack.
+    crunch_soft: f32,
+    crunch_lp: Svf,
     crunch: [Svf; 3],
     crunch_next: usize,
     stone_dust: Dust,
     stones: [Svf; 3],
     stone_next: usize,
+    stone_lp: Svf,
     sand: Svf,
+    sand_flow: SlowNoise,
     spray: Svf,
     mud: Svf,
     mud_wander: SlowNoise,
+    slap_dust: Dust,
+    slap: Svf,
+    slap_env: f32,
+    slap_soft: f32,
     suck_dust: Dust,
     sucks: [(f32, f32, f32); 3],
     suck_next: usize,
@@ -881,20 +910,29 @@ impl Generator for Tyre {
             noise: Noise::new(0x45_0001),
             brown: crate::blocks::Brown::default(),
             rumble: Svf::default(),
+            body: Svf::default(),
             tread: Phasor::default(),
             tread_bp: Svf::default(),
             wobble: SlowNoise::new(0x45_0002),
             crunch_dust: Dust::new(0x45_0003),
             crunch_env: 0.0,
+            crunch_soft: 0.0,
+            crunch_lp: Svf::default(),
             crunch: [Svf::default(); 3],
             crunch_next: 0,
             stone_dust: Dust::new(0x45_0004),
             stones: [Svf::default(); 3],
             stone_next: 0,
+            stone_lp: Svf::default(),
             sand: Svf::default(),
+            sand_flow: SlowNoise::new(0x45_0009),
             spray: Svf::default(),
             mud: Svf::default(),
             mud_wander: SlowNoise::new(0x45_0005),
+            slap_dust: Dust::new(0x45_000A),
+            slap: Svf::default(),
+            slap_env: 0.0,
+            slap_soft: 0.0,
             suck_dust: Dust::new(0x45_0006),
             sucks: [(0.0, 0.0, 0.0); 3],
             suck_next: 0,
@@ -922,44 +960,64 @@ impl Generator for Tyre {
         let heavy = 0.5 + 0.7 * load;
 
         self.rumble.set(FilterMode::LowPass, 40.0 + 170.0 * speed * (1.0 - 0.35 * load), 0.25, sr);
-        let rumble_gain = p.rumble_level * roll * heavy * mix(&T_RUMBLE) * 3.0;
+        let rumble_gain = p.rumble_level * roll * heavy * mix(&T_RUMBLE) * RUMBLE_GAIN;
+        // The roar of the tread meeting the ground: the middle of the sound on every surface.
+        self.body.set(FilterMode::BandPass, mix(&T_BODY_HZ) * (0.75 + 0.5 * speed) * (1.1 - 0.25 * load), 0.3, sr);
+        let body_gain = p.body_level * roll * (0.7 + 0.3 * heavy) * mix(&T_BODY) * BODY_GAIN;
         let wob = self.wobble.advance(3.0, dt);
         let tread_inc = p.tread_hz * speed * (1.0 + 0.04 * wob) / sr;
         self.tread_bp.set(FilterMode::BandPass, (p.tread_hz * speed * 2.0).max(40.0), 0.6, sr);
         let hum_gain = p.hum_level * speed.powf(1.5) * mix(&T_HUM) * 1.2;
 
-        let crunch_p = (60.0 + 700.0 * speed + 900.0 * slip) * mix(&T_CRUNCH) * (speed + slip).min(1.0) / sr;
-        let stone_p = (2.0 + 25.0 * speed + 40.0 * slip) * mix(&T_STONES) * (speed + slip).min(1.0) / sr;
-        let crunch_decay = (-1.0 / (0.0025 * sr)).exp();
-        let crunch_gain = p.crunch_level * 2.2 * (0.7 + 0.5 * load);
-        let stones_gain = p.stones_level * 2.0;
+        // The grain is dense on every surface; the surface sets how loud it is. Sparse bursts would
+        // read as crackle.
+        let crunch_p = (40.0 + 400.0 * speed + 500.0 * slip) * (speed + slip).min(1.0) / sr;
+        let stone_p = (1.0 + 10.0 * speed + 20.0 * slip) * mix(&T_STONES) * (speed + slip).min(1.0) / sr;
+        let crunch_decay = (-1.0 / (0.006 * sr)).exp();
+        let crunch_gain = p.crunch_level * CRUNCH_GAIN * (0.7 + 0.5 * load) * mix(&T_CRUNCH);
+        let attack = 1.0 - (-1.0 / (0.0015 * sr)).exp();
+        self.crunch_lp.set(FilterMode::LowPass, (p.crunch_hz * 7.0).min(sr * 0.4), 0.1, sr);
+        let stones_gain = p.stones_level * STONES_GAIN;
+        // An impulse into a resonator still clicks; this takes the click off the knock.
+        self.stone_lp.set(FilterMode::LowPass, 2200.0, 0.1, sr);
 
-        self.sand.set(FilterMode::BandPass, 2600.0 + 2200.0 * speed, 0.15, sr);
-        self.spray.set(FilterMode::HighPass, 4500.0, 0.1, sr);
-        let hiss_gain = p.hiss_level * sand_w * (0.15 + 0.85 * speed) * (0.5 + slip) * 1.4;
-        let spray_gain = p.hiss_level * sand_w * slip * 0.6;
+        // Sand gives way under the tyre: a soft rush in the low middle that ebbs and flows,
+        // and a duller spray when the tyre slides. No bright hiss: recordings have none.
+        let flow = 1.0 + 0.35 * self.sand_flow.advance(5.0, dt);
+        self.sand.set(FilterMode::BandPass, 300.0 + 250.0 * speed, 0.2, sr);
+        self.spray.set(FilterMode::BandPass, 1100.0 + 400.0 * slip, 0.2, sr);
+        let hiss_gain = p.hiss_level * sand_w * (0.15 + 0.85 * speed) * (0.5 + slip) * flow * SAND_GAIN;
+        let spray_gain = p.hiss_level * sand_w * slip * SPRAY_GAIN;
 
         self.mud.set(FilterMode::LowPass, 160.0 + 340.0 * (0.5 + 0.5 * self.mud_wander.advance(6.0, dt)), 0.8, sr);
-        let squelch_gain = p.squelch_level * mud_w * (speed * 3.0).min(1.0) * (0.4 + 0.6 * slip.max(speed)) * 0.45;
+        let squelch_gain = p.squelch_level * mud_w * (speed * 3.0).min(1.0) * (0.4 + 0.6 * slip.max(speed)) * 0.3;
         let suck_p = (1.5 + 14.0 * speed + 25.0 * slip) * mud_w / sr;
+        // Mud thrown against the arch and slapping back down: short wet bursts in the middle.
+        let slap_p = (4.0 + 18.0 * speed + 30.0 * slip) * mud_w * (speed + slip).min(1.0) / sr;
+        let slap_decay = (-1.0 / (0.035 * sr)).exp();
+        let slap_gain = p.squelch_level * mud_w * SLAP_GAIN;
         let suck_decay = (-1.0 / (0.06 * sr)).exp();
         let suck_fall = 0.5f32.powf(1.0 / (0.05 * sr));
 
-        let sq = self.squeal_wander.advance(4.0 + 8.0 * slip, dt);
-        let squeal_hz = p.squeal_hz * (0.25 * sq).exp2() * (0.85 + 0.3 * speed);
+        // In recordings the squeal holds its pitch and drifts slowly; it does not warble.
+        let sq = self.squeal_wander.advance(2.0 + 3.0 * slip, dt);
+        let squeal_hz = p.squeal_hz * (0.08 * sq).exp2() * (0.85 + 0.3 * speed);
         self.squeal[0].set(FilterMode::BandPass, squeal_hz, 0.985, sr);
-        self.squeal[1].set(FilterMode::BandPass, squeal_hz * 1.51, 0.98, sr);
+        self.squeal[1].set(FilterMode::BandPass, squeal_hz * 2.0, 0.98, sr);
         let t = ((slip - 0.25) / 0.45).clamp(0.0, 1.0);
         let squeal_gain = p.squeal_level * rock_w * t * t * (3.0 - 2.0 * t) * (0.3 + 0.7 * speed);
         let squeal_inc = squeal_hz / sr;
 
-        self.slide.set(FilterMode::BandPass, (700.0 + 900.0 * slip) * (0.3 * self.slide_wander.advance(9.0, dt)).exp2(), 0.45, sr);
-        let slide_gain = p.slide_level * slip * (0.65 + 0.35 * wob.abs()) * mix(&T_LOOSE) * 1.4;
+        self.slide.set(FilterMode::BandPass, (450.0 + 450.0 * slip) * (0.3 * self.slide_wander.advance(9.0, dt)).exp2(), 0.35, sr);
+        let slide_gain = p.slide_level * slip * (0.65 + 0.35 * wob.abs()) * mix(&T_LOOSE) * SLIDE_GAIN;
 
         let level = p.gain * 0.8;
         for s in out.iter_mut() {
             let wn = self.noise.white();
-            let mut y = self.rumble.tick(self.brown.tick(wn)) * rumble_gain;
+            // Pink, not white, feeds every noise layer: the highs then fall away as they do in
+            // the recordings.
+            let pk = self.noise.pink();
+            let mut y = self.rumble.tick(self.brown.tick(wn)) * rumble_gain + self.body.tick(pk) * body_gain;
             if hum_gain > 0.0 {
                 self.tread.tick(tread_inc);
                 y += self.tread_bp.tick((-self.tread.phase * 10.0).exp() - 0.1) * hum_gain;
@@ -971,33 +1029,45 @@ impl Generator for Tyre {
                 let hz = p.crunch_hz * (0.7 * self.crunch_dust.rng().next_bipolar()).exp2() * (0.85 + 0.3 * (1.0 - load));
                 self.crunch[self.crunch_next].set(FilterMode::BandPass, hz.min(sr * 0.4), 0.45, sr);
             }
-            if self.crunch_env > 1e-4 {
-                let burst = wn * self.crunch_env;
+            if crunch_gain > 0.0 && (self.crunch_env > 1e-4 || self.crunch_soft > 1e-4) {
+                self.crunch_soft += (self.crunch_env - self.crunch_soft) * attack;
+                let burst = pk * self.crunch_soft;
                 let mut g = 0.0;
                 for (k, f) in self.crunch.iter_mut().enumerate() {
                     g += f.tick(if k == self.crunch_next { burst } else { 0.0 });
                 }
-                y += g * crunch_gain;
+                y += self.crunch_lp.tick(g) * crunch_gain;
                 self.crunch_env *= crunch_decay;
             }
             let st = self.stone_dust.tick(stone_p);
             if st > 0.0 {
                 self.stone_next = (self.stone_next + 1) % 3;
-                let hz = 4200.0 * (0.6 * self.stone_dust.rng().next_bipolar()).exp2();
-                self.stones[self.stone_next].set(FilterMode::BandPass, hz.min(sr * 0.4), 0.93, sr);
+                // A stone against the underside is a dull knock, not a ping.
+                let hz = 1400.0 * (0.6 * self.stone_dust.rng().next_bipolar()).exp2();
+                self.stones[self.stone_next].set(FilterMode::BandPass, hz.min(sr * 0.4), 0.8, sr);
             }
             if stones_gain > 0.0 {
                 let mut g = 0.0;
                 for (k, f) in self.stones.iter_mut().enumerate() {
                     g += f.tick(if k == self.stone_next { st } else { 0.0 });
                 }
-                y += g * stones_gain;
+                y += self.stone_lp.tick(g) * stones_gain;
             }
             if hiss_gain > 0.0 || spray_gain > 0.0 {
-                y += self.sand.tick(self.noise.pink()) * hiss_gain + self.spray.tick(wn) * spray_gain;
+                y += self.sand.tick(pk) * hiss_gain + self.spray.tick(pk) * spray_gain;
             }
             if mud_w > 0.0 {
                 y += self.mud.tick(self.brown.tick(wn) * 2.0) * squelch_gain;
+                let sl = self.slap_dust.tick(slap_p);
+                if sl > 0.0 {
+                    self.slap_env = self.slap_env.max(sl);
+                    self.slap.set(FilterMode::BandPass, self.slap_dust.rng().range(600.0, 1800.0), 0.4, sr);
+                }
+                if self.slap_env > 1e-4 || self.slap_soft > 1e-4 {
+                    self.slap_soft += (self.slap_env - self.slap_soft) * attack * 0.3;
+                    y += self.slap.tick(pk * self.slap_soft) * slap_gain;
+                    self.slap_env *= slap_decay;
+                }
                 let sk = self.suck_dust.tick(suck_p);
                 if sk > 0.0 {
                     self.suck_next = (self.suck_next + 1) % 3;
@@ -1016,10 +1086,12 @@ impl Generator for Tyre {
             }
             if squeal_gain > 0.0 {
                 self.squeal_tone.tick(squeal_inc);
-                y += (self.squeal[0].tick(wn) + 0.6 * self.squeal[1].tick(wn)) * squeal_gain * 0.3 + self.squeal_tone.sin() * squeal_gain * 0.7;
+                // A squeal is a tone with a strong octave above it.
+                let tone = self.squeal_tone.sin() + 0.35 * (self.squeal_tone.phase * 2.0 * TAU).sin();
+                y += (self.squeal[0].tick(wn) + 0.6 * self.squeal[1].tick(wn)) * squeal_gain * 0.3 + tone * squeal_gain * 0.6;
             }
             if slide_gain > 0.0 {
-                y += self.slide.tick(wn) * slide_gain;
+                y += self.slide.tick(pk) * slide_gain;
             }
             *s = y * level;
         }

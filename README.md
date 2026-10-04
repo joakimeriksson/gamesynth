@@ -245,8 +245,16 @@ per-sample filters), still a small fraction of a core.
 
 `tyre` is one per vehicle (sum its wheels into the inputs): `speed`, `slip`, `load` and
 `surface` (0 packed dirt, 0.25 gravel, 0.5 sand, 0.75 mud, 1 rock/tarmac; values in between
-blend neighbours). Gravel crunches and pings stones, sand hisses and sprays, mud squelches and
-sucks, rock squeals when sliding, and knobbly tread hums at speed.
+blend neighbours). Under every surface are the road rumble, the tyre's own mid-range roar
+(`road/roar`) and the hum of knobbly tread. On top: gravel crunches and knocks stones against
+the underside, sand is a soft rush, mud squelches, slaps and sucks, and rock or tarmac squeals
+when the tyre slides.
+
+It was tuned against recordings ([`tools/reference/tyres`](tools/reference)), which show that a
+tyre is a mid-range sound: on gravel it is loudest between 500 Hz and 1 kHz and has only 3 to
+5 % of its energy above 2.5 kHz. An earlier version had its gravel and sand layers up at 2.5 to
+5 kHz and read as hiss or rain in a race; if you carried overrides for that (`gravel/hz`,
+`gravel/crunch`, `gravel/stones`, a low-pass on the bus), try without them.
 
 `gen.get_input_names()` tells you what a model wants; params appear in the inspector under
 their groups and reach running playbacks live. Start from a native generator; move to a

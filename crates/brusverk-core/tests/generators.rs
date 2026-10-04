@@ -457,16 +457,29 @@ fn tyre_surfaces_have_their_own_character() {
         render(m.as_mut(), 1.5)
     };
     let (dirt, gravel, sand, mud, rock) = (tyre(0.0, 0.7, 0.1), tyre(0.25, 0.7, 0.1), tyre(0.5, 0.7, 0.1), tyre(0.75, 0.7, 0.1), tyre(1.0, 0.7, 0.1));
-    let top = |x: &[f32]| band_energy(x, 2500.0, 9000.0) / band_energy(x, 30.0, 9000.0);
-    let low = |x: &[f32]| band_energy(x, 30.0, 300.0) / band_energy(x, 30.0, 9000.0);
-    assert!(top(&gravel) > top(&dirt) * 1.5, "gravel crunches brighter than dirt: {:.3} vs {:.3}", top(&gravel), top(&dirt));
-    assert!(top(&sand) > top(&mud) * 3.0, "sand hisses, mud does not: {:.3} vs {:.3}", top(&sand), top(&mud));
-    assert!(low(&mud) > low(&sand), "mud is the darkest: {:.3} vs sand {:.3}", low(&mud), low(&sand));
+    // Measured on recordings (tools/reference/tyres): a tyre is a mid-range sound. On gravel 3
+    // to 5 % of the energy is above 2.5 kHz and the loudest octaves are 500 Hz and 1 kHz. A
+    // bright hiss up there is what made the old tyre sound like rain.
+    let share = |x: &[f32], lo: f32, hi: f32| {
+        let w = &x[..(SR * 0.5) as usize];
+        spectral_energy(w, lo, hi, 50.0) / spectral_energy(w, 50.0, 9000.0, 50.0)
+    };
+    for (name, x) in [("dirt", &dirt), ("gravel", &gravel), ("sand", &sand), ("mud", &mud), ("rock", &rock)] {
+        let top = share(x, 2500.0, 9000.0);
+        assert!(top < 0.09, "{name} should not hiss: {:.3} of its energy is above 2.5 kHz", top);
+    }
+    let (g_low, g_mid, g_high) = (share(&gravel, 50.0, 300.0), share(&gravel, 350.0, 1400.0), share(&gravel, 1450.0, 9000.0));
+    assert!(g_mid > g_high * 1.5 && g_mid > g_low, "gravel lives in the middle: low {g_low:.2}, mid {g_mid:.2}, high {g_high:.2}");
+    // Each surface keeps a character of its own: dirt rumbles, gravel is the most mid-heavy,
+    // sand is the softest.
+    assert!(share(&dirt, 50.0, 300.0) > share(&gravel, 50.0, 300.0) * 1.3, "dirt rumbles more than gravel");
+    assert!(share(&gravel, 350.0, 1400.0) > share(&dirt, 350.0, 1400.0), "gravel has more middle than dirt");
+    assert!(rms(&sand) < rms(&gravel) * 0.8, "sand is softer than gravel: {:.3} vs {:.3}", rms(&sand), rms(&gravel));
     // Squeal is a rock/tarmac thing, and only when sliding: the squeal band (around
     // rock/squeal_hz) gains a lot on rock, and gravel's slide noise does not match it.
-    let squeal = |x: &[f32]| band_energy(x, 850.0, 1500.0) / band_energy(x, 30.0, 9000.0);
+    let squeal = |x: &[f32]| share(x, 900.0, 1300.0);
     let rock_slide = tyre(1.0, 0.7, 0.9);
-    assert!(squeal(&rock_slide) > squeal(&rock) * 3.0, "sliding on rock squeals: {:.3} vs rolling {:.3}", squeal(&rock_slide), squeal(&rock));
+    assert!(squeal(&rock_slide) > squeal(&rock) * 2.5, "sliding on rock squeals: {:.3} vs rolling {:.3}", squeal(&rock_slide), squeal(&rock));
     // And it is a tone: in the squeal band the strongest bin stands far above the mean, which
     // gravel's broadband slide noise never does.
     let peaky = |x: &[f32]| {
@@ -496,9 +509,7 @@ fn tyre_surfaces_have_their_own_character() {
     };
     let (rock_only, gravel_only) = (slide_only(1.0), slide_only(0.25));
     assert!(peaky(&rock_only) > peaky(&gravel_only) * 1.3, "squeal is a tone: {:.2} vs {:.2}", peaky(&rock_only), peaky(&gravel_only));
-    // `band_energy` is two one-pole filters, so rumble leaks into every band; measured 1.9x
-    // here, while the spectrogram shows a clear squeal line on rock and none on gravel.
-    assert!(squeal(&rock_only) > squeal(&gravel_only) * 1.7, "no squeal on gravel: {:.3} vs {:.3}", squeal(&rock_only), squeal(&gravel_only));
+    // (Gravel's slide noise sits in the same band, as it does in recordings; the tone is the difference.)
     for (name, x) in [("dirt", &dirt), ("gravel", &gravel), ("sand", &sand), ("mud", &mud), ("rock", &rock)] {
         assert!(x.iter().all(|v| v.is_finite()) && peak(x) <= 1.0 && rms(x) > 0.02, "{name}: rms {} peak {}", rms(x), peak(x));
     }
