@@ -3,891 +3,463 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Brusverk Sound Lab</title>
-<meta name="description" content="Procedural game audio: jet engines, a library of sound generators (wind, rain, fire, engines, crowds...) you can also define in config files, sfxr-style sound effects and a playable synth, all running the Rust brusverk engine as WebAssembly in your browser. Tune and export JSON for Godot.">
-<meta property="og:title" content="Brusverk Sound Lab">
-<meta property="og:description" content="Rust game-audio synth compiled to WebAssembly: engines, sound effects, instruments.">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<title>Brusverk: procedural audio for games</title>
+<meta name="description" content="A procedural audio library for games, written in Rust. Engines, weather, weapons and interface sounds are computed while the game runs, from the game's own state. Runs in Godot 4 and, as WebAssembly, in this browser tab.">
+<meta property="og:title" content="Brusverk: procedural audio for games">
+<meta property="og:description" content="Game sound without sound files: engines, weather, weapons and interface sounds computed live from game state. Rust, Godot 4, WebAssembly.">
+<meta property="og:type" content="website">
+<script>
+  // Links to the Sound Lab from before it moved to lab.html.
+  if (/[?&](tab|gen|model)=/.test(location.search)) location.replace("lab.html" + location.search);
+</script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
     --ground: #0F141B; --panel: #161D27; --panel-2: #1C2532; --line: #2A3542; --line-soft: #202936;
-    --text: #E8ECF1; --muted: #8593A5; --readout: #BFD8E6;
-    --accent: #FF6A1F; --accent-dim: #7A3A18; --accent-glow: rgba(255,106,31,0.28);
-    --sfx: #5BD1C8; --sfx-dim: rgba(91,209,200,0.18); --inst: #C9A0FF; --inst-dim: rgba(201,160,255,0.18);
-    --gen: #8FD16A; --gen-dim: rgba(143,209,106,0.18);
-    --ok: #7BC67E; --warn: #E0B341; --bad: #FF7A6B;
+    --text: #E8ECF1; --soft: #C3CCD8; --muted: #8E9BAC; --readout: #BFD8E6;
+    --accent: #FF6A1F; --accent-ink: #1A0E06; --screen: #06080C;
     --display: "Saira Condensed", "Barlow Condensed", "Arial Narrow", sans-serif;
     --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
     --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--ground); color: var(--text); font-family: var(--body); font-size: 14px; line-height: 1.45; min-height: 100vh; }
-  button, input, select { font: inherit; color: inherit; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  [hidden] { display: none !important; }
-  code { font-family: var(--mono); font-size: 11px; color: var(--readout); }
+  html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body { margin: 0; background: var(--ground); color: var(--text); font: 16px/1.6 var(--body); }
+  a { color: var(--readout); text-underline-offset: 3px; }
+  a:hover { color: var(--text); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  button { font: inherit; color: inherit; }
+  code, pre { font-family: var(--mono); }
+  p code, li code, dd code { font-size: 0.88em; color: var(--readout); background: var(--panel-2); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+  .wrap { width: min(1160px, 100% - 40px); margin-inline: auto; }
+  h1, h2, h3 { margin: 0; font-family: var(--display); text-wrap: balance; }
+  h2 { font-size: clamp(30px, 3.6vw, 44px); font-weight: 600; line-height: 1; letter-spacing: 0.01em; text-transform: uppercase; }
+  h3 { font-size: 23px; font-weight: 600; line-height: 1.1; letter-spacing: 0.01em; }
+  p { margin: 0; }
 
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 16px 20px 56px; display: flex; flex-direction: column; gap: 16px; }
+  /* ---- top bar ---- */
+  .top { position: sticky; top: 0; z-index: 10; background: rgba(15, 20, 27, 0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .top nav { display: flex; align-items: center; gap: 22px; min-height: 60px; }
+  .mark { display: inline-flex; align-items: center; gap: 10px; font: 700 24px/1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--text); text-decoration: none; }
+  .mark i { display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+  .mark i b { width: 3px; background: var(--accent); border-radius: 1px; }
+  .links { display: flex; align-items: center; gap: 20px; margin-left: auto; font-size: 15px; }
+  .links a { color: var(--muted); text-decoration: none; }
+  .links a:hover { color: var(--text); }
+  .links .lab { color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; }
+  .links .lab:hover { border-color: var(--accent); }
+  @media (max-width: 760px) { .links .opt { display: none; } }
 
-  /* ---- top bar + tabs ---- */
-  .bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-  .brand { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-right: 8px; }
-  .brand h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 28px; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1; }
-  .brand .sub { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
-  .tabs { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 3px; }
-  .tab-btn { border: 0; background: transparent; border-radius: 4px; padding: 7px 16px; cursor: pointer; color: var(--muted);
-    font-family: var(--display); font-size: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
-  .tab-btn::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--line); }
-  .tab-btn[data-k="models"]::before { background: var(--gen-dim); }
-  .tab-btn[aria-selected="true"][data-k="models"]::before { background: var(--gen); }
-  .tab-btn[data-k="engines"]::before { background: var(--accent-dim); } .tab-btn[data-k="sfx"]::before { background: var(--sfx-dim); } .tab-btn[data-k="inst"]::before { background: var(--inst-dim); }
-  .tab-btn[aria-selected="true"] { background: var(--panel-2); color: var(--text); }
-  .tab-btn[aria-selected="true"][data-k="engines"]::before { background: var(--accent); }
-  .tab-btn[aria-selected="true"][data-k="sfx"]::before { background: var(--sfx); }
-  .tab-btn[aria-selected="true"][data-k="inst"]::before { background: var(--inst); }
-  .bar .spacer { flex: 1; }
-  .field { display: flex; align-items: center; gap: 8px; }
-  .field label, .lbl { color: var(--muted); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
-  select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 6px 28px 6px 10px; appearance: none; -webkit-appearance: none;
-    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-    background-position: calc(100% - 13px) 55%, calc(100% - 8px) 55%; background-size: 5px 5px; background-repeat: no-repeat;
-    font-family: var(--display); font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; }
-  select.small { font: 12px var(--body); text-transform: none; letter-spacing: 0; padding: 3px 24px 3px 8px; }
-  .btn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 4px; padding: 7px 14px; cursor: pointer;
-    font-family: var(--display); font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; transition: background 120ms, border-color 120ms, box-shadow 120ms; }
-  .btn:hover { border-color: var(--muted); }
-  .btn:disabled { opacity: 0.5; cursor: default; }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #140A04; font-weight: 700; padding: 8px 20px; }
-  .btn.primary:hover { box-shadow: 0 0 0 4px var(--accent-glow); }
-  .btn.primary[data-running="true"] { background: var(--panel-2); color: var(--text); border-color: var(--line); font-weight: 600; }
-  .btn.primary[data-running="true"]::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 8px; vertical-align: 1px; }
-  .btn.small { padding: 4px 10px; font-size: 13px; }
+  .btn { display: inline-flex; align-items: center; gap: 9px; min-height: 46px; padding: 0 20px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-weight: 500; text-decoration: none; cursor: pointer; }
+  .btn:hover { border-color: var(--muted); color: var(--text); }
+  .btn.go { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn.go:hover { filter: brightness(1.1); color: var(--accent-ink); }
+  .btn[disabled] { opacity: 0.55; cursor: default; }
+  .tri { width: 0; height: 0; border-left: 10px solid currentColor; border-top: 6px solid transparent; border-bottom: 6px solid transparent; }
+  [aria-pressed="true"] > .tri { width: 10px; height: 10px; border: 0; background: currentColor; }
 
-  .panel { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 14px 16px; }
-  .panel h2 { margin: 0 0 10px; font-family: var(--display); font-size: 13px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
-  canvas { display: block; width: 100%; }
-  .scope { height: 240px; border-radius: 3px; background: var(--ground); border: 1px solid var(--line-soft); }
-  .scope-foot { display: flex; justify-content: space-between; margin-top: 6px; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.06em; }
-  .readout { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
-  .readout b { color: var(--text); font-weight: 500; }
-  .keys { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); line-height: 1.8; }
-  kbd { font-family: var(--mono); font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 5px; color: var(--text); }
+  /* ---- hero ---- */
+  .hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 52px; align-items: center; padding: 60px 0 68px; }
+  .hero h1 { font-size: clamp(50px, 7.4vw, 96px); font-weight: 700; line-height: 0.9; letter-spacing: 0.005em; text-transform: uppercase; }
+  .lede { margin-top: 24px; font-size: clamp(17px, 1.5vw, 19px); color: var(--soft); max-width: 34em; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 26px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; }
+  .facts li { padding-left: 14px; position: relative; }
+  .facts li::before { content: ""; position: absolute; left: 0; top: 0.62em; width: 6px; height: 6px; background: var(--accent); }
 
-  input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; margin: 0; cursor: pointer; }
-  input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: var(--line); border-radius: 2px; }
-  input[type="range"]::-moz-range-track { height: 4px; background: var(--line); border-radius: 2px; }
-  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 20px; margin-top: -8px; background: var(--readout); border-radius: 2px; border: 0; }
-  input[type="range"]::-moz-range-thumb { width: 12px; height: 20px; background: var(--readout); border-radius: 2px; border: 0; }
-  .ctl.boost input[type="range"]::-webkit-slider-thumb { background: var(--accent); }
-  .ctl.boost input[type="range"]::-moz-range-thumb { background: var(--accent); }
-  input[type="number"] { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; width: 92px; font-family: var(--mono); font-size: 13px; }
-  input[type="checkbox"] { accent-color: var(--accent); }
+  .stage { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .screen { position: relative; background: var(--screen); line-height: 0; }
+  .screen canvas { display: block; width: 100%; height: auto; }
+  .screen .wait { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.4; }
+  .head { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: #fff; opacity: 0; pointer-events: none; will-change: transform; }
+  .playing .head { opacity: 0.9; }
+  .hz { position: absolute; left: 6px; padding: 2px 4px; border-radius: 2px; background: rgba(6, 8, 12, 0.6); font: 10px/1 var(--mono); color: rgba(255, 255, 255, 0.78); transform: translateY(-50%); pointer-events: none; }
+  .lane { position: relative; border-top: 1px solid var(--line); background: var(--panel-2); line-height: 0; }
+  .lane canvas { display: block; width: 100%; height: 64px; }
+  .lane .key { position: absolute; right: 8px; top: 6px; display: flex; gap: 12px; font-size: 12px; line-height: 1; color: var(--muted); }
+  .lane .key span::before { content: ""; display: inline-block; width: 12px; height: 2px; margin-right: 5px; vertical-align: 3px; background: var(--c); }
+  .phases { position: relative; height: 26px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); }
+  .phases span { position: absolute; top: 5px; padding-left: 6px; border-left: 1px solid var(--line); white-space: nowrap; line-height: 16px; }
+  .stage figcaption { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--line); font-size: 14px; color: var(--soft); line-height: 1.4; }
+  .stage figcaption .btn { min-height: 40px; flex: none; }
+  @media (max-width: 980px) { .hero { grid-template-columns: 1fr; gap: 36px; padding: 40px 0 52px; } }
+  @media (max-width: 480px) { .phases .long { display: none; } }
 
-  /* ---- engines ---- */
-  .hero { display: grid; grid-template-columns: 300px 1fr 300px; gap: 14px; align-items: stretch; }
-  .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-  #gauge { width: 260px; height: 180px; }
-  .rpm-digits { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 34px; line-height: 1; color: var(--readout); }
-  .rpm-digits small { font-size: 14px; color: var(--muted); margin-left: 4px; }
-  .rpm-digits[data-redline="true"] { color: var(--accent); }
-  .drive { display: flex; flex-direction: column; gap: 12px; }
-  .ctl { display: grid; grid-template-columns: 74px 1fr 48px; gap: 10px; align-items: center; }
-  .ctl .name { font-family: var(--display); font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-  .ctl .name small { display: block; font-family: var(--body); font-size: 10px; font-weight: 400; letter-spacing: 0.04em; color: var(--muted); text-transform: none; }
-  .ctl .val { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--readout); font-variant-numeric: tabular-nums; }
-  .ctl.boost .val[data-on="true"] { color: var(--accent); }
-  .opt { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+  /* ---- sections ---- */
+  section.part { padding: 64px 0; border-top: 1px solid var(--line); }
+  .part-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 20px 48px; align-items: end; margin-bottom: 30px; }
+  .part-head p { color: var(--soft); max-width: 36em; }
+  @media (max-width: 860px) { .part-head { grid-template-columns: 1fr; } section.part { padding: 48px 0; } }
 
-  /* ---- sfx ---- */
-  .sfx-grid { display: grid; grid-template-columns: 320px 1fr 260px; gap: 14px; align-items: stretch; }
-  .preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .pbtn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 5px; padding: 14px 10px 12px; cursor: pointer; text-align: left; position: relative; overflow: hidden;
-    font-family: var(--display); font-size: 19px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; transition: border-color 120ms, transform 80ms; }
-  .pbtn small { display: block; font-family: var(--body); font-size: 10px; font-weight: 400; letter-spacing: 0.02em; text-transform: none; color: var(--muted); margin-top: 2px; }
-  .pbtn:hover { border-color: var(--sfx); }
-  .pbtn:active { transform: translateY(1px); }
-  .pbtn[data-active="true"] { border-color: var(--sfx); box-shadow: inset 3px 0 0 var(--sfx); }
-  .pbtn .flash { position: absolute; inset: 0; background: var(--sfx); opacity: 0; pointer-events: none; }
-  .pbtn.fire .flash { animation: flash 260ms ease-out; }
-  @keyframes flash { from { opacity: 0.35; } to { opacity: 0; } }
-  .seedrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-  .wave { height: 200px; border-radius: 3px; background: var(--ground); border: 1px solid var(--line-soft); }
-  .recent { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; min-height: 26px; }
-  .chip { border: 1px solid var(--line); background: var(--panel-2); border-radius: 12px; padding: 2px 10px; font-family: var(--mono); font-size: 11px; cursor: pointer; color: var(--muted); }
-  .chip:hover { color: var(--text); border-color: var(--sfx); }
-  .export { display: flex; flex-direction: column; gap: 10px; }
-  .export .btn { text-align: left; }
-  .export p { margin: 0; font-size: 12px; color: var(--muted); }
-  pre.snip { margin: 0; background: var(--ground); border: 1px solid var(--line-soft); border-radius: 4px; padding: 8px 10px; font-family: var(--mono); font-size: 11px; color: var(--readout); white-space: pre; overflow-x: auto; }
+  /* ---- demo cards ---- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .card { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .card .screen .play { position: absolute; left: 10px; bottom: 10px; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 4px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 14px; line-height: 1; cursor: pointer; }
+  .card .screen .play[disabled] { background: var(--panel-2); color: var(--muted); cursor: default; }
+  .card .screen .len { position: absolute; right: 10px; bottom: 10px; padding: 3px 5px; border-radius: 2px; background: rgba(6, 8, 12, 0.6); font: 11px/1 var(--mono); color: rgba(255, 255, 255, 0.85); }
+  .card .body { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 16px; flex: 1; }
+  .card .tags { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; font-size: 12.5px; color: var(--muted); }
+  .card .tags span:first-child { color: var(--readout); font-family: var(--mono); font-size: 12px; }
+  .card p { font-size: 14.5px; color: var(--soft); line-height: 1.5; }
+  .card .more { margin-top: auto; padding-top: 4px; font-size: 14px; }
+  @media (max-width: 380px) { .grid { grid-template-columns: 1fr; } }
 
-  /* ---- instrument ---- */
-  .inst-top { display: grid; grid-template-columns: 1fr 300px; gap: 14px; }
-  #keyboard { height: 170px; border-radius: 3px; cursor: pointer; touch-action: none; user-select: none; }
-  .inst-ctl { display: flex; flex-direction: column; gap: 10px; }
-  .inst-ctl .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .bend { display: grid; grid-template-columns: 60px 1fr 44px; gap: 8px; align-items: center; }
-  .bend .val { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--readout); }
+  .all { margin-top: 40px; }
+  .all > p { color: var(--soft); margin-bottom: 14px; }
+  .all .row { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 6px 24px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+  .all h3 { font-size: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); line-height: 1.5; }
+  .all ul { display: flex; flex-wrap: wrap; gap: 4px 18px; list-style: none; margin: 0; padding: 0; }
+  .all li a { text-decoration: none; font-family: var(--mono); font-size: 13.5px; }
+  .all li a:hover { text-decoration: underline; }
+  @media (max-width: 640px) { .all .row { grid-template-columns: 1fr; } }
 
-  /* ---- generators ---- */
-  .gen-grid { display: grid; grid-template-columns: 250px 1fr 270px; gap: 14px; align-items: stretch; }
-  .lib { display: flex; flex-direction: column; gap: 2px; max-height: 470px; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
-  .lib h3 { margin: 10px 0 4px; font-family: var(--display); font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
-  .lib h3:first-child { margin-top: 0; }
-  .lib-item { border: 1px solid transparent; background: transparent; border-radius: 4px; padding: 5px 8px; cursor: pointer; text-align: left; display: flex; align-items: baseline; gap: 8px;
-    font-family: var(--display); font-size: 17px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text); }
-  .lib-item:hover { background: var(--panel-2); }
-  .lib-item[data-active="true"] { background: var(--panel-2); border-color: var(--line); box-shadow: inset 3px 0 0 var(--gen); }
-  .badge { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: var(--muted); font-weight: 400; }
-  .badge.graph { color: var(--gen); border-color: var(--gen-dim); }
-  .gen-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
-  .gen-head .title { font-family: var(--display); font-size: 24px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1; }
-  .gen-head .doc { color: var(--muted); font-size: 12px; flex: 1 1 260px; }
-  .gen-inputs { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
-  .gen-inputs .ctl { grid-template-columns: 110px 1fr 44px; }
-  .gen-inputs input[type="range"]::-webkit-slider-thumb { background: var(--gen); }
-  .gen-inputs input[type="range"]::-moz-range-thumb { background: var(--gen); }
-  .editor { display: grid; grid-template-columns: 1fr 300px; gap: 14px; margin-top: 16px; }
-  .editor textarea { width: 100%; min-height: 380px; resize: vertical; background: var(--ground); color: var(--text); border: 1px solid var(--line-soft); border-radius: 4px; padding: 10px 12px;
-    font-family: var(--mono); font-size: 12px; line-height: 1.5; tab-size: 2; white-space: pre; overflow: auto; }
-  .editor textarea:focus { outline: none; border-color: var(--gen); }
-  .status { font-family: var(--mono); font-size: 12px; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--line-soft); background: var(--ground); color: var(--muted); white-space: pre-wrap; word-break: break-word; }
-  .status[data-state="ok"] { color: var(--ok); }
-  .status[data-state="error"] { color: var(--bad); border-color: var(--bad); }
-  .noderef { max-height: 380px; overflow-y: auto; font-size: 12px; }
-  .noderef dt { font-family: var(--mono); color: var(--gen); margin-top: 8px; }
-  .noderef dt span { color: var(--muted); }
-  .noderef dd { margin: 1px 0 0; color: var(--muted); }
+  /* ---- Godot ---- */
+  .band { background: var(--panel); }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 48px; align-items: start; }
+  .two > div > p { color: var(--soft); margin-top: 18px; max-width: 34em; }
+  .steps { margin: 26px 0 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 16px; max-width: 34em; }
+  .steps li { counter-increment: step; display: grid; grid-template-columns: 30px 1fr; gap: 12px; font-size: 15px; color: var(--soft); }
+  .steps li::before { content: counter(step); font: 600 22px/1.15 var(--display); color: var(--accent); }
+  .steps b { display: block; color: var(--text); font-weight: 600; }
+  .code { margin: 0; background: var(--screen); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .code figcaption { padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .code pre { margin: 0; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; color: #D5DEE8; tab-size: 4; }
+  .code pre i { color: #7F8EA0; font-style: normal; }
+  .code pre b { color: var(--accent); font-weight: 500; }
+  .code pre u { color: #9AD0A0; text-decoration: none; }
+  .note { margin-top: 14px; font-size: 14px; color: var(--muted); }
+  @media (max-width: 900px) { .two { grid-template-columns: 1fr; gap: 32px; } }
 
-  /* ---- tuning ---- */
-  .tune-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .tune-head h2 { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-  .tune-head p { margin: 0; color: var(--muted); font-size: 12px; max-width: 64ch; }
-  .tune-head .spacer { flex: 1; }
-  .groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-  .group { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 6px; padding: 12px 14px 8px; }
-  .group h3 { margin: 0 0 6px; font-family: var(--display); font-size: 14px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--readout); }
-  .prm { display: grid; grid-template-columns: 96px 1fr 62px; gap: 8px; align-items: center; padding: 3px 0; }
-  .prm label { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .prm .val { font-family: var(--mono); font-size: 11px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
-  .prm select { grid-column: 2 / 4; }
-  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px); opacity: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 8px 14px; font-size: 13px; transition: opacity 160ms, transform 160ms; pointer-events: none; z-index: 10; }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .note { color: var(--muted); font-size: 12px; }
+  /* ---- model files ---- */
+  .file pre { max-height: 430px; overflow: auto; }
+  .others { margin-top: 22px; font-size: 14.5px; color: var(--soft); }
 
-  @media (max-width: 960px) {
-    .hero, .sfx-grid, .gen-grid { grid-template-columns: 1fr 1fr; }
-    .gen-grid .gen-main { grid-column: 1 / -1; order: 3; }
-    .editor { grid-template-columns: 1fr; }
-    .hero .scope-panel, .sfx-grid .wave-panel { grid-column: 1 / -1; order: 3; }
-    .inst-top { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 620px) {
-    .hero, .sfx-grid, .gen-grid { grid-template-columns: 1fr; }
-    .brand h1 { font-size: 22px; }
-    .tab-btn { padding: 7px 10px; font-size: 14px; }
-  }
-  @media (prefers-reduced-motion: reduce) { .btn, .toast, .pbtn { transition: none; } .pbtn.fire .flash { animation: none; } }
+  /* ---- inside ---- */
+  .specs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .spec { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px 18px 8px; }
+  .spec dl { margin: 12px 0 0; }
+  .spec dl div { display: grid; grid-template-columns: 96px 1fr; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line-soft); font-size: 14.5px; }
+  .spec dt { color: var(--muted); }
+  .spec dd { margin: 0; color: var(--soft); }
+
+  footer { border-top: 1px solid var(--line); padding: 30px 0 46px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: space-between; }
+  footer p { max-width: 40em; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header class="bar">
-    <div class="brand"><h1>Sound Lab</h1><span class="sub">Brusverk · procedural audio for games</span></div>
-    <div class="tabs" role="tablist" aria-label="Sound categories">
-      <button class="tab-btn" role="tab" data-k="engines" aria-selected="true" aria-controls="tab-engines">Engines</button>
-      <button class="tab-btn" role="tab" data-k="models" aria-selected="false" aria-controls="tab-models">Generators</button>
-      <button class="tab-btn" role="tab" data-k="sfx" aria-selected="false" aria-controls="tab-sfx">Sound FX</button>
-      <button class="tab-btn" role="tab" data-k="inst" aria-selected="false" aria-controls="tab-inst">Instrument</button>
-    </div>
-    <div class="spacer"></div>
-    <div class="field"><label for="volume">Vol</label><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" style="width:90px" aria-label="Master volume"></div>
-    <button id="audio" class="btn primary" data-running="false" disabled>Loading…</button>
-  </header>
+<header class="top"><nav class="wrap" aria-label="Page">
+  <a class="mark" href="./"><i aria-hidden="true"><b style="height:9px"></b><b style="height:20px"></b><b style="height:13px"></b><b style="height:17px"></b><b style="height:6px"></b></i>Brusverk</a>
+  <div class="links">
+    <a class="opt" href="#demos">Demos</a>
+    <a class="opt" href="#godot">In Godot</a>
+    <a class="opt" href="#files">Model files</a>
+    <a class="opt" href="#inside">What's inside</a>
+    <a href="https://github.com/joakimeriksson/gamesynth">GitHub</a>
+    <a class="lab" href="lab.html">Sound Lab</a>
+  </div>
+</nav></header>
 
-  <!-- ============================ ENGINES ============================ -->
-  <section id="tab-engines" class="tab" role="tabpanel">
-    <div class="hero">
-      <div class="panel gauge-wrap">
-        <h2 style="align-self:flex-start">Turbine · <select id="preset" class="small" aria-label="Engine preset"></select></h2>
-        <canvas id="gauge" width="520" height="360"></canvas>
-        <div class="rpm-digits" id="rpm" data-redline="false">28<small>% RPM</small></div>
-        <div class="readout"><span>whine <b id="s-whine">–</b></span><span>roar lp <b id="s-roar">–</b></span><span>tube <b id="s-tube">–</b></span></div>
+<main>
+  <section class="wrap hero">
+    <div>
+      <h1>Game sound without sound files.</h1>
+      <p class="lede">Brusverk is a procedural audio library for games, written in Rust. Engines, weather, weapons and interface sounds are computed while the game runs, from the game's own state: throttle, speed, damage, distance. It plugs into Godot 4 as an audio stream, and it is running in this tab as WebAssembly.</p>
+      <div class="actions">
+        <button class="btn go" id="hero-go" type="button" disabled><span class="tri"></span><span>Play the truck</span></button>
+        <a class="btn" href="lab.html">Open the Sound Lab</a>
+        <a class="btn" href="#godot">Use it in Godot</a>
       </div>
-      <div class="panel scope-panel">
-        <h2>Spectrum</h2>
-        <canvas id="spectrum" class="scope" width="1100" height="480"></canvas>
-        <div class="scope-foot"><span>50 Hz</span><span>200</span><span>1k</span><span>5k</span><span>16 kHz</span></div>
-      </div>
-      <div class="panel drive">
-        <h2>Drive</h2>
-        <div class="ctl"><div class="name">Throttle<small>hold ↑ / ↓</small></div><input id="throttle" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-throttle">0%</div></div>
-        <div class="ctl boost"><div class="name">Boost<small>hold Shift</small></div><input id="boost" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-boost" data-on="false">0%</div></div>
-        <div class="ctl"><div class="name">Speed<small>airspeed → wind</small></div><input id="speed" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-speed">0%</div></div>
-        <div class="ctl"><div class="name">Damage<small>sputter</small></div><input id="damage" type="range" min="0" max="1" step="0.001" value="0"><div class="val" id="v-damage">0%</div></div>
-        <label class="opt"><input id="autospeed" type="checkbox" checked> speed follows throttle, like a ship would</label>
-        <div class="keys"><kbd>↑</kbd> <kbd>↓</kbd> throttle &nbsp; <kbd>Shift</kbd> afterburner &nbsp; <kbd>1</kbd>–<kbd>4</kbd> presets &nbsp; <kbd>Space</kbd> snap RPM<br>Godot: <code>pb.set_state(throttle, boost, speed, damage)</code></div>
-      </div>
+      <ul class="facts">
+        <li id="fact-count">43 built-in generators</li>
+        <li id="fact-size">about 1 MB of WebAssembly</li>
+        <li>nothing is played from a recording</li>
+        <li>MIT or Apache-2.0</li>
+      </ul>
     </div>
-    <div class="tune-head" style="margin-top:16px">
-      <h2>Engine tuning</h2>
-      <p>Same names and ranges as <code>JetEnginePatch</code>. Copy the JSON into <code>patch.from_json(...)</code> or a <code>.tres</code>.</p>
-      <div class="spacer"></div>
-      <button id="jet-reset" class="btn">Reset to preset</button>
-      <button id="jet-copy" class="btn">Copy JSON for Godot</button>
-    </div>
-    <div class="groups" id="jet-groups" style="margin-top:12px"></div>
+    <figure class="stage" id="demo-truck">
+      <div class="screen">
+        <canvas width="960" height="300" role="img" aria-label="Spectrogram of the heavy truck: a quiet idle, two rising pulls with a gear change between them, then the engine brake as the revs fall"></canvas>
+        <div class="wait">Loading the engine…</div>
+        <span class="hz" style="top:7.8%">10 kHz</span><span class="hz" style="top:46.3%">1 kHz</span><span class="hz" style="top:84.7%">100 Hz</span>
+        <div class="head"></div>
+      </div>
+      <div class="lane">
+        <canvas width="960" height="128" role="img" aria-label="The two inputs that drive the sound over the same 14 seconds: throttle and engine speed"></canvas>
+        <div class="key"><span style="--c:var(--accent)">throttle</span><span style="--c:var(--readout)">rpm</span></div>
+      </div>
+      <div class="phases" aria-hidden="true">
+        <span style="left:0%">idle</span><span style="left:14.6%">pull</span><span style="left:37.5%">shift</span><span style="left:61.8%">lift off<span class="long" style="position:static;border:0;padding:0">: engine brake</span></span>
+      </div>
+      <figcaption>
+        <button class="btn play" type="button" aria-pressed="false" disabled><span class="tri"></span><span>Play</span></button>
+        <span class="cap">A heavy truck for 14 seconds. The picture is its spectrogram; the two lines under it are all the game has to supply.</span>
+      </figcaption>
+    </figure>
   </section>
 
-  <!-- ============================ GENERATORS ============================ -->
-  <section id="tab-models" class="tab" role="tabpanel" hidden>
-    <div class="gen-grid">
-      <div class="panel">
-        <h2>Library</h2>
-        <div class="lib" id="gen-lib"></div>
-      </div>
-      <div class="panel gen-main">
-        <div class="gen-head"><span class="title" id="gen-title">–</span><span class="badge" id="gen-engine">native</span><span class="doc" id="gen-doc"></span></div>
-        <canvas id="gen-spectrum" class="scope" width="1100" height="400" style="height:200px"></canvas>
-        <div class="scope-foot"><span>50 Hz</span><span>200</span><span>1k</span><span>5k</span><span>16 kHz</span></div>
-        <div class="gen-inputs" id="gen-inputs"></div>
-        <button id="gen-trigger" class="btn primary" style="margin-top:14px;align-self:flex-start" hidden>Fire <kbd style="margin-left:6px;color:#140A04;background:transparent;border-color:#140A04">Space</kbd></button>
-      </div>
-      <div class="panel export">
-        <h2>Preset</h2>
-        <select id="gen-preset" aria-label="Preset"></select>
-        <h2 style="margin-top:6px">Use in Godot</h2>
-        <pre class="snip" id="gen-snip"></pre>
-        <button id="gen-copy-gd" class="btn small">Copy GDScript</button>
-        <button id="gen-copy-params" class="btn small">Copy params JSON</button>
-        <p id="gen-help"></p>
-      </div>
+  <section class="part" id="demos"><div class="wrap">
+    <div class="part-head">
+      <h2>Pick something to hear.</h2>
+      <p>Each picture is the spectrogram of the sound under it, computed in this tab when the page loaded. Press play and it is computed again, so the event sounds come out a little different each time. Nothing is downloaded except the engine.</p>
     </div>
+    <div class="grid" id="cards"></div>
+    <div class="all" id="all"><p>Every sound in the library opens in the Sound Lab, with its inputs as sliders and all of its parameters:</p></div>
+  </div></section>
 
-    <div id="gen-editor" hidden>
-      <div class="tune-head" style="margin-top:16px">
-        <h2>Model file</h2>
-        <p>This sound is defined entirely by the text below (TOML or JSON): inputs, params, control formulas and a graph of nodes. Edit and compile; it costs roughly 2.5x a native generator.</p>
-        <div class="spacer"></div>
-        <button id="gen-revert" class="btn">Revert</button>
-        <button id="gen-copy-src" class="btn">Copy file</button>
-        <button id="gen-compile" class="btn primary" style="padding:7px 16px">Compile <kbd style="margin-left:6px;color:#140A04;background:transparent;border-color:#140A04">Ctrl ↵</kbd></button>
-      </div>
-      <div class="editor">
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <textarea id="gen-src" spellcheck="false" aria-label="Model file source"></textarea>
-          <div class="status" id="gen-status" data-state="idle">Not compiled yet.</div>
-        </div>
-        <div class="panel"><h2>Node reference</h2><dl class="noderef" id="gen-noderef"></dl></div>
-      </div>
+  <section class="part band" id="godot"><div class="wrap two">
+    <div>
+      <h2>Your game already has the inputs.</h2>
+      <p>A recorded engine loop has one speed. A generated one follows the game: the throttle, revs, slip and damage your physics already computes become the sound's inputs, every frame. In Godot 4 a generator is an <code>AudioStream</code>, so players, buses, 3D position and effects work the way they do for a sample.</p>
+      <ol class="steps">
+        <li><span><b>Build the extension.</b><code>cargo build -p brusverk-godot --release</code>, then point a <code>.gdextension</code> file at the library it produces.</span></li>
+        <li><span><b>Give a player a generator.</b>Pick a built-in one and a preset, or load a model file of your own.</span></li>
+        <li><span><b>Feed it your game state.</b>Set the inputs every physics frame. They all run from 0 to 1.</span></li>
+        <li><span><b>Tune it by ear.</b>Parameters show up in the Godot inspector. Or shape the sound in the <a href="lab.html">Sound Lab</a> and copy the values back with <code>set_params_json()</code>.</span></li>
+      </ol>
+      <p class="note">Tested with Godot 4.7 on macOS. Linux and Windows build from the same source but have not been tested here. Not using Godot? <code>brusverk-core</code> is plain Rust with no engine dependency, and the WebAssembly build has a C interface.</p>
     </div>
+    <figure class="code">
+      <figcaption>GDScript: an engine that follows the game, and an explosion</figcaption>
+<pre><i># once: an engine on any AudioStreamPlayer, 2D or 3D</i>
+<b>var</b> gen := SoundGenerator.create(<u>"piston"</u>)
+gen.preset = <u>"Heavy truck"</u>
+gen.set_param(<u>"engine/external_rpm"</u>, 1)  <i># the game owns the revs</i>
+player.stream = gen
+player.play()
 
-    <div class="tune-head" style="margin-top:16px">
-      <h2>Tuning</h2>
-      <p>Designer parameters with their ranges, straight from the engine. Same names in Godot: <code>gen.set_param("howl/hz", 800)</code>.</p>
-      <div class="spacer"></div>
-      <button id="gen-reset" class="btn">Reset to preset</button>
+<i># every frame: hand it what the physics already knows</i>
+<b>func</b> _physics_process(_dt):
+    <b>var</b> pb := player.get_stream_playback() <b>as</b> SoundGeneratorPlayback
+    pb.set_inputs({<u>"throttle"</u>: throttle, <u>"rpm"</u>: rpm, <u>"load"</u>: load})
+
+<i># an event: fired with what the game knows at that moment</i>
+<b>var</b> boom := SoundGenerator.create(<u>"explosion"</u>)
+boom.preset = <u>"Ship destroyed"</u>
+boom_player.stream = boom
+
+<b>func</b> explode(power: float, distance: float) -> void:
+    <i># power: glancing hit to full blast. distance: 0 point blank, 1 far off</i>
+    boom.set_start_input(<u>"power"</u>, power)
+    boom.set_start_input(<u>"distance"</u>, distance)
+    boom_player.play()  <i># `finished` fires when the tail has rung out</i></pre>
+    </figure>
+  </div></section>
+
+  <section class="part" id="files"><div class="wrap two">
+    <div>
+      <h2>Need a sound that isn't there? Write it as a text file.</h2>
+      <p>A model file is a graph of nodes (noise, filters, resonators, delays, a reverb) plus formulas that turn the inputs into control signals. It loads while the game runs, shows its parameters in the Godot inspector like a built-in generator, and costs about three times as much to compute.</p>
+      <p>This is <code>campfire.toml</code>, the file behind the campfire demo above. Sparks are random impulses, shaped into short bursts of noise and coloured by a filter that moves a little each time.</p>
+      <p><a class="btn" href="lab.html?model=campfire" style="margin-top:8px">Edit this file in the Sound Lab</a></p>
+      <p class="others" id="others"></p>
     </div>
-    <div class="groups" id="gen-groups" style="margin-top:12px"></div>
-  </section>
+    <figure class="code file">
+      <figcaption>models/campfire.toml</figcaption>
+      <pre id="toml">The file appears here once the engine has loaded.</pre>
+    </figure>
+  </div></section>
 
-  <!-- ============================ SOUND FX ============================ -->
-  <section id="tab-sfx" class="tab" role="tabpanel" hidden>
-    <div class="sfx-grid">
-      <div class="panel">
-        <h2>Presets · press to fire</h2>
-        <div class="preset-grid" id="sfx-presets"></div>
-        <div class="seedrow">
-          <span class="lbl">Seed</span><input id="sfx-seed" type="number" min="0" max="99999" step="1" value="0" aria-label="Seed">
-          <label class="opt"><input id="sfx-newseed" type="checkbox" checked> new seed each press</label>
-        </div>
-        <div class="seedrow">
-          <button id="sfx-replay" class="btn small">Replay <kbd style="margin-left:4px">Space</kbd></button>
-          <button id="sfx-mutate" class="btn small">Mutate</button>
-          <input id="sfx-mutamt" type="range" min="0.05" max="1" step="0.01" value="0.3" style="width:90px" aria-label="Mutation amount" title="Mutation amount">
-        </div>
-      </div>
-      <div class="panel wave-panel">
-        <h2>Waveform</h2>
-        <canvas id="wave" class="wave" width="1100" height="400"></canvas>
-        <div class="readout" style="margin-top:8px"><span><b id="w-name">–</b></span><span>seed <b id="w-seed">–</b></span><span>length <b id="w-len">–</b></span><span>peak <b id="w-peak">–</b></span><span id="w-mod" hidden>edited</span></div>
-        <div class="recent" id="sfx-recent"></div>
-      </div>
-      <div class="panel export">
-        <h2>Use in Godot</h2>
-        <p id="sfx-hint">Unmodified preset + seed: two lines of GDScript, no data to store.</p>
-        <pre class="snip" id="sfx-snip"></pre>
-        <button id="sfx-copy-gd" class="btn small">Copy GDScript</button>
-        <button id="sfx-copy" class="btn small">Copy patch JSON (SynthPatch.from_json)</button>
-        <button id="sfx-wav" class="btn small">Download WAV</button>
-        <p>Keys <kbd>1</kbd>–<kbd>9</kbd> fire presets, <kbd>M</kbd> mutates.</p>
-      </div>
+  <section class="part" id="inside"><div class="wrap">
+    <div class="part-head">
+      <h2>What's inside.</h2>
+      <p>One Rust crate does the synthesis. Around it are a Godot 4 extension, the WebAssembly build this page runs, and the tools used to check every sound.</p>
     </div>
-    <div class="tune-head" style="margin-top:16px">
-      <h2>Patch tuning</h2>
-      <p>Every parameter of the sound. Changes re-render the waveform and play live.</p>
-      <div class="spacer"></div>
-      <button id="sfx-reset" class="btn">Regenerate from seed</button>
+    <div class="specs">
+      <div class="spec"><h3>Engines</h3><dl>
+        <div><dt>Piston</dt><dd>Each cylinder fires in order into one of two exhaust banks. The header and exhaust pipes are resonators with lengths in metres. Turbo, engine brake and diesel clatter for the heavy ones.</dd></div>
+        <div><dt>Layouts</dt><dd>Cross-plane and flat-plane V8, inline four and six, boxer four, V-twin, single, V12.</dd></div>
+        <div><dt>Fitted to</dt><dd>A recording of a Rover 3.5 V8: third-octave levels within about 4 dB at idle and at 3000 rpm.</dd></div>
+        <div><dt>Jet</dt><dd>A turbine with spool inertia, afterburner, wind and damage layers.</dd></div>
+      </dl></div>
+      <div class="spec"><h3>Event sounds</h3><dl>
+        <div><dt>Built from</dt><dd>Up to eight layers each: cracks, swept bodies, sub drops, debris and a reverb tail.</dd></div>
+        <div><dt>At trigger</dt><dd>The game passes power and distance. Every trigger varies slightly, so the tenth explosion is not the first one again.</dd></div>
+        <div><dt>Stereo</dt><dd>Sub and crack stay centred, noise and tail are spread. Width 0 gives exactly the mono sound.</dd></div>
+        <div><dt>Ending</dt><dd>The player emits <code>finished</code> when the tail has rung out, as it would for a sample.</dd></div>
+      </dl></div>
+      <div class="spec"><h3>Synth voice</h3><dl>
+        <div><dt>Voice</dt><dd>Three oscillators, a state-variable filter, two envelopes and an LFO. 32 voices.</dd></div>
+        <div><dt>Patches</dt><dd>59 parameters, stored as JSON or as a Godot resource.</dd></div>
+        <div><dt>Chip effects</dt><dd>11 presets in the sfxr tradition (pickup, laser, jump and so on), each reproducible from a seed.</dd></div>
+        <div><dt>Try it</dt><dd>The <a href="lab.html?tab=inst">Instrument</a> and <a href="lab.html?tab=sfx">Sound FX</a> tabs of the Sound Lab.</dd></div>
+      </dl></div>
+      <div class="spec"><h3>Under the hood</h3><dl>
+        <div><dt>Audio thread</dt><dd>No allocation, locks or blocking while rendering. Parameter changes arrive over lock-free queues.</dd></div>
+        <div><dt>Speed</dt><dd>Every built-in generator running at once renders 26 times faster than real time on one core of an Apple-silicon laptop.</dd></div>
+        <div><dt>Checked</dt><dd>More than 200 automated tests. Every sound is reviewed by spectrogram for dropouts, clipping and ringing, and the audio of this site is measured in a real browser.</dd></div>
+        <div><dt>Size</dt><dd id="spec-size">The core crate has no engine dependencies. The web build is about 1 MB.</dd></div>
+      </dl></div>
     </div>
-    <div class="groups" id="sfx-groups" style="margin-top:12px"></div>
-  </section>
+  </div></section>
+</main>
 
-  <!-- ============================ INSTRUMENT ============================ -->
-  <section id="tab-inst" class="tab" role="tabpanel" hidden>
-    <div class="inst-top">
-      <div class="panel">
-        <h2>Keyboard · <select id="inst-preset" class="small" aria-label="Instrument preset"></select></h2>
-        <canvas id="keyboard" width="1100" height="340"></canvas>
-        <div class="readout" style="margin-top:8px"><span>octave <b id="i-oct">4</b></span><span>voices <b id="i-voices">0</b></span><span>peak <b id="i-peak">0.00</b></span><span>keys <kbd>A</kbd>–<kbd>K</kbd> white, <kbd>W E T Y U O P</kbd> black, <kbd>Z</kbd>/<kbd>X</kbd> octave</span></div>
-      </div>
-      <div class="panel inst-ctl">
-        <h2>Spectrum</h2>
-        <canvas id="inst-spectrum" class="scope" width="600" height="300" style="height:150px"></canvas>
-        <div class="bend"><span class="lbl">Bend</span><input id="bend" type="range" min="-1" max="1" step="0.001" value="0"><div class="val" id="v-bend">0.00</div></div>
-        <div class="row">
-          <button id="oct-down" class="btn small">Oct −</button><button id="oct-up" class="btn small">Oct +</button>
-          <button id="inst-panic" class="btn small">Panic</button>
-        </div>
-        <div class="row"><button id="inst-copy" class="btn small">Copy patch JSON</button><button id="inst-reset" class="btn small">Reload preset</button></div>
-        <p class="note" style="margin:0">Godot: <code>pb.note_on(60, 0.8)</code> · <code>pb.note_off(60)</code> on <code>SynthStream</code> with <code>one_shot = false</code>.</p>
-      </div>
-    </div>
-    <div class="tune-head" style="margin-top:16px"><h2>Patch tuning</h2><p>Edits apply while you play.</p></div>
-    <div class="groups" id="inst-groups" style="margin-top:12px"></div>
-  </section>
+<footer><div class="wrap">
+  <p>Brusverk is Swedish: <i>brus</i> is noise, and a <i>verk</i> is a works, as in a mill. Licensed MIT or Apache-2.0.</p>
+  <p><a href="lab.html">Sound Lab</a> &nbsp; <a href="https://github.com/joakimeriksson/gamesynth">Source on GitHub</a></p>
+</div></footer>
 
-  <p class="note" id="foot">Loading engine…</p>
-</div>
-<div class="toast" id="toast"></div>
+<script type="module">
+import { DEMOS, SR, at, engine, render, spectrogram } from "./demos.js";
 
-<script>
-(() => {
-  "use strict";
-  const $ = id => document.getElementById(id);
-  const WASM_URL = "./pkg/brusverk_wasm.wasm";
-  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  let toastTimer;
-  const toast = msg => { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2200); };
-  const copy = async (text, msg) => { try { await navigator.clipboard.writeText(text); toast(msg); } catch { window.prompt("Copy:", text); } };
+const WASM_URL = "./pkg/brusverk_wasm.wasm";
+const state = window.__brusverk = { ready: false, error: null, demos: {} };   // read by tools/web_audio_check.mjs
+const views = new Map();   // demo id -> { demo, root, canvas, button, head }
+let eng = null, ctx = null, out = null, current = null;
 
-  // ================================================================== engine host
-  // One wasm instance on the main thread mirrors every tab's parameters (metadata, JSON,
-  // waveform previews). Each tab renders audio in its own AudioWorklet node.
-  const host = { module: null, w: null, meta: null, ctx: null, master: null, nodes: {}, active: "engines" };
-  const readStr = len => new TextDecoder().decode(new Uint8Array(host.w.memory.buffer, host.w.gs_str_ptr(), len));
-  const withJson = (json, fn) => { const w = host.w, b = new TextEncoder().encode(json), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); const r = fn(p, b.length); w.gs_free_u8(p, b.length); return r; };
+const el = (tag, attrs = {}, ...children) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === "text") node.textContent = v; else node.setAttribute(k, v); }
+  node.append(...children);
+  return node;
+};
 
-  async function ensureAudio() {
-    if (!host.module) return false;
-    if (!host.ctx) {
-      const ctx = host.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
-      host.master = ctx.createGain(); host.master.gain.value = +$("volume").value; host.master.connect(ctx.destination);
-      try { await ctx.audioWorklet.addModule("./jet-worklet.js"); host.worklet = true; }
-      catch (err) { console.warn("[lab] AudioWorklet unavailable:", err); host.worklet = false; }
-      for (const t of Object.values(tabs)) await t.attach();
-      $("audio").dataset.running = "true"; $("audio").textContent = "Audio on · mute";
-      setActive(host.active);
+// ---- the hero is in the markup; the cards are built from the same list ----
+{
+  const root = document.getElementById("demo-truck");
+  views.set("truck", { demo: DEMOS[0], root, canvas: root.querySelector(".screen canvas"), button: root.querySelector(".play"), head: root.querySelector(".head"), cap: root.querySelector(".cap") });
+}
+const cards = document.getElementById("cards");
+for (const demo of DEMOS.slice(1)) {
+  const canvas = el("canvas", { width: 480, height: 170, role: "img", "aria-label": `Spectrogram of ${demo.title}` });
+  const button = el("button", { class: "play", type: "button", "aria-pressed": "false", disabled: "" }, el("span", { class: "tri" }), el("span", { text: "Play" }));
+  const screen = el("div", { class: "screen" }, canvas, el("div", { class: "wait", text: "…" }), el("div", { class: "head" }), button, el("span", { class: "len", text: `${demo.seconds} s` }));
+  const body = el("div", { class: "body" },
+    el("div", { class: "tags" }, ...demo.tags.map((t) => el("span", { text: t }))),
+    el("h3", { text: demo.title }),
+    el("p", { text: demo.text }),
+    el("a", { class: "more", href: demo.lab, text: "Change it in the Sound Lab" }));
+  const root = el("article", { class: "card", id: `demo-${demo.id}` }, screen, body);
+  cards.append(root);
+  views.set(demo.id, { demo, root, canvas, button, head: screen.querySelector(".head") });
+}
+
+// ---- compute and paint ----
+function compute(view) {
+  const result = render(eng, view.demo);
+  const { canvas } = view, g = canvas.getContext("2d");
+  g.putImageData(new ImageData(spectrogram(result.left, result.right, canvas.width, canvas.height), canvas.width, canvas.height), 0, 0);
+  view.root.querySelector(".wait")?.remove();
+  state.demos[view.demo.id] = { peak: +result.peak.toFixed(3), ms: Math.round(result.ms) };
+  if (view.cap) view.cap.textContent = `A heavy truck for ${view.demo.seconds} seconds, computed in this tab in ${Math.max(1, Math.round(result.ms))} ms. The picture is its spectrogram; the two lines under it are all the game has to supply.`;
+  return result;
+}
+
+// The inputs that drive the hero sound, on the same time axis as its spectrogram.
+function drawLane() {
+  const canvas = document.querySelector("#demo-truck .lane canvas"), g = canvas.getContext("2d");
+  const { keys } = DEMOS[0].tracks[0], seconds = DEMOS[0].seconds, css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const pad = 40, h = canvas.height - pad - 14;   // room at the top for the legend
+  g.lineWidth = 3; g.lineJoin = "round";
+  for (const [name, colour] of [["rpm", css("--readout")], ["throttle", css("--accent")]]) {
+    g.strokeStyle = colour; g.beginPath();
+    for (let x = 0; x <= canvas.width; x += 2) {
+      const y = pad + h * (1 - at(keys[name], (x / canvas.width) * seconds));
+      if (x) g.lineTo(x, y); else g.moveTo(x, y);
     }
-    if (host.ctx.state !== "running") await host.ctx.resume();
-    return true;
+    g.stroke();
   }
-  // Create an audio node for `kind` ("jet" | "synth"); returns { send, analyser, tele }.
-  async function makeNode(kind, opts) {
-    const ctx = host.ctx, gain = ctx.createGain(); gain.gain.value = 0;
-    const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.8;
-    const h = { kind, gain, analyser, tele: {}, send() {} };
-    if (host.worklet) {
-      // The worklet scope has no TextEncoder/TextDecoder, so text crosses the port as bytes.
-      const utf8 = new TextEncoder();
-      const wire = m => {
-        if (m.json != null) m = { ...m, json: undefined, bytes: utf8.encode(m.json) };
-        if (m.model) m = { ...m, model: { bytes: utf8.encode(m.model.config ?? m.model.name), config: m.model.config != null } };
-        return m;
-      };
-      const node = new AudioWorkletNode(ctx, "gs-engine", { outputChannelCount: [2], processorOptions: wire({ module: host.module, kind, ...opts }) });
-      node.port.onmessage = e => { if (e.data.ready) h.onready && h.onready(); else if (e.data.modelError) console.warn("[lab] model error in worklet:", new TextDecoder().decode(e.data.modelError)); else if (!e.data.modelReady) h.tele = e.data; };
-      h.send = m => node.port.postMessage(wire(m));
-      node.connect(gain);
-    } else {
-      // ScriptProcessor fallback: render on the main thread with a private engine.
-      const w = (await WebAssembly.instantiate(host.module, {})).exports;
-      const put = (text, fn) => { const b = new TextEncoder().encode(text), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); const r = fn(p, b.length); w.gs_free_u8(p, b.length); return r; };
-      const makeModel = spec => spec.config != null ? put(spec.config, (p, n) => w.model_from_config(p, n, ctx.sampleRate)) : put(spec.name, (p, n) => w.model_new(p, n, ctx.sampleRate));
-      let e = kind === "jet" ? w.jet_new(ctx.sampleRate, opts.preset | 0) : kind === "model" ? makeModel(opts.model) : w.synth_new(ctx.sampleRate);
-      const buf = w.gs_alloc_f32(4096), buf2 = w.gs_alloc_f32(4096);
-      const str = len => new TextDecoder().decode(new Uint8Array(w.memory.buffer, w.gs_str_ptr(), len));
-      h.send = m => {
-        const J = (json, fn) => { const b = new TextEncoder().encode(json), p = w.gs_alloc_u8(b.length); new Uint8Array(w.memory.buffer, p, b.length).set(b); fn(p, b.length); w.gs_free_u8(p, b.length); };
-        if (kind === "model") {
-          if (m.t === "input") w.model_set_input(e, m.index, m.value); else if (m.t === "param") w.model_set_param(e, m.index, m.value);
-          else if (m.t === "preset") w.model_load_preset(e, m.index); else if (m.t === "snap") w.model_snap(e); else if (m.t === "trigger") w.model_trigger(e);
-          else if (m.t === "model") { const next = makeModel(m.model); if (next) { w.model_free(e); e = next; (m.inputs || []).forEach((v, i) => w.model_set_input(e, i, v)); (m.params || []).forEach((v, i) => w.model_set_param(e, i, v)); w.model_snap(e); } }
-        } else if (kind === "jet") { ({ ctl: () => w.jet_set_controls(e, m.throttle, m.boost, m.speed, m.damage), preset: () => w.jet_set_preset(e, m.index), param: () => w.jet_set_param(e, m.index, m.value), snap: () => w.jet_snap_rpm(e), gain: () => w.jet_set_master_gain(e, m.gain), json: () => J(m.json, (p, n) => w.jet_from_json(e, p, n)) })[m.t]?.(); }
-        else { ({ trigger: () => w.synth_trigger(e), noteon: () => w.synth_note_on(e, m.note, m.velocity ?? 1), noteoff: () => w.synth_note_off(e, m.note), play: () => w.synth_play(e, m.note, m.velocity ?? 1, m.duration || 0), alloff: () => w.synth_all_notes_off(e), panic: () => w.synth_panic(e), sfx: () => w.synth_load_sfx(e, m.preset, m.seed >>> 0), mutate: () => w.synth_mutate(e, m.amount, m.seed >>> 0), reset: () => w.synth_reset_patch(e), param: () => w.synth_set_param(e, m.index, m.value), bend: () => w.synth_set_pitch_bend(e, m.bend), gain: () => w.synth_set_master_gain(e, m.gain), json: () => J(m.json, (p, n) => w.synth_from_json(e, p, n)) })[m.t]?.(); }
-      };
-      const sp = ctx.createScriptProcessor(2048, 0, 2);
-      sp.onaudioprocess = ev => { const l = ev.outputBuffer.getChannelData(0); if (kind === "jet") w.jet_render(e, buf, l.length); else if (kind === "model") w.model_render_stereo(e, buf, buf2, l.length); else w.synth_render(e, buf, l.length); l.set(new Float32Array(w.memory.buffer, buf, l.length)); ev.outputBuffer.getChannelData(1).set(kind === "model" ? new Float32Array(w.memory.buffer, buf2, l.length) : l); h.tele = kind === "jet" ? { rpm: w.jet_rpm(e), peak: w.jet_peak(e) } : kind === "model" ? { peak: w.model_peak(e) } : { peak: w.synth_peak(e), voices: w.synth_active_voices(e) }; };
-      sp.connect(gain); void str;
-      setTimeout(() => h.onready && h.onready(), 0);
-    }
-    gain.connect(analyser); analyser.connect(host.master);
-    return h;
-  }
+}
 
-  // ================================================================== tuning UI
-  const GROUP_LABEL = { spool: "Spool", whine: "Turbine whine", roar: "Core roar", tube: "Tube resonance", hiss: "Hiss", burner: "Afterburner", wind: "Wind", master: "Master",
-    shape: "Shape", space: "Space", metal: "Metal", sparks: "Sparks", chime: "Chime", pulse: "Pulse", core: "Core", field: "Field", strain: "Strain", engine: "Engine", exhaust: "Exhaust", intake: "Intake", motor: "Motor", inverter: "Inverter", gears: "Gears", rotor: "Rotor", wash: "Downwash", turbine: "Turbine",
-    howl: "Howl", gusts: "Gusts", rumble: "Rumble", whistle: "Whistle", drops: "Drops", bed: "Bed", roof: "Roof", crackle: "Crackle", bubbles: "Bubbles", waves: "Waves", crash: "Crash", foam: "Foam",
-    hum: "Hum", arcs: "Arcs", drone: "Drone", air: "Air", murmur: "Murmur", cheer: "Cheer", clicks: "Clicks", siren: "Siren", horn: "Horn", tuning: "Tuning", tent: "Tent", hit: "Hit", layers: "Layers", pipe: "Pipe", shimmer: "Shimmer",
-    osc1: "Oscillator 1", osc2: "Oscillator 2", osc3: "Oscillator 3", amp_env: "Amp envelope", filter: "Filter", filter_env: "Filter envelope", lfo: "LFO", pitch: "Pitch", fx: "Effects" };
-  const toSlider = (p, v) => p.kind === "exp" ? Math.log(v / p.min) / Math.log(p.max / p.min) : (v - p.min) / (p.max - p.min);
-  const fromSlider = (p, t) => p.kind === "exp" ? p.min * Math.pow(p.max / p.min, t) : p.min + (p.max - p.min) * t;
-  const fmt = (p, v) => {
-    if (p.kind === "enum") return p.names[Math.round(v)] || v;
-    if (p.kind === "int") return String(Math.round(v));
-    if (p.name.endsWith("hz")) return v >= 1000 ? (v / 1000).toFixed(2) + " k" : v.toFixed(v < 10 ? 2 : 0);
-    if (p.name.endsWith("_ms") || p.name.endsWith("/ms")) return v.toFixed(2) + " ms";
-    if (/attack|decay|release|glide|time|fade_in|duration|spool\/(up|down)/.test(p.name)) return v.toFixed(3) + " s";
-    if (p.name.includes("cents")) return v.toFixed(1) + " ¢";
-    return v.toFixed(Math.abs(v) < 10 ? 3 : 1);
+// ---- playback ----
+function stop() {
+  if (!current) return;
+  const { view, source, raf } = current;
+  current = null;
+  cancelAnimationFrame(raf);
+  source.onended = null;
+  try { source.stop(); } catch {}
+  view.root.classList.remove("playing");
+  view.head.style.transform = "";
+  setPressed(view, false);
+}
+function setPressed(view, on) {
+  for (const b of view.demo.id === "truck" ? [view.button, document.getElementById("hero-go")] : [view.button]) {
+    b.setAttribute("aria-pressed", String(on));
+    b.lastElementChild.textContent = on ? "Stop" : b.id === "hero-go" ? "Play the truck" : "Play";
+  }
+}
+async function play(view) {
+  const same = current && current.view === view;
+  stop();
+  if (same) return;
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const tap = ctx.createAnalyser();
+    out = ctx.createGain(); out.gain.value = 0.9; out.connect(tap); tap.connect(ctx.destination);
+  }
+  if (ctx.state !== "running") await ctx.resume();
+  const { left, right } = compute(view);   // a fresh take each time: events vary
+  const buffer = ctx.createBuffer(2, left.length, SR);
+  buffer.copyToChannel(left, 0); buffer.copyToChannel(right, 1);
+  const source = ctx.createBufferSource(); source.buffer = buffer; source.connect(out);
+  const started = ctx.currentTime + 0.03, width = () => view.canvas.clientWidth;
+  const frame = () => {
+    if (!current || current.view !== view) return;
+    const x = Math.max(0, Math.min(1, (ctx.currentTime - started) / view.demo.seconds)) * width();
+    view.head.style.transform = `translateX(${x}px)`;
+    current.raf = requestAnimationFrame(frame);
   };
-  // Build slider groups for a parameter table. `get(i)` reads the mirror, `set(i, v)` writes mirror + audio.
-  function buildTuning(root, params, get, set) {
-    root.innerHTML = "";
-    const rows = [];
-    const groups = {}; params.forEach(p => { const g = p.name.split("/")[0]; (groups[g] ||= []).push(p); });
-    for (const g in groups) {
-      const box = document.createElement("div"); box.className = "group";
-      const h = document.createElement("h3"); h.textContent = GROUP_LABEL[g] || g; box.appendChild(h);
-      for (const p of groups[g]) {
-        const row = document.createElement("div"); row.className = "prm";
-        const label = document.createElement("label"); label.textContent = p.name.split("/")[1]; label.title = p.name;
-        let input, val;
-        if (p.kind === "enum") {
-          input = document.createElement("select"); input.className = "small";
-          p.names.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; input.appendChild(o); });
-          input.value = Math.round(get(p.index));
-          input.addEventListener("change", () => set(p.index, +input.value));
-          row.append(label, input);
-          rows.push({ p, refresh: () => { input.value = Math.round(get(p.index)); } });
-        } else {
-          input = document.createElement("input"); input.type = "range"; input.min = "0"; input.max = "1"; input.step = p.kind === "int" ? String(1 / (p.max - p.min)) : "0.001";
-          val = document.createElement("div"); val.className = "val";
-          const show = () => { input.value = toSlider(p, get(p.index)); val.textContent = fmt(p, get(p.index)); };
-          show();
-          input.addEventListener("input", () => { set(p.index, fromSlider(p, +input.value)); val.textContent = fmt(p, get(p.index)); });
-          row.append(label, input, val);
-          rows.push({ p, refresh: show });
-        }
-        box.appendChild(row);
-      }
-      root.appendChild(box);
-    }
-    return () => rows.forEach(r => r.refresh());
+  current = { view, source, raf: 0 };
+  source.onended = stop;
+  source.start(started);
+  view.root.classList.add("playing");
+  setPressed(view, true);
+  frame();
+}
+state.play = (id) => play(views.get(id));
+
+// ---- the lists that need the library ----
+function fillFromLibrary(bytes) {
+  const { library } = eng, mb = (bytes / 1048576).toFixed(1);
+  document.getElementById("fact-count").textContent = `${library.models.length} built-in generators`;
+  document.getElementById("fact-size").textContent = `${mb} MB of WebAssembly`;
+  document.getElementById("spec-size").textContent = `The core crate has no engine dependencies. The web build is ${mb} MB.`;
+  const all = document.getElementById("all");
+  const titles = { vehicles: "Vehicles", nature: "Nature", ambient: "Ambient", fx: "Effects and events" };
+  const row = (title, items) => all.append(el("div", { class: "row" }, el("h3", { text: title }), el("ul", {}, ...items)));
+  for (const [key, title] of Object.entries(titles)) {
+    const items = library.models.filter((m) => m.category === key).map((m) =>
+      el("li", {}, el("a", { href: `lab.html?gen=${encodeURIComponent(m.name)}`, title: `${m.doc} (${m.presets.length} ${m.presets.length === 1 ? "preset" : "presets"})`, text: m.name })));
+    if (items.length) row(title, items);
   }
-  // Log-frequency spectrum plot shared by tabs.
-  function drawSpectrum(canvas, analyser, color, marker) {
-    const c = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
-    c.clearRect(0, 0, w, h);
-    const fMin = 50, fMax = 16000, xOf = f => Math.log(f / fMin) / Math.log(fMax / fMin) * w;
-    c.strokeStyle = css("--line-soft"); c.lineWidth = 1;
-    for (const f of [100, 200, 500, 1000, 2000, 5000, 10000]) { const x = Math.round(xOf(f)) + 0.5; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); }
-    for (let i = 1; i < 4; i++) { const y = Math.round(h * i / 4) + 0.5; c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
-    if (!analyser) { c.fillStyle = css("--muted"); c.font = `500 ${Math.round(h * 0.07)}px ${css("--display")}`; c.textAlign = "center"; c.fillText(host.module ? "AUDIO OFF · CLICK ANY CONTROL" : "LOADING ENGINE", w / 2, h / 2); return; }
-    const data = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(data);
-    const binHz = host.ctx.sampleRate / analyser.fftSize;
-    c.beginPath(); c.moveTo(0, h); let prevX = -1;
-    for (let i = 1; i < data.length; i++) { const f = i * binHz; if (f < fMin) continue; if (f > fMax) break; const x = xOf(f); if (x - prevX < 1.5) continue; prevX = x; c.lineTo(x, h - (data[i] / 255) * h * 0.96); }
-    c.lineTo(w, h); c.closePath();
-    const grad = c.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, color); grad.addColorStop(1, "rgba(0,0,0,0)");
-    c.fillStyle = grad; c.globalAlpha = 0.8; c.fill(); c.globalAlpha = 1; c.strokeStyle = color; c.lineWidth = 2; c.stroke();
-    if (marker && marker > fMin && marker < fMax) { const x = xOf(marker); c.strokeStyle = css("--warn"); c.setLineDash([4, 6]); c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); c.setLineDash([]); }
+  row("From model files", library.examples.map((e) => el("li", {}, el("a", { href: `lab.html?model=${encodeURIComponent(e.name)}`, text: e.name }))));
+  const fire = library.examples.find((e) => e.name === "campfire");
+  if (fire) document.getElementById("toml").textContent = fire.text.trim();
+  const others = document.getElementById("others");
+  others.textContent = `${library.nodes.length} kinds of node are available. ${library.examples.length - 1} more example files come with the library; they are in the list under the demos.`;
+}
+
+function fail(message) {
+  state.error = message;
+  document.querySelectorAll(".wait").forEach((w) => { w.textContent = "This sound could not be computed here."; });
+  const cap = views.get("truck").cap;
+  cap.textContent = `The engine did not load in this browser (${message}), so the sounds on this page are unavailable.`;
+}
+
+drawLane();
+try {
+  const response = await fetch(WASM_URL);
+  if (!response.ok) throw new Error(`${response.status} for ${WASM_URL}`);
+  const bytes = await response.arrayBuffer();
+  eng = engine((await WebAssembly.instantiate(bytes, {})).instance.exports);
+  fillFromLibrary(bytes.byteLength);
+  // One at a time, yielding in between, so the page stays responsive while the pictures arrive.
+  for (const view of views.values()) {
+    compute(view);
+    for (const b of view.demo.id === "truck" ? [view.button, document.getElementById("hero-go")] : [view.button]) {
+      b.disabled = false;
+      b.addEventListener("click", () => play(view));
+    }
+    await new Promise((r) => setTimeout(r));
   }
-
-  const tabs = {};
-
-  // ================================================================== ENGINES tab
-  tabs.engines = (() => {
-    const state = { throttle: 0, boost: 0, speed: 0, damage: 0 };
-    const keys = { up: false, down: false, shift: false, boostByKey: false };
-    let mirror = 0, presetIndex = 0, node = null, refresh = () => {};
-    const send = m => node && node.send(m);
-    const P = () => host.meta.params, current = i => host.w.jet_get_param(mirror, i);
-    const byName = n => P().find(p => p.name === n);
-    const derived = () => { if (!mirror) return {}; const r = node?.tele.rpm ?? host.w.jet_rpm(mirror), g = n => current(byName(n).index); return { rpm: r, f0: g("whine/hz") * r, roarCut: g("roar/hz") * Math.pow(2, 2 * (r - 1)), tubeMs: g("tube/ms") / (0.6 + 0.4 * Math.min(r, 1.5)) }; };
-    const ctlEls = { throttle: $("throttle"), boost: $("boost"), speed: $("speed"), damage: $("damage") };
-    const pct = v => Math.round(v * 100) + "%";
-    const showCtl = () => { for (const k in ctlEls) { ctlEls[k].value = state[k]; $("v-" + k).textContent = pct(state[k]); } $("v-boost").dataset.on = state.boost > 0.05; };
-    const pushCtl = () => send({ t: "ctl", ...state });
-    const syncAll = () => { send({ t: "json", json: readStr(host.w.jet_to_json(mirror)) }); pushCtl(); };
-    function loadPreset(i) { presetIndex = i; host.w.jet_set_preset(mirror, i); refresh(); send({ t: "preset", index: i }); toast(host.meta.presets[i] + " engine loaded"); }
-
-    function init() {
-      mirror = host.w.jet_new(48000, 0);
-      const sel = $("preset"); host.meta.presets.forEach((n, i) => { const o = document.createElement("option"); o.value = i; o.textContent = n; sel.appendChild(o); });
-      sel.addEventListener("change", e => loadPreset(+e.target.value));
-      refresh = buildTuning($("jet-groups"), P(), current, (i, v) => { host.w.jet_set_param(mirror, i, v); send({ t: "param", index: i, value: v }); });
-      for (const k in ctlEls) ctlEls[k].addEventListener("input", () => { state[k] = +ctlEls[k].value; if (k === "boost") keys.boostByKey = false; showCtl(); pushCtl(); ensureAudio(); });
-      $("jet-reset").addEventListener("click", () => loadPreset(presetIndex));
-      $("jet-copy").addEventListener("click", () => copy(readStr(host.w.jet_to_json(mirror)), "Engine JSON copied — paste into JetEnginePatch.from_json()"));
-      showCtl();
-    }
-    async function attach() { node = await makeNode("jet", { preset: presetIndex }); node.onready = syncAll; }
-    function key(e, down) {
-      if (e.key === "ArrowUp") { keys.up = down; return true; }
-      if (e.key === "ArrowDown") { keys.down = down; return true; }
-      if (e.key === "Shift") { keys.shift = down; return false; }
-      if (!down) return false;
-      if (e.key === " ") { send({ t: "snap" }); return true; }
-      if (e.key >= "1" && e.key <= String(host.meta.presets.length)) { $("preset").value = +e.key - 1; loadPreset(+e.key - 1); return true; }
-      return false;
-    }
-    function frame(dt) {
-      let changed = false;
-      if (keys.up) { state.throttle = Math.min(state.throttle + dt * 1.2, 1); changed = true; }
-      if (keys.down) { state.throttle = Math.max(state.throttle - dt * 1.2, 0); changed = true; }
-      if (keys.shift) { keys.boostByKey = true; if (state.boost < 1) { state.boost = Math.min(state.boost + dt * 4, 1); changed = true; } }
-      else if (keys.boostByKey && state.boost > 0) { state.boost = Math.max(state.boost - dt * 2, 0); changed = true; if (state.boost === 0) keys.boostByKey = false; }
-      if ($("autospeed").checked) { const target = Math.min(state.throttle * (1 + 0.3 * state.boost), 1); const ns = state.speed + Math.sign(target - state.speed) * Math.min(Math.abs(target - state.speed), dt * 0.3); if (ns !== state.speed) { state.speed = ns; changed = true; } }
-      if (changed) { showCtl(); pushCtl(); if (keys.up || keys.shift) ensureAudio(); }
-      drawGauge(); drawSpectrum($("spectrum"), node && node.analyser, state.boost > 0.3 ? css("--accent") : css("--readout"), derived().f0);
-    }
-    function drawGauge() {
-      const g = $("gauge"), c = g.getContext("2d"), w = g.width, h = g.height, cx = w / 2, cy = h * 0.86, R = w * 0.42;
-      const a0 = Math.PI * 1.08, a1 = Math.PI * 1.92, maxRpm = 1.4, ang = v => a0 + (a1 - a0) * Math.min(v / maxRpm, 1);
-      const d = derived(), rpm = d.rpm || 0;
-      c.clearRect(0, 0, w, h); c.lineCap = "butt";
-      c.lineWidth = 14; c.strokeStyle = css("--line"); c.beginPath(); c.arc(cx, cy, R, a0, a1); c.stroke();
-      c.strokeStyle = css("--accent-dim"); c.beginPath(); c.arc(cx, cy, R, ang(1), a1); c.stroke();
-      c.strokeStyle = rpm > 1 ? css("--accent") : css("--readout"); c.beginPath(); c.arc(cx, cy, R, a0, ang(rpm)); c.stroke();
-      c.lineWidth = 2; c.strokeStyle = css("--muted"); c.fillStyle = css("--muted"); c.font = `600 ${Math.round(w * 0.05)}px ${css("--display")}`; c.textAlign = "center"; c.textBaseline = "middle";
-      for (let v = 0; v <= maxRpm + 1e-6; v += 0.2) { const a = ang(v), major = Math.abs(v * 5 - Math.round(v * 5)) < 1e-6; c.beginPath(); c.moveTo(cx + Math.cos(a) * (R - 14), cy + Math.sin(a) * (R - 14)); c.lineTo(cx + Math.cos(a) * (R - 22), cy + Math.sin(a) * (R - 22)); c.stroke(); if (major) c.fillText(String(Math.round(v * 100)), cx + Math.cos(a) * (R - 40), cy + Math.sin(a) * (R - 40)); }
-      const a = ang(rpm); c.strokeStyle = rpm > 1 ? css("--accent") : css("--text"); c.lineWidth = 3; c.lineCap = "round";
-      c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(a) * (R - 26), cy + Math.sin(a) * (R - 26)); c.stroke();
-      c.fillStyle = css("--panel-2"); c.beginPath(); c.arc(cx, cy, 9, 0, Math.PI * 2); c.fill(); c.strokeStyle = css("--line"); c.lineWidth = 2; c.stroke();
-      const el = $("rpm"); el.innerHTML = Math.round(rpm * 100) + "<small>% RPM</small>"; el.dataset.redline = rpm > 1;
-      $("s-whine").textContent = d.f0 ? (d.f0 >= 1000 ? (d.f0 / 1000).toFixed(2) + " kHz" : Math.round(d.f0) + " Hz") : "–";
-      $("s-roar").textContent = d.roarCut ? Math.round(d.roarCut) + " Hz" : "–";
-      $("s-tube").textContent = d.tubeMs ? d.tubeMs.toFixed(2) + " ms" : "–";
-    }
-    return { init, attach, key, frame, node: () => node };
-  })();
-
-  // ================================================================== GENERATORS tab
-  tabs.models = (() => {
-    let lib = null, node = null, mirror = 0, desc = null, refresh = () => {};
-    let current = { kind: "native", name: "wind" }, inputs = [], presetIndex = 0, sources = {};
-    const send = m => node && node.send(m);
-    const spec = () => current.kind === "native" ? { name: current.name } : { config: sources[current.name] };
-    const make = sp => sp.config != null ? withJson(sp.config, (p, n) => host.w.model_from_config(p, n, 48000)) : withJson(sp.name, (p, n) => host.w.model_new(p, n, 48000));
-    const lastError = () => readStr(host.w.gs_str_len());
-    const params = () => desc.params.map(p => host.w.model_get_param(mirror, p.index));
-
-    function snippet() {
-      const lines = current.kind === "native"
-        ? [`var gen := SoundGenerator.new()`, `gen.generator = "${current.name}"`]
-        : [`var gen := SoundGenerator.new()`, `gen.config_file = "res://sounds/${current.name}.toml"`];
-      if (presetIndex > 0) lines.push(`gen.preset = "${desc.presets[presetIndex].name}"`);
-      if (desc.one_shot) {
-        // Events: inputs first, then play() fires it; `finished` is emitted when the tail ends.
-        lines.push(`player.stream = gen   # set up once`, ``, `# when it happens:`);
-        desc.inputs.forEach(i => lines.push(`gen.set_start_input("${i.name}", ${i.name})`));
-        lines.push(`player.play()`);
-        return lines.join("\n");
-      }
-      lines.push(`player.stream = gen`, `player.play()`, ``, `# every frame:`, `var pb := player.get_stream_playback() as SoundGeneratorPlayback`);
-      desc.inputs.forEach(i => lines.push(`pb.set_input("${i.name}", ${i.name})`));
-      return lines.join("\n");
-    }
-    function setStatus(state, msg) { const el = $("gen-status"); el.dataset.state = state; el.textContent = msg; }
-
-    // Rebuild everything that depends on the model's description.
-    function adopt(handle, keepInputs) {
-      if (mirror) host.w.model_free(mirror);
-      mirror = handle;
-      const old = keepInputs && desc ? Object.fromEntries(desc.inputs.map((d, i) => [d.name, inputs[i]])) : {};
-      desc = JSON.parse(readStr(host.w.model_desc_json(mirror)));
-      inputs = desc.inputs.map(d => old[d.name] ?? d.default);
-      inputs.forEach((v, i) => host.w.model_set_input(mirror, i, v));
-      presetIndex = 0;
-      $("gen-title").textContent = desc.name.replace(/_/g, " ");
-      $("gen-doc").textContent = desc.doc;
-      const badge = $("gen-engine"); badge.textContent = desc.engine === "graph" ? "model file" : "native"; badge.className = "badge" + (desc.engine === "graph" ? " graph" : "");
-      const sel = $("gen-preset"); sel.innerHTML = ""; desc.presets.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = p.name; sel.appendChild(o); });
-      const box = $("gen-inputs"); box.innerHTML = "";
-      desc.inputs.forEach((d, i) => {
-        const row = document.createElement("div"); row.className = "ctl";
-        const name = document.createElement("div"); name.className = "name"; name.innerHTML = `${d.name}<small></small>`; name.querySelector("small").textContent = d.doc;
-        const input = document.createElement("input"); input.type = "range"; input.min = "0"; input.max = "1"; input.step = "0.001"; input.value = inputs[i]; input.setAttribute("aria-label", d.name);
-        const val = document.createElement("div"); val.className = "val"; val.textContent = Math.round(inputs[i] * 100) + "%";
-        input.addEventListener("input", () => { inputs[i] = +input.value; val.textContent = Math.round(inputs[i] * 100) + "%"; host.w.model_set_input(mirror, i, inputs[i]); send({ t: "input", index: i, value: inputs[i] }); ensureAudio(); });
-        row.append(name, input, val); box.appendChild(row);
-      });
-      refresh = buildTuning($("gen-groups"), desc.params, i => host.w.model_get_param(mirror, i), (i, v) => { host.w.model_set_param(mirror, i, v); send({ t: "param", index: i, value: v }); });
-      $("gen-snip").textContent = snippet();
-      $("gen-trigger").hidden = !desc.one_shot;
-      $("gen-help").innerHTML = desc.one_shot
-        ? "An event sound: set the inputs, then fire. Every trigger is slightly different (<code>shape/variation</code>); <code>space/width</code> sets the stereo image (0 = mono). Overlapping copies need one player each."
-        : "<kbd>Space</kbd> snaps inertia to the current inputs. Inputs are what your game sets every frame; params are what a designer tunes once.";
-    }
-    async function fire() { if (!(await ensureAudio())) return; send({ t: "trigger" }); }
-    function select(entry) {
-      const handle = make(entry.kind === "native" ? { name: entry.name } : { config: sources[entry.name] });
-      if (!handle) { toast("Could not load " + entry.name + ": " + lastError()); return; }
-      current = entry;
-      adopt(handle, false);
-      document.querySelectorAll("#gen-lib .lib-item").forEach(b => b.dataset.active = b.dataset.key === entry.kind + ":" + entry.name);
-      $("gen-editor").hidden = entry.kind !== "file";
-      if (entry.kind === "file") { $("gen-src").value = sources[entry.name]; setStatus("ok", `Compiled: ${desc.inputs.length} inputs, ${desc.params.length} params.`); }
-      send({ t: "model", model: spec(), inputs, params: params() });
-      if (desc.one_shot && host.ctx) setTimeout(fire, 60);
-      try { localStorage.setItem("gs-lab-model", entry.kind + ":" + entry.name); } catch {}
-    }
-    function compile() {
-      const text = $("gen-src").value;
-      const handle = make({ config: text });
-      if (!handle) { setStatus("error", lastError()); return; }
-      sources[current.name] = text;
-      adopt(handle, true);
-      setStatus("ok", `Compiled: ${desc.inputs.length} inputs, ${desc.params.length} params. Playing the new version.`);
-      send({ t: "model", model: { config: text }, inputs, params: params() });
-      ensureAudio().then(() => { if (desc.one_shot) setTimeout(fire, 60); });
-    }
-
-    function init() {
-      lib = JSON.parse(readStr(host.w.model_library_json()));
-      lib.examples.forEach(e => { sources[e.name] = e.text; });
-      const root = $("gen-lib"), cats = {};
-      lib.models.forEach(m => (cats[m.category] ||= []).push(m));
-      const item = (entry, label, title, graph) => { const b = document.createElement("button"); b.className = "lib-item"; b.dataset.key = entry.kind + ":" + entry.name; b.title = title; b.textContent = label; if (graph) { const s = document.createElement("span"); s.className = "badge graph"; s.textContent = "file"; b.appendChild(s); } b.addEventListener("click", () => { select(entry); ensureAudio(); }); root.appendChild(b); };
-      for (const c in cats) { const h = document.createElement("h3"); h.textContent = c; root.appendChild(h); cats[c].forEach(m => item({ kind: "native", name: m.name }, m.name, m.doc, false)); }
-      const h = document.createElement("h3"); h.textContent = "From model files"; root.appendChild(h);
-      lib.examples.forEach(e => item({ kind: "file", name: e.name }, e.name.replace(/_/g, " "), "Defined by a TOML file; open to edit", true));
-      const ref = $("gen-noderef");
-      lib.nodes.forEach(n => { const dt = document.createElement("dt"); dt.textContent = n.type + " "; const sp = document.createElement("span"); sp.textContent = [...n.params.map(p => p.default == null ? p.name : `${p.name}=${p.default}`), ...n.args].join("  "); dt.appendChild(sp); const dd = document.createElement("dd"); dd.textContent = n.doc; ref.append(dt, dd); });
-      const fn = document.createElement("dt"); fn.textContent = "formulas"; const fd = document.createElement("dd"); fd.textContent = "+ - * / ^ < >  abs sqrt exp exp2 ln sin cos floor db midi min max pow clamp lerp select smoothstep · stateful: slew(x, up_s, down_s) lag(x, s) noise(hz) sh(hz) lfo(hz) ramp(hz) · names: your inputs, params, signals, sr, pi"; ref.append(fn, fd);
-
-      $("gen-preset").addEventListener("change", e => { presetIndex = +e.target.value; host.w.model_load_preset(mirror, presetIndex); refresh(); send({ t: "preset", index: presetIndex }); $("gen-snip").textContent = snippet(); ensureAudio().then(() => { if (desc.one_shot) fire(); }); });
-      $("gen-reset").addEventListener("click", () => { host.w.model_load_preset(mirror, presetIndex); refresh(); send({ t: "preset", index: presetIndex }); });
-      $("gen-copy-gd").addEventListener("click", () => copy(snippet(), "GDScript copied"));
-      $("gen-copy-params").addEventListener("click", () => copy(JSON.stringify(Object.fromEntries(desc.params.map(p => [p.name, +host.w.model_get_param(mirror, p.index).toPrecision(6)])), null, 2), "Params copied — paste into gen.set_params_json()"));
-      $("gen-copy-src").addEventListener("click", () => copy($("gen-src").value, "Model file copied — save it as res://sounds/" + current.name + ".toml"));
-      $("gen-compile").addEventListener("click", compile);
-      $("gen-trigger").addEventListener("click", fire);
-      $("gen-revert").addEventListener("click", () => { const ex = lib.examples.find(e => e.name === current.name); if (ex) { $("gen-src").value = ex.text; compile(); } });
-      $("gen-src").addEventListener("keydown", e => {
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); compile(); }
-        else if (e.key === "Tab") { e.preventDefault(); const t = e.target, a = t.selectionStart; t.setRangeText("  ", a, t.selectionEnd, "end"); }
-      });
-      let saved = null; try { saved = localStorage.getItem("gs-lab-model"); } catch {}
-      const [k, n] = (saved || "native:wind").split(":");
-      const known = k === "file" ? lib.examples.some(e => e.name === n) : lib.models.some(m => m.name === n);
-      select(known ? { kind: k, name: n } : { kind: "native", name: "wind" });
-    }
-    async function attach() { node = await makeNode("model", { model: spec() }); node.onready = () => { inputs.forEach((v, i) => send({ t: "input", index: i, value: v })); params().forEach((v, i) => send({ t: "param", index: i, value: v })); send({ t: "snap" }); }; }
-    function key(e, down) {
-      if (!down || e.key !== " ") return false;
-      if (desc.one_shot) { if (!e.repeat) fire(); } else { send({ t: "snap" }); toast("Snapped to current inputs"); }
-      return true;
-    }
-    function frame() { drawSpectrum($("gen-spectrum"), node && node.analyser, css("--gen")); }
-    return { init, attach, key, frame, node: () => node };
-  })();
-
-  // ================================================================== SOUND FX tab
-  tabs.sfx = (() => {
-    let mirror = 0, node = null, refresh = () => {};
-    let cur = { preset: 0, seed: 0, modified: false }, recent = [], previewBuf = 0, preview = { data: new Float32Array(0), peak: 0 };
-    const PREVIEW_MAX = 48000 * 6, PREVIEW_SR = 48000;
-    const send = m => node && node.send(m);
-    const P = () => host.meta.synth_params, current = i => host.w.synth_get_param(mirror, i);
-    const names = () => host.meta.sfx_presets;
-    const HINT = { Pickup: "coins, gems, ammo", Laser: "beams, zaps", Explosion: "booms, crashes", PowerUp: "boosts, shields", Hit: "impacts, damage", Jump: "hops, launches", Blip: "UI, menus", Arrow: "bows, darts, thwips", Shoot: "guns, cannons", Throw: "whoosh, swings, throws", Random: "anything goes" };
-    const gd = () => cur.modified ? `var stream := SynthStream.new()\nstream.patch = SynthPatch.from_json_string(json)  # paste the patch JSON\nplayer.stream = stream\nplayer.play()` : `player.stream = SynthStream.from_preset("${names()[cur.preset]}", ${cur.seed})\nplayer.play()`;
-
-    function renderPreview() {
-      const n = host.w.synth_preview(mirror, previewBuf, PREVIEW_MAX);
-      preview.data = new Float32Array(host.w.memory.buffer, previewBuf, n).slice();
-      let pk = 0; for (const x of preview.data) pk = Math.max(pk, Math.abs(x)); preview.peak = pk;
-      $("w-name").textContent = names()[cur.preset]; $("w-seed").textContent = cur.seed; $("w-len").textContent = (n / PREVIEW_SR).toFixed(2) + " s"; $("w-peak").textContent = pk.toFixed(2);
-      $("w-mod").hidden = !cur.modified; $("sfx-snip").textContent = gd();
-      $("sfx-hint").textContent = cur.modified ? "Edited sound: store the patch JSON in a SynthPatch resource." : "Unmodified preset + seed: two lines of GDScript, no data to store.";
-      drawWave();
-    }
-    function drawWave() {
-      const cv = $("wave"), c = cv.getContext("2d"), w = cv.width, h = cv.height, d = preview.data;
-      c.clearRect(0, 0, w, h);
-      c.strokeStyle = css("--line-soft"); c.lineWidth = 1; c.beginPath(); c.moveTo(0, h / 2 + 0.5); c.lineTo(w, h / 2 + 0.5); c.stroke();
-      const secs = d.length / PREVIEW_SR; c.fillStyle = css("--muted"); c.font = `500 ${Math.round(h * 0.05)}px ${css("--mono")}`; c.textAlign = "left";
-      for (let t = 0.1; t < secs; t += 0.1) { const x = Math.round(t / secs * w) + 0.5; c.strokeStyle = css("--line-soft"); c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); if (Math.round(t * 10) % 5 === 0) c.fillText(t.toFixed(1) + "s", x + 4, h - 8); }
-      if (!d.length) return;
-      const col = css("--sfx"), step = Math.max(1, Math.floor(d.length / w));
-      c.fillStyle = col; c.globalAlpha = 0.85;
-      for (let x = 0; x < w; x++) { const i0 = Math.floor(x / w * d.length), i1 = Math.min(d.length, i0 + step); let lo = 0, hi = 0; for (let i = i0; i < i1; i++) { if (d[i] < lo) lo = d[i]; if (d[i] > hi) hi = d[i]; } c.fillRect(x, h / 2 - hi * h * 0.48, 1, Math.max(1, (hi - lo) * h * 0.48)); }
-      c.globalAlpha = 1;
-    }
-    function load(preset, seed, play) {
-      cur = { preset, seed, modified: false };
-      host.w.synth_load_sfx(mirror, preset, seed); refresh(); renderPreview();
-      send({ t: "sfx", preset, seed });
-      document.querySelectorAll("#sfx-presets .pbtn").forEach((b, i) => b.dataset.active = i === preset);
-      $("sfx-seed").value = seed;
-      if (play) fire();
-      const key = preset + ":" + seed; recent = [key, ...recent.filter(k => k !== key)].slice(0, 10); drawRecent();
-    }
-    async function fire() {
-      if (!(await ensureAudio())) return;
-      send({ t: "trigger" });
-      const b = document.querySelectorAll("#sfx-presets .pbtn")[cur.preset]; if (b) { b.classList.remove("fire"); void b.offsetWidth; b.classList.add("fire"); }
-    }
-    function press(i) { load(i, $("sfx-newseed").checked ? Math.floor(Math.random() * 100000) : Math.max(0, +$("sfx-seed").value | 0), true); }
-    function drawRecent() {
-      const r = $("sfx-recent"); r.innerHTML = "";
-      for (const k of recent) { const [p, s] = k.split(":").map(Number); const c = document.createElement("button"); c.className = "chip"; c.textContent = names()[p] + " · " + s; c.addEventListener("click", () => load(p, s, true)); r.appendChild(c); }
-    }
-    function mutate() { const seed = Math.floor(Math.random() * 1e9); host.w.synth_mutate(mirror, +$("sfx-mutamt").value, seed); send({ t: "mutate", amount: +$("sfx-mutamt").value, seed }); cur.modified = true; refresh(); renderPreview(); fire(); }
-    function wav() {
-      const d = preview.data, n = d.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
-      const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-      str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE"); str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-      v.setUint32(24, PREVIEW_SR, true); v.setUint32(28, PREVIEW_SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, n * 2, true);
-      for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d[i])) * 32767, true);
-      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([buf], { type: "audio/wav" })); a.download = `${names()[cur.preset].toLowerCase()}_${cur.seed}${cur.modified ? "_edit" : ""}.wav`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    }
-    function init() {
-      mirror = host.w.synth_new(PREVIEW_SR); previewBuf = host.w.gs_alloc_f32(PREVIEW_MAX);
-      const grid = $("sfx-presets");
-      names().forEach((n, i) => { const b = document.createElement("button"); b.className = "pbtn"; b.innerHTML = `${n}<small>${HINT[n] || ""}</small><span class="flash"></span>`; b.addEventListener("click", () => press(i)); grid.appendChild(b); });
-      refresh = buildTuning($("sfx-groups"), P(), current, (i, v) => { host.w.synth_set_param(mirror, i, v); send({ t: "param", index: i, value: v }); cur.modified = true; schedulePreview(); });
-      $("sfx-replay").addEventListener("click", fire);
-      $("sfx-mutate").addEventListener("click", mutate);
-      $("sfx-reset").addEventListener("click", () => load(cur.preset, cur.seed, true));
-      $("sfx-seed").addEventListener("change", () => load(cur.preset, Math.max(0, +$("sfx-seed").value | 0), true));
-      $("sfx-copy").addEventListener("click", () => copy(readStr(host.w.synth_to_json(mirror)), "Patch JSON copied — paste into SynthPatch.from_json()"));
-      $("sfx-copy-gd").addEventListener("click", () => copy(gd(), "GDScript copied"));
-      $("sfx-wav").addEventListener("click", wav);
-      load(0, 0, false);
-    }
-    let previewTimer; const schedulePreview = () => { clearTimeout(previewTimer); previewTimer = setTimeout(renderPreview, 60); };
-    async function attach() { node = await makeNode("synth", { preset: cur.preset, seed: cur.seed }); node.onready = () => send({ t: "json", json: readStr(host.w.synth_to_json(mirror)) }); }
-    function key(e, down) {
-      if (!down) return false;
-      if (e.key === " ") { fire(); return true; }
-      if (e.key.toLowerCase() === "m") { mutate(); return true; }
-      const n = parseInt(e.key, 10); if (n >= 1 && n <= Math.min(9, names().length)) { press(n - 1); return true; }
-      return false;
-    }
-    function frame() {}
-    return { init, attach, key, frame, node: () => node };
-  })();
-
-  // ================================================================== INSTRUMENT tab
-  tabs.inst = (() => {
-    const PRESETS = {
-      Lead: { osc: [{ wave: "Saw", level: 1 }, { wave: "Saw", level: 0.6, detune_cents: 12 }, { level: 0 }], amp_env: { attack: 0.005, decay: 0.2, sustain: 0.8, release: 0.4 }, filter: { mode: "LowPass", cutoff_hz: 900, resonance: 0.4, env_amount: 3 }, filter_env: { attack: 0, decay: 0.4, sustain: 0, release: 0.3 }, fx: { delay_time: 0.3, delay_feedback: 0.35, delay_mix: 0.25 }, gain: 0.45, polyphony: 8 },
-      Bass: { osc: [{ wave: "Square", level: 1 }, { wave: "Saw", level: 0.5, semitones: -12 }, { level: 0 }], amp_env: { attack: 0.002, decay: 0.2, sustain: 0.6, release: 0.15 }, filter: { mode: "LowPass", cutoff_hz: 400, resonance: 0.5, env_amount: 2.5 }, filter_env: { attack: 0, decay: 0.25, sustain: 0, release: 0.2 }, pitch: { glide: 0.06 }, fx: { drive: 0.3 }, gain: 0.5, polyphony: 1 },
-      Pad: { osc: [{ wave: "Saw", level: 0.8 }, { wave: "Saw", level: 0.8, detune_cents: -9 }, { wave: "Pulse", level: 0.5, detune_cents: 7, pulse_width: 0.35 }], amp_env: { attack: 0.6, decay: 1, sustain: 0.8, release: 1.5 }, filter: { mode: "LowPass", cutoff_hz: 1800, resonance: 0.2 }, lfo: { wave: "Sine", rate_hz: 0.3, cutoff: 0.6, pulse_width: 0.15 }, fx: { delay_time: 0.45, delay_feedback: 0.4, delay_mix: 0.35 }, gain: 0.32, polyphony: 8 },
-      Pluck: { osc: [{ wave: "Triangle", level: 1 }, { wave: "Pulse", level: 0.4, pulse_width: 0.3 }, { level: 0 }], amp_env: { attack: 0, decay: 0.35, sustain: 0, release: 0.2 }, filter: { mode: "LowPass", cutoff_hz: 3000, resonance: 0.3, env_amount: 3 }, filter_env: { attack: 0, decay: 0.12, sustain: 0, release: 0.1 }, fx: { delay_time: 0.25, delay_feedback: 0.35, delay_mix: 0.25 }, gain: 0.5, polyphony: 8 },
-      Init: {},
-    };
-    const KEYMAP = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ";": 16, "'": 17 };
-    let mirror = 0, node = null, refresh = () => {}, octave = 4, presetName = "Lead";
-    const held = new Map(); // key -> note
-    const send = m => node && node.send(m);
-    const P = () => host.meta.synth_params, current = i => host.w.synth_get_param(mirror, i);
-    const json = () => readStr(host.w.synth_to_json(mirror));
-    function loadPreset(n) { presetName = n; host.w.synth_reset_patch(mirror); withJson(JSON.stringify(PRESETS[n]), (p, l) => host.w.synth_from_json(mirror, p, l)); refresh(); send({ t: "reset" }); send({ t: "json", json: json() }); toast(n + " loaded"); }
-    async function noteOn(id, note) { if (held.has(id)) return; held.set(id, note); if (!(await ensureAudio())) return; send({ t: "noteon", note, velocity: 0.9 }); }
-    function noteOff(id) { const n = held.get(id); if (n == null) return; held.delete(id); send({ t: "noteoff", note: n }); }
-    function allOff() { for (const id of [...held.keys()]) noteOff(id); }
-
-    // ---- on-screen keyboard: 2 octaves + top C from (octave)C ----
-    const kb = $("keyboard"); const WHITE = [0, 2, 4, 5, 7, 9, 11], BLACK = { 1: 0, 3: 1, 6: 3, 8: 4, 10: 5 };
-    const layout = () => { const w = kb.width, h = kb.height, nw = 15, ww = w / nw; const keys = [];
-      for (let i = 0; i < nw; i++) { const oct = Math.floor(i / 7), deg = WHITE[i % 7]; keys.push({ note: (octave + 1) * 12 + oct * 12 + deg, x: i * ww, y: 0, w: ww, h, black: false }); }
-      for (let i = 0; i < nw; i++) { const oct = Math.floor(i / 7), semis = WHITE[i % 7] + 1; if (BLACK[semis % 12] == null || i % 7 === 6 || i % 7 === 2 || i === nw - 1) continue; keys.push({ note: (octave + 1) * 12 + oct * 12 + semis, x: (i + 1) * ww - ww * 0.3, y: 0, w: ww * 0.6, h: h * 0.62, black: true }); }
-      return keys; };
-    const hit = (px, py) => { const r = kb.getBoundingClientRect(), x = (px - r.left) / r.width * kb.width, y = (py - r.top) / r.height * kb.height, ks = layout(); return ks.filter(k => k.black).find(k => x >= k.x && x < k.x + k.w && y < k.h) || ks.find(k => !k.black && x >= k.x && x < k.x + k.w); };
-    function drawKeyboard() {
-      const c = kb.getContext("2d"), w = kb.width, h = kb.height, ks = layout(), on = new Set(held.values());
-      c.clearRect(0, 0, w, h);
-      for (const k of ks.filter(k => !k.black)) { c.fillStyle = on.has(k.note) ? css("--inst") : "#E4E8EE"; c.fillRect(k.x + 1, k.y, k.w - 2, k.h - 2); if (k.note % 12 === 0) { c.fillStyle = "#4A5568"; c.font = `500 ${Math.round(w * 0.012)}px ${css("--mono")}`; c.textAlign = "center"; c.fillText("C" + (k.note / 12 - 1), k.x + k.w / 2, h - 12); } }
-      for (const k of ks.filter(k => k.black)) { c.fillStyle = on.has(k.note) ? css("--inst") : "#1A2029"; c.fillRect(k.x, k.y, k.w, k.h); }
-    }
-    let pointerId = null, pointerKey = null;
-    kb.addEventListener("pointerdown", e => { kb.setPointerCapture(e.pointerId); pointerId = e.pointerId; const k = hit(e.clientX, e.clientY); if (k) { pointerKey = k.note; noteOn("ptr", k.note); } });
-    kb.addEventListener("pointermove", e => { if (e.pointerId !== pointerId) return; const k = hit(e.clientX, e.clientY); if (k && k.note !== pointerKey) { noteOff("ptr"); pointerKey = k.note; noteOn("ptr", k.note); } });
-    const up = e => { if (e.pointerId !== pointerId) return; noteOff("ptr"); pointerId = null; pointerKey = null; };
-    kb.addEventListener("pointerup", up); kb.addEventListener("pointercancel", up);
-
-    function init() {
-      mirror = host.w.synth_new(48000);
-      const sel = $("inst-preset"); Object.keys(PRESETS).forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o); });
-      sel.addEventListener("change", e => loadPreset(e.target.value));
-      refresh = buildTuning($("inst-groups"), P(), current, (i, v) => { host.w.synth_set_param(mirror, i, v); send({ t: "param", index: i, value: v }); });
-      host.w.synth_reset_patch(mirror); withJson(JSON.stringify(PRESETS.Lead), (p, l) => host.w.synth_from_json(mirror, p, l)); refresh();
-      $("oct-down").addEventListener("click", () => { allOff(); octave = Math.max(1, octave - 1); $("i-oct").textContent = octave; });
-      $("oct-up").addEventListener("click", () => { allOff(); octave = Math.min(7, octave + 1); $("i-oct").textContent = octave; });
-      $("inst-panic").addEventListener("click", () => { held.clear(); send({ t: "panic" }); });
-      $("inst-copy").addEventListener("click", () => copy(json(), "Patch JSON copied — paste into SynthPatch.from_json()"));
-      $("inst-reset").addEventListener("click", () => loadPreset(presetName));
-      const bend = $("bend"); const showBend = () => { $("v-bend").textContent = (+bend.value).toFixed(2); send({ t: "bend", bend: +bend.value }); };
-      bend.addEventListener("input", showBend);
-      const release = () => { bend.value = 0; showBend(); }; bend.addEventListener("pointerup", release); bend.addEventListener("pointercancel", release); bend.addEventListener("keyup", release);
-    }
-    async function attach() { node = await makeNode("synth", {}); node.onready = () => send({ t: "json", json: json() }); }
-    function key(e, down) {
-      const k = e.key.toLowerCase();
-      if (down && !e.repeat && k === "z") { allOff(); octave = Math.max(1, octave - 1); $("i-oct").textContent = octave; return true; }
-      if (down && !e.repeat && k === "x") { allOff(); octave = Math.min(7, octave + 1); $("i-oct").textContent = octave; return true; }
-      if (KEYMAP[k] == null) return false;
-      if (down) { if (!e.repeat) noteOn("k" + k, (octave + 1) * 12 + KEYMAP[k]); } else noteOff("k" + k);
-      return true;
-    }
-    function frame() { drawKeyboard(); drawSpectrum($("inst-spectrum"), node && node.analyser, css("--inst")); if (node) { $("i-voices").textContent = node.tele.voices ?? 0; $("i-peak").textContent = (node.tele.peak ?? 0).toFixed(2); } }
-    return { init, attach, key, frame, node: () => node, allOff };
-  })();
-
-  // ================================================================== tabs + boot
-  function setActive(k) {
-    host.active = k;
-    document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", b.dataset.k === k));
-    for (const t of ["engines", "models", "sfx", "inst"]) { $("tab-" + t).hidden = t !== k; const n = tabs[t].node(); if (n && host.ctx) n.gain.gain.setTargetAtTime(t === k ? 1 : 0, host.ctx.currentTime, 0.02); }
-    try { localStorage.setItem("gs-lab-tab", k); } catch {}
-  }
-  document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => { if (host.active === "inst") tabs.inst.allOff(); setActive(b.dataset.k); }));
-  $("audio").addEventListener("click", async () => {
-    if (!host.ctx) { await ensureAudio(); return; }
-    if (host.ctx.state === "running") { await host.ctx.suspend(); $("audio").dataset.running = "false"; $("audio").textContent = "Audio off · resume"; }
-    else { await host.ctx.resume(); $("audio").dataset.running = "true"; $("audio").textContent = "Audio on · mute"; }
-  });
-  $("volume").addEventListener("input", () => { if (host.master) host.master.gain.setTargetAtTime(+$("volume").value, host.ctx.currentTime, 0.02); });
-  window.addEventListener("keydown", e => { if (e.metaKey || e.ctrlKey || e.altKey) return; const t = e.target; if ((t.tagName === "INPUT" && t.type !== "range") || t.tagName === "SELECT" || t.tagName === "TEXTAREA") return; if (host.meta && tabs[host.active].key(e, true)) e.preventDefault(); });
-  window.addEventListener("keyup", e => { if (host.meta) tabs[host.active].key(e, false); });
-  window.addEventListener("blur", () => { if (host.meta) { tabs.inst.allOff(); tabs.engines.key({ key: "ArrowUp" }, false); tabs.engines.key({ key: "ArrowDown" }, false); tabs.engines.key({ key: "Shift" }, false); } });
-
-  let last = performance.now();
-  function loop(now) { const dt = Math.min((now - last) / 1000, 0.1); last = now; if (host.meta) tabs[host.active].frame(dt); requestAnimationFrame(loop); }
-  requestAnimationFrame(loop);
-
-  (async () => {
-    try {
-      const resp = await fetch(WASM_URL); if (!resp.ok) throw new Error(resp.status + " " + resp.statusText + " for " + WASM_URL);
-      host.module = await WebAssembly.compile(await resp.arrayBuffer());
-      host.w = (await WebAssembly.instantiate(host.module, {})).exports;
-      host.meta = JSON.parse(readStr(host.w.gs_meta_json()));
-      for (const t of Object.values(tabs)) t.init();
-      // ?tab=sfx deep-links a tab; otherwise the last used tab is remembered per browser.
-      let saved = new URLSearchParams(location.search).get("tab"); try { saved = saved || localStorage.getItem("gs-lab-tab"); } catch {}
-      setActive(tabs[saved] ? saved : "engines");
-      $("audio").disabled = false; $("audio").textContent = "Start audio";
-      $("foot").innerHTML = `Running <code>brusverk-core ${host.meta.version}</code> compiled to WebAssembly inside an AudioWorklet at your device's sample rate. Every sound here is generated in real time; nothing is sampled. Source: <code>crates/brusverk-core</code>.`;
-    } catch (err) {
-      console.error(err); $("audio").textContent = "Engine unavailable";
-      $("foot").textContent = "Could not load the engine module (" + err.message + "). If you opened this as a local file, serve the folder over http.";
-    }
-  })();
-})();
+  state.ready = true;
+} catch (error) {
+  console.error(error);
+  fail(error.message);
+}
 </script>
 </body>
 </html>

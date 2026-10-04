@@ -1,7 +1,9 @@
-// Real-browser audio check of the web lab: starts headless Chrome, clicks through every tab
-// and MEASURES what reaches the speakers (an analyser tap per tab), plus anything the page or
-// its AudioWorklet threw. Prints a JSON report and exits non-zero if a tab is silent.
-//   node tools/web_audio_check.mjs [url]     (default: serves ./web on a local port)
+// Real-browser audio check of the web site: starts headless Chrome, clicks through every tab
+// of the Sound Lab (lab.html) and MEASURES what reaches the speakers (an analyser tap per tab),
+// then opens the landing page (index.html), checks that every demo on it was computed and that
+// one plays. Anything a page or the AudioWorklet threw is reported too. Prints a JSON report
+// and exits non-zero if something is silent.
+//   node tools/web_audio_check.mjs [url]     (default: serves ./web on a local port; `url` is the site root)
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -56,7 +58,8 @@ await cdp("Runtime.enable"); await cdp("Page.enable");
 // Tap every analyser the page creates (one per tab, in tab order) so output can be measured.
 await cdp("Page.addScriptToEvaluateOnNewDocument", { source: `(() => { const make = AudioContext.prototype.createAnalyser; window.__taps = [];
   AudioContext.prototype.createAnalyser = function () { const a = make.call(this); window.__taps.push(a); return a; }; })()` });
-await cdp("Page.navigate", { url: url + "?tab=engines" });
+const base = url.replace(/[^/]*\.html.*$/, "").replace(/\/?$/, "/");
+await cdp("Page.navigate", { url: base + "lab.html?tab=engines" });
 
 const script = async () => {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms)), $ = (s) => document.querySelector(s);
@@ -81,6 +84,34 @@ const script = async () => {
 await sleep(1500);
 const result = await cdp("Runtime.evaluate", { expression: `(${script})()`, awaitPromise: true, returnByValue: true });
 const levels = result.result?.value || { error: JSON.stringify(result).slice(0, 300) };
+
+// A link from the landing page opens the lab on that sound and preset.
+await cdp("Page.navigate", { url: base + "lab.html?gen=piston&preset=Heavy%20truck" });
+await sleep(2500);
+const linked = await cdp("Runtime.evaluate", { returnByValue: true, expression: `(() => { const s = document.querySelector("#gen-preset");
+  return [document.querySelector('.tab-btn[aria-selected="true"]')?.dataset.k, document.querySelector("#gen-title")?.textContent, s?.options[s.selectedIndex]?.textContent].join(" / "); })()` });
+if (linked.result?.value !== "models / piston / Heavy truck") problems.push("error: lab.html?gen=piston&preset=Heavy%20truck opened " + linked.result?.value);
+
+// The landing page: every demo computed, the lists filled from the library, and playback audible.
+await cdp("Page.navigate", { url: base });
+const landing = async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 200 && !(window.__brusverk?.ready || window.__brusverk?.error); i++) await wait(100);
+  const b = window.__brusverk;
+  if (!b?.ready) return { error: "landing page: " + (b?.error || "demos never finished computing") };
+  const out = {};
+  for (const [id, d] of Object.entries(b.demos)) out["landing_" + id] = d.peak;
+  const cards = document.querySelectorAll("#cards .card").length, listed = document.querySelectorAll("#all li a").length;
+  if (cards !== Object.keys(b.demos).length - 1 || listed < 50 || document.querySelector(".wait")) return { error: `landing page: ${cards} cards, ${listed} listed sounds, placeholders left: ${!!document.querySelector(".wait")}` };
+  document.querySelector("#demo-truck .play").click(); await wait(3500);   // into the first pull
+  const a = window.__taps[0], d = new Float32Array(a ? a.fftSize : 0); let peak = 0;
+  for (let k = 0; k < 6 && a; k++) { a.getFloatTimeDomainData(d); for (const x of d) peak = Math.max(peak, Math.abs(x)); await wait(60); }
+  out.landing_playback = +peak.toFixed(4);
+  out.landing_playing = document.querySelector("#demo-truck").classList.contains("playing") ? 1 : 0;
+  return out;
+};
+const page = await cdp("Runtime.evaluate", { expression: `(${landing})()`, awaitPromise: true, returnByValue: true });
+Object.assign(levels, page.result?.value || { error: JSON.stringify(page).slice(0, 300) });
 const silent = Object.entries(levels).filter(([k, v]) => typeof v === "number" && v < 0.01).map(([k]) => k);
 const errors = [...new Set(problems)];
 console.log(JSON.stringify({ url, levels, silent, problems: errors }, null, 1));

@@ -12,7 +12,7 @@ crates/brusverk-godot   GDExtension: SynthPatch (Resource), SynthStream (AudioSt
 crates/brusverk-wasm    C-ABI WebAssembly build of the jet engine (no bindgen)
 godot/                   demo project
 models/                  sound generators defined as TOML files (format: models/README.md)
-web/                     Sound Lab: browser test stand running the wasm build (GitHub Pages)
+web/                     the site: landing page with playable demos, and the Sound Lab (GitHub Pages)
 ```
 
 ## Engine
@@ -266,10 +266,11 @@ generator is one `model_params!` table plus a `Generator::block` function.
 SFX presets: `Pickup`, `Laser`, `Explosion`, `PowerUp`, `Hit`, `Jump`, `Blip`, `Arrow`, `Shoot`, `Throw`, `Random`.
 Jet presets: `Racer`, `Heavy`, `Turbine`, `Scramjet`.
 
-## Web: Sound Lab (WebAssembly)
+## Web: landing page and Sound Lab (WebAssembly)
 
-Live at **https://joakimeriksson.github.io/gamesynth/**. `web/` is a static page that runs
-the *same* Rust engine compiled to WebAssembly inside an AudioWorklet, in four tabs:
+Live at **https://joakimeriksson.github.io/gamesynth/** (the Sound Lab is at
+[`/lab.html`](https://joakimeriksson.github.io/gamesynth/lab.html)). `web/` is a static site. The
+Sound Lab runs the *same* Rust engine compiled to WebAssembly inside an AudioWorklet, in four tabs:
 
 | Tab | What it does | Godot counterpart |
 |---|---|---|
@@ -280,12 +281,18 @@ the *same* Rust engine compiled to WebAssembly inside an AudioWorklet, in four t
 
 Every tab has a tuning section generated from the engine's own parameter table and a
 **Copy JSON** button whose output `JetEnginePatch.from_json()` / `SynthPatch.from_json()`
-accept unchanged. `?tab=sfx` deep-links a tab.
+accept unchanged. `lab.html?tab=sfx` deep-links a tab, `lab.html?gen=piston&preset=Heavy%20truck`
+a generator and preset, `lab.html?model=campfire` a model file.
+
+The landing page (`web/index.html`) plays ten short demos. Each is a script in `web/demos.js`:
+which generators to run and how their inputs move over time. The page runs the script through
+the wasm engine faster than real time, paints the spectrogram and plays the result, so adding a
+demo is adding an entry to that list.
 
 ```
 rustup target add wasm32-unknown-unknown     # once
-./web/build.sh                               # -> web/pkg/brusverk_wasm.wasm (~820 KB, 250 KB gzipped)
-python3 -m http.server -d web 8000           # open http://localhost:8000
+./web/build.sh                               # -> web/pkg/brusverk_wasm.wasm (about 1 MB)
+python3 -m http.server -d web 8000           # open http://localhost:8000 (the lab is /lab.html)
 ```
 
 If your day-to-day `cargo` is Homebrew's (no wasm target) and rustup is the keg-only

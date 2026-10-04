@@ -131,8 +131,9 @@ def wasm():
 
 
 def web_audio():
-    """Real browser: every tab of the web lab must produce measurable sound and no errors."""
-    what = "Web lab in headless Chrome: sound measured on every tab"
+    """Real browser: every tab of the Sound Lab and every demo on the landing page must produce
+    measurable sound and no errors."""
+    what = "The site in headless Chrome: sound measured on every lab tab and landing-page demo"
     if not shutil.which("node") or not os.path.exists("/Applications/Google Chrome.app") and not os.environ.get("CHROME"):
         return suite("web audio", what, [], 0, skipped="needs node and Chrome (set CHROME=path)")
     code, out, secs = run(["node", "tools/web_audio_check.mjs"], timeout=300)
