@@ -821,6 +821,12 @@ model_params! {
         squeal_level: "rock/squeal" = 0.6, UNIT;
         squeal_hz: "rock/squeal_hz" = 1050.0, exp(400.0, 3000.0);
         slide_level: "slide/level" = 0.7, UNIT;
+        snow_crunch: "snow/crunch" = 0.7, UNIT;
+        snow_squeak: "snow/squeak" = 0.5, UNIT;
+        powder_hush: "snow/powder_hush" = 0.7, UNIT;
+        powder_whump: "snow/powder_whump" = 0.6, UNIT;
+        ice_hum: "ice/hum" = 0.6, UNIT;
+        ice_scrape: "ice/scrape" = 0.6, UNIT;
         gain: "master/gain" = 1.0, GAIN;
     }
 }
@@ -844,6 +850,147 @@ const SAND_GAIN: f32 = 3.0;
 const SPRAY_GAIN: f32 = 1.5;
 const SLAP_GAIN: f32 = 12.0;
 const SLIDE_GAIN: f32 = 4.0;
+
+/// Snow and ice, along the `snow` input: [bare ground, packed snow, powder, ice]. Tuned against
+/// recordings of tyres on snow and ice and of steps in fresh snow (`tools/reference/snow`): all
+/// broad up to about 2 kHz and low-heavy, with about 5 % above 2.5 kHz; a studded tyre on ice
+/// is a steady band at 250 Hz and 1 kHz.
+const SNOW_POINTS: usize = 4;
+
+/// The snow layers, in their own struct and with their own random streams, so that a tyre on
+/// bare ground sounds exactly as it did before snow existed.
+struct SnowLayers {
+    noise: Noise,
+    rng: crate::math::Rng,
+    body: Svf,
+    grain_dust: Dust,
+    grain_env: f32,
+    grain_soft: f32,
+    grain: Svf,
+    grain_lp: Svf,
+    squeak_dust: Dust,
+    /// Phase, increment and level of the current squeak.
+    squeak: (f32, f32, f32),
+    hush: Svf,
+    whump_dust: Dust,
+    whump: (f32, f32, f32),
+    ice_band: Svf,
+    ice_hum: Svf,
+    studs: Svf,
+    scrape: Svf,
+    scrape_lp: Svf,
+    chatter: SlowNoise,
+}
+
+impl SnowLayers {
+    fn new() -> Self {
+        SnowLayers {
+            noise: Noise::new(crate::blocks::mix_seed(0x45_0101)),
+            rng: crate::math::Rng::new(crate::blocks::mix_seed(0x45_0102)),
+            body: Svf::default(),
+            grain_dust: Dust::new(0x45_0103),
+            grain_env: 0.0,
+            grain_soft: 0.0,
+            grain: Svf::default(),
+            grain_lp: Svf::default(),
+            squeak_dust: Dust::new(0x45_0104),
+            squeak: (0.0, 0.0, 0.0),
+            hush: Svf::default(),
+            whump_dust: Dust::new(0x45_0105),
+            whump: (0.0, 0.0, 0.0),
+            ice_band: Svf::default(),
+            ice_hum: Svf::default(),
+            studs: Svf::default(),
+            scrape: Svf::default(),
+            scrape_lp: Svf::default(),
+            chatter: SlowNoise::new(0x45_0106),
+        }
+    }
+
+    /// Add the snow and ice sound for one block into `out`, weighted by `w` (packed, powder, ice).
+    #[allow(clippy::too_many_arguments)]
+    fn add(&mut self, sr: f32, dt: f32, speed: f32, slip: f32, load: f32, w: [f32; 3], p: &TyreParams, out: &mut [f32]) {
+        let [packed, powder, ice] = w;
+        let roll = speed.powf(0.8);
+        let heavy = 0.6 + 0.6 * load;
+        let moving = (speed + slip).min(1.0);
+        let level = p.gain * 0.8;
+        // Packed snow: the roar of the tread compacting it, a dense crunch of grains, and now
+        // and then a squeak (cold snow squeaks; `snow/squeak` is how cold).
+        self.body.set(FilterMode::BandPass, 330.0 * (0.8 + 0.4 * speed), 0.3, sr);
+        let body_gain = (packed * 0.9 + powder * 0.35) * roll * heavy * 2.4;
+        let grain_p = (200.0 + 900.0 * speed + 600.0 * slip) * moving / sr;
+        self.grain_lp.set(FilterMode::LowPass, 3800.0, 0.1, sr);
+        let grain_gain = p.snow_crunch * (packed + 0.15 * powder) * (0.4 + 0.6 * moving) * 7.0;
+        let (grain_decay, grain_attack) = ((-1.0 / (0.007 * sr)).exp(), 1.0 - (-1.0 / (0.0015 * sr)).exp());
+        let squeak_p = (0.5 + 6.0 * speed) * p.snow_squeak * packed * moving / sr;
+        let squeak_decay = (-1.0 / (0.06 * sr)).exp();
+        // Powder: a soft deep hush, and the whump of the car ploughing through drifts.
+        self.hush.set(FilterMode::LowPass, 450.0 + 350.0 * speed, 0.15, sr);
+        let hush_gain = p.powder_hush * powder * (0.2 + 0.8 * roll) * heavy * 3.0;
+        let whump_p = (0.4 + 2.5 * speed) * p.powder_whump * powder * moving / sr;
+        let whump_decay = (-1.0 / (0.09 * sr)).exp();
+        // Ice: a smooth glassy band and the hum of the tread; sliding, the studs scrape. All
+        // of it kept under 3 kHz.
+        self.ice_band.set(FilterMode::BandPass, 900.0 + 300.0 * speed, 0.35, sr);
+        self.ice_hum.set(FilterMode::BandPass, 260.0 + 220.0 * speed, 0.7, sr);
+        let ice_gain = p.ice_hum * ice * roll * 1.6;
+        let judder = 0.7 + 0.3 * self.chatter.advance(25.0, dt);
+        self.scrape.set(FilterMode::BandPass, 1500.0 + 500.0 * slip, 0.4, sr);
+        self.scrape_lp.set(FilterMode::LowPass, 2600.0, 0.1, sr);
+        self.studs.set(FilterMode::BandPass, 1000.0, 0.5, sr);
+        let scrape_gain = p.ice_scrape * ice * ((slip - 0.2) / 0.6).clamp(0.0, 1.0) * (0.3 + 0.7 * speed) * judder * 4.0;
+        for o in out.iter_mut() {
+            let pk = self.noise.pink();
+            let mut y = self.body.tick(pk) * body_gain;
+            if grain_gain > 0.0 {
+                let c = self.grain_dust.tick(grain_p);
+                if c > 0.0 {
+                    self.grain_env = self.grain_env.max(c);
+                    self.grain.set(FilterMode::BandPass, self.rng.range(500.0, 2200.0), 0.4, sr);
+                }
+                self.grain_soft += (self.grain_env - self.grain_soft) * grain_attack;
+                y += self.grain_lp.tick(self.grain.tick(pk * self.grain_soft)) * grain_gain;
+                self.grain_env *= grain_decay;
+            }
+            if packed > 0.0 {
+                let q = self.squeak_dust.tick(squeak_p);
+                if q > 0.0 && self.squeak.2 < 0.05 {
+                    self.squeak = (0.0, self.rng.range(950.0, 1550.0) / sr, 0.6 + 0.4 * q);
+                }
+                if self.squeak.2 > 1e-4 {
+                    let (ph, inc, env) = &mut self.squeak;
+                    y += (*ph * TAU).sin() * *env * p.snow_squeak * packed * 1.6;
+                    *ph = (*ph + *inc).fract();
+                    *inc *= 0.99998;
+                    *env *= squeak_decay;
+                }
+            }
+            if hush_gain > 0.0 || powder > 0.0 {
+                y += self.hush.tick(pk) * hush_gain;
+                let wq = self.whump_dust.tick(whump_p);
+                if wq > 0.0 {
+                    self.whump = (0.0, self.rng.range(55.0, 110.0) / sr, wq);
+                }
+                if self.whump.2 > 1e-4 {
+                    let (ph, inc, env) = &mut self.whump;
+                    y += (*ph * TAU).sin() * *env * p.powder_whump * powder * 0.9;
+                    *ph = (*ph + *inc).fract();
+                    *env *= whump_decay;
+                }
+            }
+            if ice > 0.0 {
+                y += (self.ice_band.tick(pk) * 0.6 + self.ice_hum.tick(pk)) * ice_gain;
+                if scrape_gain > 0.0 {
+                    y += self.scrape_lp.tick(self.scrape.tick(pk)) * scrape_gain;
+                }
+                // The studs: a fine, steady texture in the band of the ice hum.
+                y += self.studs.tick(pk) * ice_gain * 0.5;
+            }
+            *o += y * level;
+        }
+    }
+}
 
 pub struct Tyre {
     sr: f32,
@@ -882,6 +1029,7 @@ pub struct Tyre {
     squeal_tone: Phasor,
     slide: Svf,
     slide_wander: SlowNoise,
+    snow: SnowLayers,
 }
 
 impl Generator for Tyre {
@@ -894,6 +1042,7 @@ impl Generator for Tyre {
         InputSpec { name: "slip", default: 0.0, doc: "Sliding sideways or spinning 0..1" },
         InputSpec { name: "load", default: 0.5, doc: "Weight on the tyres: 0 a bike, 1 a war rig (louder, lower)" },
         InputSpec { name: "surface", default: 0.0, doc: "0 packed dirt, 0.25 gravel, 0.5 sand, 0.75 mud, 1 rock/tarmac; in-between values blend neighbours" },
+        InputSpec { name: "snow", default: 0.0, doc: "0 bare ground (as `surface` says), 0.33 packed snow, 0.67 powder, 1 ice; in-between values blend neighbours" },
     ];
     const INPUT_SMOOTH_SECS: f32 = 0.06;
 
@@ -941,6 +1090,7 @@ impl Generator for Tyre {
             squeal_tone: Phasor::default(),
             slide: Svf::default(),
             slide_wander: SlowNoise::new(0x45_0008),
+            snow: SnowLayers::new(),
         }
     }
 
@@ -1011,7 +1161,14 @@ impl Generator for Tyre {
         self.slide.set(FilterMode::BandPass, (450.0 + 450.0 * slip) * (0.3 * self.slide_wander.advance(9.0, dt)).exp2(), 0.35, sr);
         let slide_gain = p.slide_level * slip * (0.65 + 0.35 * wob.abs()) * mix(&T_LOOSE) * SLIDE_GAIN;
 
-        let level = p.gain * 0.8;
+        // Snow and ice along the `snow` input: [bare ground, packed snow, powder, ice].
+        let spos = x[4].clamp(0.0, 1.0) * (SNOW_POINTS - 1) as f32;
+        let k0 = (spos.floor() as usize).min(SNOW_POINTS - 2);
+        let sf = spos - k0 as f32;
+        let mut sw = [0.0f32; SNOW_POINTS];
+        sw[k0] = 1.0 - sf;
+        sw[k0 + 1] += sf;
+        let level = p.gain * 0.8 * sw[0];
         for s in out.iter_mut() {
             let wn = self.noise.white();
             // Pink, not white, feeds every noise layer: the highs then fall away as they do in
@@ -1094,6 +1251,9 @@ impl Generator for Tyre {
                 y += self.slide.tick(pk) * slide_gain;
             }
             *s = y * level;
+        }
+        if sw[0] < 1.0 {
+            self.snow.add(sr, dt, speed, slip, load, [sw[1], sw[2], sw[3]], p, out);
         }
     }
 }

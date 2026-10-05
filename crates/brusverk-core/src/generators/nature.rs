@@ -23,6 +23,8 @@ model_params! {
         whistle_hz: "whistle/hz" = 1900.0, exp(400.0, 6000.0);
         whistle_level: "whistle/level" = 0.3, UNIT;
         gain: "master/gain" = 1.0, GAIN;
+        buffet: "buffet/level" = 0.0, UNIT;
+        buffet_hz: "buffet/rate_hz" = 2.5, exp(0.5, 8.0);
     }
 }
 
@@ -37,6 +39,10 @@ pub struct Wind {
     gust: SlowNoise,
     drift: SlowNoise,
     whistle_drift: SlowNoise,
+    // Buffeting has its own random streams, so wind without it sounds exactly as before.
+    buffet: SlowNoise,
+    buffet_low: Svf,
+    buffet_noise: Noise,
 }
 
 impl Generator for Wind {
@@ -51,7 +57,10 @@ impl Generator for Wind {
 
     fn presets() -> Vec<(&'static str, WindParams)> {
         vec![
-            ("Blizzard", WindParams { howl_hz: 800.0, howl_res: 0.75, hiss_level: 0.7, whistle_level: 0.5, gust_rate: 0.5, ..Default::default() }),
+            // Tuned against snowstorm recordings (`tools/reference/snow`): loudest at 125 to 500 Hz,
+            // with up to a tenth of the energy above 2.5 kHz. The howl sits low, and the storm
+            // shoves at whatever is out in it (buffeting) rather than hissing.
+            ("Blizzard", WindParams { howl_hz: 330.0, howl_res: 0.7, howl_level: 0.8, rumble_level: 0.8, hiss_level: 0.25, whistle_level: 0.35, gust_rate: 0.5, buffet: 0.7, buffet_hz: 2.5, ..Default::default() }),
             ("Desert", WindParams { howl_hz: 320.0, howl_res: 0.4, hiss_level: 0.6, whistle_level: 0.0, rumble_level: 0.7, ..Default::default() }),
             ("Canyon", WindParams { howl_hz: 650.0, howl_res: 0.88, howl_level: 0.8, gust_rate: 0.6, rumble_level: 0.45, hiss_level: 0.35, whistle_hz: 2300.0, whistle_level: 0.75, ..Default::default() }),
             ("Drafty corridor", WindParams { howl_hz: 420.0, howl_res: 0.85, rumble_level: 0.2, hiss_level: 0.1, whistle_hz: 1300.0, whistle_level: 0.6, gust_rate: 0.12, ..Default::default() }),
@@ -70,6 +79,9 @@ impl Generator for Wind {
             gust: SlowNoise::new(0x50_0002),
             drift: SlowNoise::new(0x50_0003),
             whistle_drift: SlowNoise::new(0x50_0004),
+            buffet: SlowNoise::new(0x50_0005),
+            buffet_low: Svf::default(),
+            buffet_noise: Noise::new(0x50_0006),
         }
     }
 
@@ -89,6 +101,15 @@ impl Generator for Wind {
         let whistle_gain = p.whistle_level * t * t * 0.12;
         let (howl, rumble, hiss) = (p.howl_level * 2.3, p.rumble_level * 1.4, p.hiss_level * 0.45 * s);
         let level = s.powf(1.5) * p.gain;
+        // Buffeting: the storm shoving in bursts a few times a second, felt more than heard,
+        // as a swell of the whole wind and a low thump.
+        let (shove, thump) = if p.buffet > 0.0 {
+            let b = self.buffet.advance(p.buffet_hz * (0.7 + 0.6 * s), dt).max(0.0);
+            self.buffet_low.set(FilterMode::LowPass, 140.0, 0.4, sr);
+            (1.0 + p.buffet * 1.2 * b * b * s, p.buffet * b * b * s * 3.0)
+        } else {
+            (1.0, 0.0)
+        };
         for o in out.iter_mut() {
             let (w, pk) = (self.noise.white(), self.noise.pink());
             let y = (self.body[0].tick(pk) + 0.4 * self.body[1].tick(pk)) * howl
@@ -96,6 +117,9 @@ impl Generator for Wind {
                 + self.hiss.tick(w) * hiss
                 + self.whistle.tick(w) * whistle_gain;
             *o = y * level;
+            if p.buffet > 0.0 {
+                *o = *o * shove + self.buffet_low.tick(self.buffet_noise.pink()) * thump * level;
+            }
         }
     }
 }

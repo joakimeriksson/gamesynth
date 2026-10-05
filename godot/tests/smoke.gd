@@ -192,7 +192,7 @@ func _init() -> void:
 	wind_gen.set("howl/hz", 99999.0)
 	_check(wind_gen.get_param("howl/hz") == 4000.0, "param set via property is clamped")
 	wind_gen.preset = "Blizzard"
-	_check(wind_gen.get_param("howl/hz") == 800.0, "preset applied")
+	_check(wind_gen.get_param("howl/hz") == 330.0, "preset applied")
 	_check(not wind_gen.set_param("nope/x", 1.0), "unknown param rejected")
 	var wpb := wind_gen.instantiate_playback() as SoundGeneratorPlayback
 	wpb.start(0.0)
@@ -205,7 +205,7 @@ func _init() -> void:
 	_check(loud_peak > 0.05 and _peak(wpb.mix_audio(1.0, 4096)) == 0.0, "live param edit reaches the running playback (%.3f -> 0)" % loud_peak)
 	_check(not wpb.set_input("nope", 1.0) and wpb.get_input_index("strength") == 0, "input lookup")
 	var round_trip := SoundGenerator.create("wind")
-	_check(round_trip.set_params_json(wind_gen.get_params_json()) and round_trip.get_param("howl/hz") == 800.0, "params json round trip")
+	_check(round_trip.set_params_json(wind_gen.get_params_json()) and round_trip.get_param("howl/hz") == 330.0, "params json round trip")
 
 	var boom := SoundGenerator.create("explosion")
 	_check(boom.is_one_shot() and not SoundGenerator.create("wind").is_one_shot(), "is_one_shot")
@@ -281,7 +281,7 @@ func _init() -> void:
 	_check(absf(rpb.get_rpm() - 0.65) < 0.01, "get_rpm follows a game-driven rpm: %.3f" % rpb.get_rpm())
 	_check(SoundGenerator.create("wind").instantiate_playback().get_rpm() == -1.0, "get_rpm is -1 without revs")
 	var tyre := SoundGenerator.create("tyre")
-	_check(tyre.get_input_names() == PackedStringArray(["speed", "slip", "load", "surface"]), "tyre inputs %s" % [tyre.get_input_names()])
+	_check(tyre.get_input_names() == PackedStringArray(["speed", "slip", "load", "surface", "snow"]), "tyre inputs %s" % [tyre.get_input_names()])
 	for preset_name in ["Blown V8", "Buggy flat-four", "Dirt bike 2-stroke", "Rattletrap V8"]:
 		_check(SoundGenerator.create("combustion").set_preset(preset_name), "combustion preset %s" % preset_name)
 	_check(SoundGenerator.create("wind").set_preset("Canyon") and SoundGenerator.create("crowd").set_preset("Festival"), "Canyon wind, Festival crowd")

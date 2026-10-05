@@ -252,7 +252,10 @@ per-sample filters), still a small fraction of a core.
 
 `tyre` is one per vehicle (sum its wheels into the inputs): `speed`, `slip`, `load` and
 `surface` (0 packed dirt, 0.25 gravel, 0.5 sand, 0.75 mud, 1 rock/tarmac; values in between
-blend neighbours). Under every surface are the road rumble, the tyre's own mid-range roar
+blend neighbours). A fifth input, `snow`, lays snow and ice over it: 0 is the bare ground
+`surface` describes, 0.33 packed snow (a dense low crunch that squeaks when cold,
+`snow/squeak`), 0.67 powder (a soft deep hush and the whump of ploughing through), 1 ice (a
+smooth glassy hum; sliding, the studs scrape, kept under 3 kHz). Under every surface are the road rumble, the tyre's own mid-range roar
 (`road/roar`) and the hum of knobbly tread. On top: gravel crunches and knocks stones against
 the underside, sand is a soft rush, mud squelches, slaps and sucks, and rock or tarmac squeals
 when the tyre slides.
@@ -279,6 +282,11 @@ clap, clap, clap-clap-clap at `chant/bpm`, and hold `goal` for a roar that swell
 holds and takes a few seconds to settle. At 0 they do nothing, and the older presets are
 unchanged. All of these were tuned against recordings in
 [`tools/reference/hockey`](tools/reference).
+
+`wind`'s `Blizzard` is a low storm: its howl sits near 330 Hz and it comes in shoves
+(`buffet/level`, `buffet/rate_hz`; 0 on the other presets, which are unchanged), so it stays
+full with `hiss/level` at 0. Snow, ice and the Blizzard were tuned against recordings in
+[`tools/reference/snow`](tools/reference).
 
 `gen.get_input_names()` tells you what a model wants; params appear in the inspector under
 their groups and reach running playbacks live. Start from a native generator; move to a

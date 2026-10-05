@@ -320,10 +320,42 @@ def hockey_audition(folder):
     return rows
 
 
+def snow_audition(folder):
+    """The tyre's snow and ice and the Blizzard, next to the recordings they were tuned against."""
+    os.makedirs(folder, exist_ok=True)
+    ref = "tools/reference/snow"
+    render = ["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_params", "--"]
+    rows = []
+
+    def real(stem, note):
+        path = os.path.join(ROOT, ref, f"{stem}.ogg")
+        if os.path.exists(path):
+            rows.append({"label": f"Real \u00b7 {stem.replace('_', ' ')}", "note": "recording (public domain): " + note, "audio": encode(f"audition_real_{stem}", path)})
+
+    def ours(gen, stem, label, note, seconds, settings):
+        path = os.path.join(folder, f"{stem}.wav")
+        code, _, _ = run(render + [gen, path, str(seconds)] + settings)
+        if code == 0 and os.path.exists(path):
+            rows.append({"label": label, "note": note, "audio": encode(f"audition_{stem}", path)})
+
+    real("tyres_snow_ice", "tyres on snow and ice; squeaks at 1.2 and 3.7 s")
+    real("steps_fresh_snow", "footsteps in fresh snow")
+    real("studded_tyre", "a car on studded tyres")
+    ours("tyre", "tyre_snow_drive", "Tyre \u00b7 snow and ice", "Knobbly at speed 0.6: packed snow 0-6 s (sliding 4-6), powder 6-10 s, ice 10-16 s (sliding 13-16)", 16, ["preset=Knobbly", f"script={ref}/snow_script.csv"])
+    real("snowstorm", "a snowstorm")
+    real("howling_winter_storm", "a howling winter storm")
+    blizzard = ["preset=Blizzard", "hiss/level=0", "whistle/level=0.25", "@strength=0.8", "@gustiness=0.7"]
+    ours("wind", "wind_blizzard_game", "Wind \u00b7 Blizzard", "as Dirtrace plays it: no hiss, whistle 0.25, strength 0.8", 20, blizzard)
+    before = os.path.join(OUT, "before", "wind_blizzard_game.wav")
+    if os.path.exists(before):
+        rows.append({"label": "Wind \u00b7 Blizzard, before", "note": "the same settings before the rework", "audio": encode("audition_wind_blizzard_game_before", before)})
+    return rows
+
+
 def audition():
-    """Extra listening: hockey and tyres against recordings, the engine comparison, chosen presets."""
+    """Extra listening: snow, hockey and tyres against recordings, the engine comparison, chosen presets."""
     folder = os.path.join(OUT, "audition_wav")
-    rows = hockey_audition(folder) + tyre_audition(folder) + engine_audition(folder)
+    rows = snow_audition(folder) + hockey_audition(folder) + tyre_audition(folder) + engine_audition(folder)
     run(["cargo", "run", "-q", "-p", "brusverk-core", "--release", "--example", "render_models", "--", folder] + sorted({a[0] for a in AUDITION}))
     for gen, stem, label, note in AUDITION:
         path = os.path.join(folder, f"{gen}_{stem}.wav")

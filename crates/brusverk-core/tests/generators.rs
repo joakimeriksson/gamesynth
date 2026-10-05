@@ -982,3 +982,86 @@ fn only_events_transpose_by_themselves() {
         assert_eq!(m.transposes(), m.desc().one_shot, "{name}: events transpose, continuous generators are resampled");
     }
 }
+
+// ---- snow and ice (Dirtrace's snow track) ----
+
+#[test]
+fn tyre_snow_and_ice_have_their_own_character() {
+    let tyre = |snow: f32, slip: f32, squeak: f32| {
+        let mut m = generators::create("tyre", SR).unwrap();
+        set(m.as_mut(), "snow/squeak", squeak);
+        m.set_input_by_name("speed", 0.6);
+        m.set_input_by_name("slip", slip);
+        m.set_input_by_name("snow", snow);
+        m.snap();
+        render(m.as_mut(), 0.3);
+        render(m.as_mut(), 1.5)
+    };
+    let share = |x: &[f32], lo: f32, hi: f32| {
+        let w = &x[..(SR * 0.5) as usize];
+        spectral_energy(w, lo, hi, 50.0) / spectral_energy(w, 50.0, 9000.0, 50.0)
+    };
+    let (packed, powder, ice, ice_slide) = (tyre(1.0 / 3.0, 0.05, 0.5), tyre(2.0 / 3.0, 0.05, 0.5), tyre(1.0, 0.05, 0.5), tyre(1.0, 0.85, 0.5));
+    // Recordings of tyres on snow and ice: about 5 % of the energy above 2.5 kHz. Nothing here may hiss.
+    for (name, x) in [("packed", &packed), ("powder", &powder), ("ice", &ice), ("ice sliding", &ice_slide)] {
+        assert!(share(x, 2500.0, 9000.0) < 0.09, "{name}: {:.3} above 2.5 kHz", share(x, 2500.0, 9000.0));
+        assert!(rms(x) > 0.02 && peak(x) <= 1.0, "{name}: rms {} peak {}", rms(x), peak(x));
+    }
+    // Powder is a soft, deep hush: far darker than packed snow.
+    assert!(share(&powder, 50.0, 300.0) > share(&packed, 50.0, 300.0) * 1.5, "powder should be the low one");
+    // On ice, sliding brings the studs' scrape in, between 1 and 3 kHz.
+    assert!(share(&ice_slide, 1000.0, 3000.0) > share(&ice, 1000.0, 3000.0) * 1.3, "ice sliding should scrape");
+    // Cold snow squeaks: with snow/squeak up, packed snow carries short tones.
+    // (About two squeaks a second at this speed, so listen for a few seconds.)
+    let long = |squeak: f32| {
+        let mut m = generators::create("tyre", SR).unwrap();
+        set(m.as_mut(), "snow/squeak", squeak);
+        m.set_input_by_name("speed", 0.6);
+        m.set_input_by_name("snow", 1.0 / 3.0);
+        m.snap();
+        render(m.as_mut(), 5.0)
+    };
+    let (cold, mild) = (long(1.0), long(0.0));
+    let tone = spectral_energy(&cold, 950.0, 1550.0, 10.0) / spectral_energy(&mild, 950.0, 1550.0, 10.0);
+    assert!(tone > 1.1, "squeaks should add tone near 1.2 kHz: {tone:.2}x");
+    // Snow 0 is bare ground, unchanged.
+    let mut bare = generators::create("tyre", SR).unwrap();
+    bare.set_input_by_name("speed", 0.6);
+    bare.snap();
+    let mut zero = generators::create("tyre", SR).unwrap();
+    zero.set_input_by_name("speed", 0.6);
+    zero.set_input_by_name("snow", 0.0);
+    zero.snap();
+    assert!(render(bare.as_mut(), 0.5) == render(zero.as_mut(), 0.5));
+}
+
+#[test]
+fn blizzard_is_a_low_buffeting_storm() {
+    // As the game plays it: no hiss, a little whistle. Snowstorm recordings are loudest at
+    // 125 to 500 Hz, with up to a tenth of the energy above 2.5 kHz.
+    let storm = |buffet: f32| {
+        let mut m = generators::create("wind", SR).unwrap();
+        let k = m.desc().preset_index("Blizzard").unwrap();
+        m.load_preset(k);
+        set(m.as_mut(), "hiss/level", 0.0);
+        set(m.as_mut(), "whistle/level", 0.25);
+        set(m.as_mut(), "buffet/level", buffet);
+        m.set_input_by_name("strength", 0.8);
+        m.set_input_by_name("gustiness", 0.7);
+        m.snap();
+        render(m.as_mut(), 6.0)
+    };
+    let x = storm(0.7);
+    let w = &x[..(SR * 1.0) as usize];
+    let total = spectral_energy(w, 50.0, 9000.0, 25.0);
+    let low = spectral_energy(w, 100.0, 600.0, 25.0) / total;
+    let high = spectral_energy(w, 2500.0, 9000.0, 25.0) / total;
+    assert!(low > 0.4 && high < 0.08, "low share {low:.2}, above 2.5 kHz {high:.3}");
+    // Buffeting shoves the level about: the 50 ms level swings more with it than without.
+    let swing = |x: &[f32]| {
+        let env: Vec<f32> = x.chunks((0.05 * SR) as usize).map(rms).collect();
+        let mean = env.iter().sum::<f32>() / env.len() as f32;
+        (env.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / env.len() as f32).sqrt() / mean
+    };
+    assert!(swing(&x) > swing(&storm(0.0)) * 1.3, "buffeting {:.3} against {:.3}", swing(&x), swing(&storm(0.0)));
+}

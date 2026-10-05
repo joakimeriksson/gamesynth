@@ -60,3 +60,25 @@ harmonics fall off like a sawtooth's. The buzzer is harmonics of 126 Hz between 
 and 426 Hz as played), each key held so the arpeggio builds the chord; that organ is far brighter
 than ours, which was kept to the level of a second, duller organ recording to stay out of the
 hiss range.
+
+## Snow and ice
+
+`snow/` holds what the tyre's `snow` input and the wind's `Blizzard` were tuned against:
+public-domain (CC0) excerpts from [Freesound](https://freesound.org), cut and levelled like the
+others. `snow_script.csv` is the drive the test bench plays: packed snow (sliding at 4 s), powder,
+then ice (sliding at 13 s).
+
+| File | What | Source | Excerpt |
+|---|---|---|---|
+| `tyres_snow_ice.ogg` | Tyres on snow and ice, slow (the squeaks are at 1.2 and 3.7 s) | [tires_snow_ice_slow.wav](https://freesound.org/people/dunebuggy/sounds/71099/) by dunebuggy | 0 to 10.8 s, +5 dB |
+| `steps_fresh_snow.ogg` | Footsteps in fresh snow | [footsteps in fresh snow](https://freesound.org/people/florianreichelt/sounds/453168/) by florianreichelt | 0 to 15 s, +14 dB |
+| `studded_tyre.ogg` | A car with studded tyres | [Car with studs](https://freesound.org/people/KasperKeskinen/sounds/833165/) by KasperKeskinen | 0 to 5.3 s, +4 dB |
+| `snowstorm.ogg` | A snowstorm | [Wind - Snowstorm Sound Effect](https://freesound.org/people/NicknameLarry/sounds/493680/) by NicknameLarry | 0 to 20 s, +12 dB |
+| `heavy_snowstorm.ogg` | A heavy snowstorm | [DMP013016 HEAVYSNOWSTORM.wav](https://freesound.org/people/martypinso/sounds/22606/) by martypinso | 0 to 20 s, +11 dB |
+| `howling_winter_storm.ogg` | A howling winter storm | [Howling winter storm ambient sounds](https://freesound.org/people/DBlover/sounds/505999/) by DBlover | 0 to 20 s, +4 dB |
+
+What they show: tyres on snow and steps in fresh snow are broad up to about 2 kHz and
+low-heavy, with about 5 % of their energy above 2.5 kHz, and cold snow squeaks in short tones
+near 1 to 1.5 kHz. A studded tyre is a steady band at 250 Hz and 1 kHz. No recording of a car in
+powder was found, so powder is by judgement. Snowstorms are loudest at 125 to 500 Hz, with up to
+a tenth of the energy above 2.5 kHz, and they come in shoves.
