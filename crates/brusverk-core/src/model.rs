@@ -86,8 +86,15 @@ pub trait Model: Send {
         None
     }
     /// Playback-rate style pitch control (2.0 = an octave up), e.g. a player's `pitch_scale`.
-    /// Event generators transpose; models without a meaningful pitch ignore it.
+    /// Only models that [`Model::transposes`] act on it; the rest ignore it, and a host that
+    /// wants them pitched plays their output through a [`crate::resample::Resampler`].
     fn set_pitch_ratio(&mut self, _ratio: f32) {}
+    /// Whether [`Model::set_pitch_ratio`] transposes this model by itself. True for event
+    /// generators, which retune their layers; false for continuous generators and model files,
+    /// which have no single pitch and are resampled by the host instead.
+    fn transposes(&self) -> bool {
+        false
+    }
     /// Recent output peak 0..1, decays over ~250 ms.
     fn peak(&self) -> f32;
     /// Engines: current revs as 0..1 (combustion: between idle and max RPM; jet: the spool
@@ -171,6 +178,8 @@ pub trait Generator: Send + 'static {
         None
     }
     fn set_pitch_ratio(&mut self, _ratio: f32) {}
+    /// Whether `set_pitch_ratio` does anything (see [`Model::transposes`]).
+    const TRANSPOSES: bool = false;
     /// Engines: current revs as 0..1, see [`Model::rpm`].
     fn rpm(&self) -> Option<f32> {
         None
@@ -358,6 +367,10 @@ impl<G: Generator> Model for Native<G> {
 
     fn set_pitch_ratio(&mut self, ratio: f32) {
         self.g.set_pitch_ratio(if ratio.is_finite() { ratio.clamp(0.125, 8.0) } else { 1.0 });
+    }
+
+    fn transposes(&self) -> bool {
+        G::TRANSPOSES
     }
 
     fn peak(&self) -> f32 {

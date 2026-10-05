@@ -914,3 +914,71 @@ fn hockey_events_are_dull_and_the_right_length() {
     assert!((at(0.2) / at(0.9) - 1.0).abs() < 0.25, "flat: {:.3} and {:.3}", at(0.2), at(0.9));
     assert!(at(1.0) > at(0.2) * 0.7 && at(1.8) < at(0.2) * 0.25, "about 1.2 s: at 1 s {:.3}, at 1.8 s {:.3}", at(1.0), at(1.8));
 }
+
+// ---- Doppler: continuous generators played faster or slower ----
+
+/// Render `secs` of `m` through a resampler at `ratio`, in game-sized blocks.
+fn resampled(m: &mut dyn Model, ratio: f32, secs: f32) -> Vec<f32> {
+    use brusverk_core::resample::Resampler;
+    let mut rs = Resampler::new();
+    let n = (secs * SR) as usize;
+    let (mut l, mut r) = (vec![0.0f32; n], vec![0.0f32; n]);
+    for (cl, cr) in l.chunks_mut(512).zip(r.chunks_mut(512)) {
+        rs.process(ratio, cl, cr, |a, b| m.render_stereo(a, b));
+    }
+    l
+}
+
+#[test]
+fn resampling_shifts_every_frequency_and_costs_nothing_at_one() {
+    // An engine at fixed revs, as Dirtrace measures it: the firing frequency follows the ratio.
+    let engine = || {
+        let mut m = bare_piston(0.0, 0.35);
+        set(m.as_mut(), "exhaust/crossover", 1.0);
+        render(m.as_mut(), 0.3);
+        m
+    };
+    let base = dominant(&resampled(engine().as_mut(), 1.0, 0.4), 150.0, 400.0);
+    let up = dominant(&resampled(engine().as_mut(), 1.5, 0.4), 150.0, 400.0);
+    let down = dominant(&resampled(engine().as_mut(), 0.85, 0.4), 150.0, 400.0);
+    assert!((up / base - 1.5).abs() < 0.03, "x1.5 should be +7.02 semitones: {base} -> {up} Hz");
+    assert!((down / base - 0.85).abs() < 0.03, "x0.85: {base} -> {down} Hz");
+    // A ratio of 1 is the generator itself, sample for sample.
+    let (mut a, mut b) = (engine(), engine());
+    let (direct, _) = stereo(a.as_mut(), 0.5);
+    assert!(resampled(b.as_mut(), 1.0, 0.5) == direct, "ratio 1 must be a pass-through");
+}
+
+#[test]
+fn resampling_follows_a_moving_ratio_without_clicks() {
+    // A sine source: a pass-by that sweeps the ratio 1.2 -> 0.85 over a second, block by block.
+    use brusverk_core::resample::Resampler;
+    let mut rs = Resampler::new();
+    let mut phase = 0.0f32;
+    let (mut out, mut l, mut r) = (Vec::new(), vec![0.0f32; 480], vec![0.0f32; 480]);
+    for k in 0..100 {
+        let ratio = 1.2 - 0.35 * (k as f32 / 99.0);
+        rs.process(ratio, &mut l, &mut r, |a, b| {
+            for (x, y) in a.iter_mut().zip(b.iter_mut()) {
+                *x = phase.sin();
+                *y = *x;
+                phase = (phase + core::f32::consts::TAU * 440.0 / SR) % core::f32::consts::TAU;
+            }
+        });
+        out.extend_from_slice(&l);
+    }
+    // The biggest step between samples of a 440 Hz sine at x1.2 is 2 pi 528 / 48000, about 0.069.
+    let jump = out.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+    assert!(jump < 0.075, "a click: a step of {jump:.3}");
+    let start = dominant(&out[..4800], 400.0, 600.0);
+    let end = dominant(&out[out.len() - 4800..], 300.0, 500.0);
+    assert!((start - 523.0).abs() < 10.0 && (end - 377.0).abs() < 10.0, "sweep {start} -> {end} Hz");
+}
+
+#[test]
+fn only_events_transpose_by_themselves() {
+    for name in generators::NAMES {
+        let m = generators::create(name, SR).unwrap();
+        assert_eq!(m.transposes(), m.desc().one_shot, "{name}: events transpose, continuous generators are resampled");
+    }
+}

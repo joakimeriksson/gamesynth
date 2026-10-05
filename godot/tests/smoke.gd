@@ -123,6 +123,35 @@ func _init() -> void:
 	_check(jpb.is_playing(), "engine keeps running")
 	jpb.stop()
 	_check(not jpb.is_playing(), "engine stopped")
+	# pitch_scale (Doppler) plays the whole engine faster: whine, roar and air move together.
+	# The same engine at 1.0, read one and a half times as fast, must match the take at 1.5 far
+	# better than the take at 1.0 does. (Not exactly: the engine smooths per render call, and
+	# the resampler calls it in other block sizes. The ratio ramps up over the first 256
+	# frames, after which the read position is 321.25 frames in and moves 1.5 per frame.)
+	var jet_take := func(scale: float, frames: int) -> PackedVector2Array:
+		var p := JetEngineStream.from_preset("Racer").instantiate_playback() as JetEnginePlayback
+		p.start(0.0)
+		p.set_state(0.7, 0.0, 0.5, 0.0)
+		p.mix_audio(1.0, 48000)
+		return p.mix_audio(scale, frames)
+	var plain: PackedVector2Array = jet_take.call(1.0, 30000)
+	var fast: PackedVector2Array = jet_take.call(1.5, 19000)
+	var similarity := func(start: float, step: float) -> float:
+		var dot := 0.0
+		var e1 := 0.0
+		var e2 := 0.0
+		for m in range(0, 18000):
+			var at := start + step * m
+			var i0 := int(at)
+			var want: float = lerpf(plain[i0].x, plain[i0 + 1].x, at - i0)
+			var got: float = fast[256 + m].x
+			dot += want * got
+			e1 += want * want
+			e2 += got * got
+		return dot / sqrt(e1 * e2)
+	var as_fast: float = similarity.call(321.25, 1.5)
+	var as_plain: float = similarity.call(256.0, 1.0)
+	_check(as_fast > 0.85 and as_fast > 4.0 * absf(as_plain), "pitch_scale 1.5 plays the jet engine half as fast again (match %.2f, unshifted %.2f)" % [as_fast, as_plain])
 
 	print("SoundGenerator")
 	_check(ClassDB.class_exists("SoundGenerator"), "class registered")
@@ -274,6 +303,20 @@ func _init() -> void:
 	var ipb2 := inline_gen.instantiate_playback()
 	ipb2.start(0.0)
 	_check(absf(_peak(ipb2.mix_audio(1.0, 4800)) - 0.5) < 0.01, "inline sine at the configured level")
+	# pitch_scale (Doppler) plays a continuous generator faster: a 440 Hz sine comes out at 660.
+	var doppler := func(stream: AudioStream, scale: float) -> int:
+		var dpb := stream.instantiate_playback()
+		dpb.start(0.0)
+		dpb.mix_audio(1.0, 4800)
+		var heard := dpb.mix_audio(scale, 48000)
+		var n := 0
+		for k in range(1, heard.size()):
+			if (heard[k - 1].x < 0.0) != (heard[k].x < 0.0):
+				n += 1
+		return n
+	var flat: int = doppler.call(inline_gen, 1.0)
+	var raised: int = doppler.call(inline_gen, 1.5)
+	_check(absf(float(raised) / flat - 1.5) < 0.02, "pitch_scale 1.5 raises a continuous generator 7 semitones (%d -> %d crossings)" % [flat, raised])
 	print("  (the next two errors are expected)")
 	inline_gen.config = "[graph]\nnodes = [{ id = \"o\", type = \"wobble\" }]\nout = \"o\""
 	_check(inline_gen.get_error().contains("unknown type 'wobble'"), "bad config reports: %s" % inline_gen.get_error().left(48))

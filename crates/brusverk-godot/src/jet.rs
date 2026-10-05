@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use brusverk_core::resample::Resampler;
 use brusverk_core::{JetCommand, JetEngine, JetParamId, JetParams, JetPreset};
 use godot::classes::native::AudioFrame;
 use godot::classes::{AudioServer, AudioStream, AudioStreamPlayback, IAudioStream, IAudioStreamPlayback, IResource, Resource};
@@ -9,7 +10,7 @@ use godot_core::meta::RawPtr;
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::props;
-use crate::shared::{fill_frames, Shared};
+use crate::shared::{fill_frames_lr, Shared};
 
 const COMMAND_QUEUE_LEN: usize = 1024;
 const PROP_PRESET: &str = "preset/name";
@@ -273,6 +274,8 @@ pub struct JetEnginePlayback {
     start_spooled: bool,
     playing: bool,
     frames_rendered: u64,
+    /// Plays the engine at the player's `pitch_scale` (Doppler).
+    resampler: Resampler,
     base: Base<AudioStreamPlayback>,
 }
 
@@ -290,6 +293,7 @@ impl JetEnginePlayback {
             start_spooled,
             playing: false,
             frames_rendered: 0,
+            resampler: Resampler::new(),
             base,
         })
     }
@@ -395,6 +399,7 @@ impl IAudioStreamPlayback for JetEnginePlayback {
             self.engine.snap_rpm();
         }
         self.frames_rendered = 0;
+        self.resampler.reset();
         self.playing = true;
     }
 
@@ -416,7 +421,7 @@ impl IAudioStreamPlayback for JetEnginePlayback {
 
     fn seek(&mut self, _position: f64) {}
 
-    unsafe fn mix_rawptr(&mut self, buffer: RawPtr<*mut AudioFrame>, _rate_scale: f32, frames: i32) -> i32 {
+    unsafe fn mix_rawptr(&mut self, buffer: RawPtr<*mut AudioFrame>, rate_scale: f32, frames: i32) -> i32 {
         let ptr = buffer.ptr();
         if ptr.is_null() || frames <= 0 {
             return 0;
@@ -428,9 +433,18 @@ impl IAudioStreamPlayback for JetEnginePlayback {
         if let Some(p) = self.shared.poll(&mut self.params_version) {
             self.engine.set_params(p);
         }
-        let engine = &mut self.engine;
+        // The player's pitch_scale (Doppler) plays the whole engine faster or slower.
+        let ratio = if rate_scale > 0.0 { rate_scale } else { 1.0 };
+        let (engine, resampler) = (&mut self.engine, &mut self.resampler);
         // SAFETY: Godot guarantees `buffer` holds at least `frames` AudioFrames.
-        unsafe { fill_frames(ptr, frames, |block| engine.render_mono(block)) };
+        unsafe {
+            fill_frames_lr(ptr, frames, |left, right| {
+                resampler.process(ratio, left, right, |l, r| {
+                    engine.render_mono(l);
+                    r.copy_from_slice(l);
+                })
+            })
+        };
         self.frames_rendered += frames as u64;
         frames as i32
     }

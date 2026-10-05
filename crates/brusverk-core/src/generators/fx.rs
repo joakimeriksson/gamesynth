@@ -494,6 +494,8 @@ impl<R: Recipe> Generator for OneShot<R> {
         Some(FxEngine::length(R::LAYERS, p, R::REVERB_TIME))
     }
 
+    const TRANSPOSES: bool = true;
+
     fn set_pitch_ratio(&mut self, ratio: f32) {
         self.engine.set_pitch_ratio(ratio);
     }

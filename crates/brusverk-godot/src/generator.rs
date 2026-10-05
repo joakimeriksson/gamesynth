@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
+use brusverk_core::resample::Resampler;
 use brusverk_core::{generators, GraphModel, Model};
 use godot::classes::native::AudioFrame;
 use godot::classes::{AudioServer, AudioStream, AudioStreamPlayback, FileAccess, IAudioStream, IAudioStreamPlayback};
@@ -453,6 +454,7 @@ impl IAudioStream for SoundGenerator {
             pending_trigger: false,
             playing: false,
             frames_rendered: 0,
+            resampler: Resampler::new(),
             base,
         });
         Some(pb.upcast())
@@ -518,6 +520,8 @@ pub struct SoundGeneratorPlayback {
     pending_trigger: bool,
     playing: bool,
     frames_rendered: u64,
+    /// Plays models that do not transpose by themselves at the player's `pitch_scale`.
+    resampler: Resampler,
     base: Base<AudioStreamPlayback>,
 }
 
@@ -644,6 +648,7 @@ impl IAudioStreamPlayback for SoundGeneratorPlayback {
         }
         self.pending_trigger = self.model.desc().one_shot;
         self.frames_rendered = 0;
+        self.resampler.reset();
         self.playing = true;
     }
 
@@ -683,9 +688,14 @@ impl IAudioStreamPlayback for SoundGeneratorPlayback {
             }
         }
         self.sync_params();
-        // The player's pitch_scale arrives as a resampling ratio. Event generators transpose
-        // by it, as SynthStream does; continuous generators have no single pitch and ignore it.
-        self.model.set_pitch_ratio(if rate_scale > 0.0 { rate_scale } else { 1.0 });
+        // The player's pitch_scale arrives as a resampling ratio (games use it for Doppler).
+        // Event generators transpose by it, as SynthStream does. Everything else has no single
+        // pitch, so its output is played faster or slower: every frequency moves together.
+        let ratio = if rate_scale > 0.0 { rate_scale } else { 1.0 };
+        let transposes = self.model.transposes();
+        if transposes {
+            self.model.set_pitch_ratio(ratio);
+        }
         if self.pending_trigger {
             self.pending_trigger = false;
             self.playing = true;
@@ -696,9 +706,17 @@ impl IAudioStreamPlayback for SoundGeneratorPlayback {
             self.playing = false;
             return 0;
         }
-        let model = &mut self.model;
+        let (model, resampler) = (&mut self.model, &mut self.resampler);
         // SAFETY: Godot guarantees `buffer` holds at least `frames` AudioFrames.
-        unsafe { fill_frames_lr(ptr, frames, |left, right| model.render_stereo(left, right)) };
+        unsafe {
+            fill_frames_lr(ptr, frames, |left, right| {
+                if transposes {
+                    model.render_stereo(left, right);
+                } else {
+                    resampler.process(ratio, left, right, |l, r| model.render_stereo(l, r));
+                }
+            })
+        };
         self.frames_rendered += frames as u64;
         if self.model.is_finished() {
             // For callers polling is_playing(); the next mix() returns 0 and ends the playback.

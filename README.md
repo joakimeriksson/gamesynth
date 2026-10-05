@@ -121,7 +121,7 @@ physics every frame. Whine, roar, tube resonance, intake hiss, afterburner, wind
 layers all follow an internal RPM model with separate spool-up / spool-down inertia.
 
 ```gdscript
-var engine := AudioStreamPlayer3D.new()            # per ship; Godot does doppler + distance
+var engine := AudioStreamPlayer3D.new()            # per ship; distance, and Doppler via pitch_scale
 engine.stream = JetEngineStream.from_preset("Racer")  # Racer, Heavy, Turbine, Scramjet
 add_child(engine)
 engine.play()
@@ -188,8 +188,15 @@ more than mono, about 0.3% of a desktop core per sounding event.
 They end like samples: when the tail has rung out, `mix()` returns no frames, Godot drops the
 playback and the player emits `finished`. `get_length()` reports an upper bound on one trigger,
 tail included (measured by an offline render for model files). The player's `pitch_scale`
-transposes events, as it does for `SynthStream`; continuous generators ignore it. A new native effect is a table of `Layer`s in
+transposes events, as it does for `SynthStream`. A new native effect is a table of `Layer`s in
 `generators/fx.rs`, not new DSP.
+
+**Doppler.** On continuous generators, model files and `JetEngineStream`, `pitch_scale`
+plays the sound faster or slower: every frequency in it moves together, resonances and noise
+colour included, so a game can set it every frame from the source's and listener's velocities
+(or switch on Godot's own Doppler tracking, which arrives the same way). It is a cubic
+resampler that ramps the ratio across each block, costs nothing until the ratio first leaves
+1, and accepts 0.25 to 4.
 
 **Wheeled vehicles.** `combustion` normally revs with its own inertia from `throttle`. A geared
 vehicle knows its RPM, so turn on `engine/external_rpm` and feed `rpm` (0..1 between idle and

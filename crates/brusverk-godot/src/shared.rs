@@ -46,28 +46,11 @@ impl<T: Copy> Shared<T> {
     }
 }
 
-/// Fill Godot's output buffer from a mono renderer, in bounded stack-sized chunks.
+/// Fill Godot's output buffer from a stereo renderer, in bounded stack-sized chunks.
 ///
 /// # Safety
 /// `ptr` must point to at least `frames` writable `AudioFrame`s (Godot guarantees this for
 /// the buffer passed to `_mix`).
-pub unsafe fn fill_frames(ptr: *mut AudioFrame, frames: usize, mut render: impl FnMut(&mut [f32])) {
-    let mut block = [0.0f32; brusverk_core::MAX_BLOCK];
-    let mut done = 0;
-    while done < frames {
-        let n = (frames - done).min(block.len());
-        render(&mut block[..n]);
-        for (i, s) in block[..n].iter().enumerate() {
-            unsafe { ptr.add(done + i).write(AudioFrame { left: *s, right: *s }) };
-        }
-        done += n;
-    }
-}
-
-/// Same as [`fill_frames`] for renderers that produce stereo directly.
-///
-/// # Safety
-/// See [`fill_frames`].
 pub unsafe fn fill_frames_stereo(ptr: *mut AudioFrame, frames: usize, mut render: impl FnMut(&mut [StereoFrame])) {
     let mut block = [StereoFrame::default(); brusverk_core::MAX_BLOCK];
     let mut done = 0;
@@ -81,10 +64,10 @@ pub unsafe fn fill_frames_stereo(ptr: *mut AudioFrame, frames: usize, mut render
     }
 }
 
-/// Same as [`fill_frames`] for renderers that fill separate left and right buffers.
+/// Same as [`fill_frames_stereo`] for renderers that fill separate left and right buffers.
 ///
 /// # Safety
-/// See [`fill_frames`].
+/// See [`fill_frames_stereo`].
 pub unsafe fn fill_frames_lr(ptr: *mut AudioFrame, frames: usize, mut render: impl FnMut(&mut [f32], &mut [f32])) {
     let (mut left, mut right) = ([0.0f32; brusverk_core::MAX_BLOCK], [0.0f32; brusverk_core::MAX_BLOCK]);
     let mut done = 0;

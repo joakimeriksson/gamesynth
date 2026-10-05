@@ -34,6 +34,7 @@ pub mod noise;
 pub mod osc;
 pub mod patch;
 pub mod render;
+pub mod resample;
 pub mod sfx;
 pub mod synth;
 pub mod voice;
