@@ -1,0 +1,84 @@
+{
+ "name": "campfire",
+ "duration": 22,
+ "color": "gen",
+ "audio": "clips_out/campfire.wav",
+ "file": "# models/campfire.toml",
+ "lines": [
+  {
+   "section": "[inputs]"
+  },
+  {
+   "key": "intensity",
+   "value": "0.5"
+  },
+  {
+   "section": "[params]"
+  },
+  {
+   "key": "crackle_rate",
+   "value": "30"
+  },
+  {
+   "key": "crackle_hz",
+   "value": "2800"
+  },
+  {
+   "key": "crackle_ms",
+   "value": "4"
+  },
+  {
+   "key": "roar_hz",
+   "value": "220"
+  },
+  {
+   "key": "roar_level",
+   "value": "0.6"
+  }
+ ],
+ "segments": [
+  {
+   "t": 0,
+   "caption": "This campfire isn't a recording.",
+   "sub": "It's 30 lines of TOML, synthesized live."
+  },
+  {
+   "t": 5,
+   "values": {
+    "intensity": "1.0"
+   },
+   "caption": "The game turns one input up.",
+   "sub": "intensity 0.5 -> 1.0: embers to blaze"
+  },
+  {
+   "t": 9.5,
+   "values": {
+    "crackle_rate": "300",
+    "crackle_hz": "6000",
+    "roar_level": "0.05"
+   },
+   "caption": "Change three numbers...",
+   "sub": "...and the fire becomes a sizzle."
+  },
+  {
+   "t": 14,
+   "values": {
+    "crackle_rate": "4",
+    "crackle_ms": "20",
+    "roar_hz": "70",
+    "roar_level": "1.0",
+    "crackle_hz": "2800"
+   },
+   "caption": "...or a furnace.",
+   "sub": "Same file. No new assets."
+  },
+  {
+   "t": 18.5,
+   "card": true,
+   "caption": "Game sound without sound files.",
+   "sub": "github.com/joakimeriksson/gamesynth",
+   "foot": "Rust  \u00b7  Godot 4  \u00b7  WebAssembly",
+   "reset": true
+  }
+ ]
+}

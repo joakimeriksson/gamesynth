@@ -5,3 +5,5 @@ godot/addons/brusverk/bin/
 web/pkg/
 dashboard/
 __pycache__/
+clips_out/
+.claude/worktrees/

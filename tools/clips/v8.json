@@ -1,0 +1,88 @@
+{
+ "name": "v8",
+ "duration": 24,
+ "color": "accent",
+ "audio": "clips_out/v8.wav",
+ "trace": "clips_out/v8.csv",
+ "file": "SoundGenerator.create(\"piston\")",
+ "lines": [
+  {
+   "section": "# input, set by the game every frame"
+  },
+  {
+   "key": "throttle",
+   "live": "throttle",
+   "bar": true,
+   "then": {
+    "live": "engine_rpm",
+    "fmt": "{:.0f} rpm"
+   }
+  },
+  {
+   "section": "# params"
+  },
+  {
+   "key": "engine/layout",
+   "value": "Crossplane V8"
+  },
+  {
+   "key": "engine/idle_rpm",
+   "value": "800"
+  },
+  {
+   "key": "engine/max_rpm",
+   "value": "6200"
+  },
+  {
+   "key": "exhaust/length_m",
+   "value": "1.7"
+  },
+  {
+   "key": "exhaust/muffling",
+   "value": "0.06"
+  },
+  {
+   "key": "turbo/level",
+   "value": "0.0"
+  }
+ ],
+ "segments": [
+  {
+   "t": 0,
+   "caption": "This muscle V8 isn't a recording.",
+   "sub": "Firing order, two exhaust banks, pipes in metres."
+  },
+  {
+   "t": 7,
+   "values": {
+    "engine/layout": "Flat-plane V8",
+    "engine/idle_rpm": "1000",
+    "engine/max_rpm": "8500",
+    "exhaust/length_m": "1.8",
+    "exhaust/muffling": "0.12"
+   },
+   "caption": "Swap the crankshaft.",
+   "sub": "Flat-plane: it screams to the limiter."
+  },
+  {
+   "t": 13,
+   "values": {
+    "engine/layout": "Crossplane V8",
+    "engine/idle_rpm": "520",
+    "engine/max_rpm": "3000",
+    "exhaust/length_m": "3.4",
+    "exhaust/muffling": "0.04",
+    "turbo/level": "0.5"
+   },
+   "caption": "Or build a war rig.",
+   "sub": "3.4 m stacks, a turbo, an engine brake."
+  },
+  {
+   "t": 19.5,
+   "card": true,
+   "caption": "Game sound without sound files.",
+   "sub": "github.com/joakimeriksson/gamesynth",
+   "foot": "Rust  \u00b7  Godot 4  \u00b7  WebAssembly"
+  }
+ ]
+}
