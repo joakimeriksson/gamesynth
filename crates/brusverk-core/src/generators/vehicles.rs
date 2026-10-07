@@ -595,20 +595,31 @@ impl Generator for Motor {
 // ---------------------------------------------------------------------------------------------
 
 model_params! {
-    /// Rotor: blade-pass thump, chopped downwash noise and a turbine whine.
+    /// Rotor: blade slap, blade-pass thump, chopped downwash noise and a turbine whine.
+    ///
+    /// The slap was fitted to CC0 recordings of a UH-1 "Huey" and a Chinook (see
+    /// `tools/sound_views.py`): every blade pass is a bipolar pressure pulse (a sharp push, then a
+    /// longer, shallower pull, about 10 ms in all) wrapped in a short noise burst, 10-13 dB above the
+    /// downwash between passes, and nearly the same every time (the envelope repeats with an
+    /// autocorrelation of about 0.8). That steady beat is what makes it read as a helicopter.
     RotorParams / RotorParamId {
-        blades: "rotor/blades" = 3.0, int(2, 8);
-        max_bpf: "rotor/max_blade_hz" = 22.0, exp(4.0, 160.0);
+        blades: "rotor/blades" = 2.0, int(2, 8);
+        max_bpf: "rotor/max_blade_hz" = 11.0, exp(4.0, 160.0);
         spin_up: "rotor/spin_up" = 3.0, lin(0.1, 12.0);
         spin_down: "rotor/spin_down" = 5.0, lin(0.1, 12.0);
         sharp: "rotor/sharpness" = 3.0, lin(1.0, 8.0);
-        thump_level: "rotor/thump" = 0.7, UNIT;
-        chop: "wash/chop" = 0.75, UNIT;
-        wash_level: "wash/level" = 0.6, UNIT;
-        wash_hz: "wash/hz" = 500.0, exp(100.0, 4000.0);
-        turbine_level: "turbine/level" = 0.15, UNIT;
+        thump_level: "rotor/thump" = 0.2, UNIT;
+        chop: "wash/chop" = 0.35, UNIT;
+        wash_level: "wash/level" = 0.9, UNIT;
+        wash_hz: "wash/hz" = 250.0, exp(100.0, 4000.0);
+        turbine_level: "turbine/level" = 0.005, UNIT;
         turbine_hz: "turbine/hz" = 3200.0, exp(500.0, 9000.0);
-        gain: "master/gain" = 0.9, GAIN;
+        gain: "master/gain" = 1.0, GAIN;
+        slap_level: "slap/level" = 0.8, UNIT;
+        slap_ms: "slap/ms" = 10.0, lin(3.0, 30.0);
+        slap_noise: "slap/noise" = 0.35, UNIT;
+        slap_hz: "slap/hz" = 900.0, exp(300.0, 8000.0);
+        slap_jitter: "slap/jitter" = 0.12, UNIT;
     }
 }
 
@@ -622,23 +633,49 @@ pub struct Rotor {
     noise: Noise,
     thump: Svf,
     wash: Svf,
+    // Slap: seconds since the last blade pass, this pass's pulse and burst sizes, the burst's
+    // attack and decay envelopes, and its own noise so the old layers render exactly as before.
+    since: f32,
+    pulse_amp: f32,
+    burst: [f32; 2],
+    slap_noise: Noise,
+    slap_lp: Svf,
+    rng: crate::math::Rng,
+}
+
+/// One blade-slap pressure pulse at `x` = time / pulse length: a push over the first quarter,
+/// then a pull three times as long and a third as deep, so it carries no DC.
+fn slap_pulse(x: f32) -> f32 {
+    if x < 0.25 {
+        (x * 4.0 * std::f32::consts::PI).sin()
+    } else if x < 1.0 {
+        -((x - 0.25) / 0.75 * std::f32::consts::PI).sin() / 3.0
+    } else {
+        0.0
+    }
 }
 
 impl Generator for Rotor {
     type P = RotorParams;
     const NAME: &'static str = "rotor";
     const CATEGORY: &'static str = "vehicles";
-    const DOC: &'static str = "Helicopter, propeller or fan: blade thump, chopped wash, turbine whine.";
+    const DOC: &'static str = "Helicopter, propeller or fan: blade slap, blade thump, chopped wash, turbine whine.";
     const INPUTS: &'static [InputSpec] = &[
         InputSpec { name: "rpm", default: 0.0, doc: "Rotor speed target; follows with spin inertia" },
-        InputSpec { name: "load", default: 0.5, doc: "Blade pitch / lift: heavier thump" },
+        InputSpec { name: "load", default: 0.5, doc: "Blade pitch / lift: heavier slap and thump" },
     ];
 
     fn presets() -> Vec<(&'static str, RotorParams)> {
+        // Propeller plane and Ceiling fan have no slap and pin the old defaults, so they render
+        // exactly as before the slap was added.
+        let old = RotorParams {
+            blades: 3.0, max_bpf: 22.0, thump_level: 0.7, chop: 0.75, wash_level: 0.6, wash_hz: 500.0, turbine_level: 0.15, slap_level: 0.0, gain: 0.9,
+            ..Default::default()
+        };
         vec![
-            ("Attack chopper", RotorParams { blades: 4.0, max_bpf: 28.0, sharp: 4.5, thump_level: 0.9, turbine_level: 0.25, ..Default::default() }),
-            ("Propeller plane", RotorParams { blades: 3.0, max_bpf: 95.0, spin_up: 1.5, spin_down: 2.5, sharp: 1.6, wash_hz: 900.0, turbine_level: 0.0, ..Default::default() }),
-            ("Ceiling fan", RotorParams { blades: 4.0, max_bpf: 9.0, spin_up: 6.0, spin_down: 9.0, thump_level: 0.25, wash_level: 0.35, wash_hz: 300.0, turbine_level: 0.0, ..Default::default() }),
+            ("Attack chopper", RotorParams { blades: 4.0, max_bpf: 19.0, sharp: 4.5, thump_level: 0.3, turbine_level: 0.015, slap_level: 0.9, slap_ms: 8.0, slap_hz: 1800.0, gain: 1.5, ..Default::default() }),
+            ("Propeller plane", RotorParams { blades: 3.0, max_bpf: 95.0, spin_up: 1.5, spin_down: 2.5, sharp: 1.6, wash_hz: 900.0, turbine_level: 0.0, ..old }),
+            ("Ceiling fan", RotorParams { blades: 4.0, max_bpf: 9.0, spin_up: 6.0, spin_down: 9.0, thump_level: 0.25, wash_level: 0.35, wash_hz: 300.0, turbine_level: 0.0, ..old }),
         ]
     }
 
@@ -653,6 +690,12 @@ impl Generator for Rotor {
             noise: Noise::new(0x43_0001),
             thump: Svf::default(),
             wash: Svf::default(),
+            since: 1.0,
+            pulse_amp: 0.0,
+            burst: [0.0; 2],
+            slap_noise: Noise::new(0x43_0002),
+            slap_lp: Svf::default(),
+            rng: crate::math::Rng::new(0x43_0003),
         }
     }
 
@@ -668,9 +711,14 @@ impl Generator for Rotor {
         let n_blades = (p.blades.round() as usize).clamp(2, 8);
         self.thump.set(FilterMode::LowPass, bpf * 4.0 + 40.0, 0.2, sr);
         self.wash.set(FilterMode::BandPass, p.wash_hz * (0.7 + 0.6 * spin), 0.3, sr);
+        self.slap_lp.set(FilterMode::LowPass, p.slap_hz, 0.1, sr);
         let thump_gain = p.thump_level * (0.5 + 0.5 * load) * 2.0;
         let wash_gain = p.wash_level * 2.5;
         let turbine_gain = p.turbine_level * spin * 0.5;
+        // The slap needs airspeed over the blade: it grows with the square of the spin.
+        let slap_gain = p.slap_level * (0.6 + 0.8 * load) * spin * spin * 1.5;
+        let pulse_len = p.slap_ms * 0.001;
+        let burst_k = [(-1.0 / (0.0007 * sr)).exp(), (-1.0 / (pulse_len * 0.7 * sr)).exp()];
         let (inc, t_inc) = (bpf / sr, p.turbine_hz * spin / sr);
         let level = fade_in(spin) * (0.3 + 0.7 * spin) * p.gain * 0.65;
         for s in out.iter_mut() {
@@ -678,6 +726,13 @@ impl Generator for Rotor {
                 self.blade = (self.blade + 1) % n_blades;
                 // One blade tracks slightly off, giving the once-per-revolution lope.
                 self.blade_amp = if self.blade == 0 { 0.82 } else { 1.0 };
+                if p.slap_level > 0.0 {
+                    let j = p.slap_jitter;
+                    self.since = 0.0;
+                    self.pulse_amp = self.blade_amp * self.rng.range(1.0 - j, 1.0 + j);
+                    let b = p.slap_noise * self.blade_amp * self.rng.range(1.0 - 3.0 * j, 1.0 + j);
+                    self.burst = [b, b];
+                }
             }
             self.turbine[0].tick(t_inc);
             self.turbine[1].tick(t_inc * 1.31);
@@ -685,7 +740,16 @@ impl Generator for Rotor {
             let thump = self.thump.tick(env - 0.3) + 0.3 * self.pass.sin();
             let wash = self.wash.tick(self.noise.pink()) * (1.0 - p.chop + p.chop * env);
             let turbine = self.turbine[0].sin() + 0.5 * self.turbine[1].sin();
-            *s = (thump * thump_gain + wash * wash_gain + turbine * turbine_gain) * level;
+            let mut out_s = thump * thump_gain + wash * wash_gain + turbine * turbine_gain;
+            if p.slap_level > 0.0 {
+                let pulse = slap_pulse(self.since / pulse_len) * self.pulse_amp;
+                self.burst[0] *= burst_k[0];
+                self.burst[1] *= burst_k[1];
+                let crack = self.slap_lp.tick(self.slap_noise.pink()) * (self.burst[1] - self.burst[0]) * 4.0;
+                self.since += 1.0 / sr;
+                out_s += (pulse + crack) * slap_gain;
+            }
+            *s = out_s * level;
         }
     }
 }

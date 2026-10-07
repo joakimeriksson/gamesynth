@@ -188,7 +188,7 @@ func _init() -> void:
 	var wind_gen := SoundGenerator.new()
 	_check(wind_gen.generator == "wind" and wind_gen.is_native(), "defaults to native wind")
 	_check(wind_gen.get_input_names() == PackedStringArray(["strength", "gustiness"]), "input names %s" % [wind_gen.get_input_names()])
-	_check(wind_gen.get("howl/hz") == 520.0, "params are inspector properties")
+	_check(wind_gen.get("howl/hz") == 340.0, "params are inspector properties")
 	wind_gen.set("howl/hz", 99999.0)
 	_check(wind_gen.get_param("howl/hz") == 4000.0, "param set via property is clamped")
 	wind_gen.preset = "Blizzard"
@@ -290,7 +290,7 @@ func _init() -> void:
 	var fire_gen := SoundGenerator.from_file(model_path)
 	_check(fire_gen.get_error() == "" and not fire_gen.is_native(), "model file loads as a graph model %s" % fire_gen.get_error())
 	_check(fire_gen.get_input_names() == PackedStringArray(["intensity"]), "file-defined inputs")
-	_check(fire_gen.get("crackle/crackle_rate") == 30.0, "file-defined params in the inspector")
+	_check(fire_gen.get("crackle/crackle_rate") == 40.0, "file-defined params in the inspector")
 	var fpb := fire_gen.instantiate_playback() as SoundGeneratorPlayback
 	fpb.start(0.0)
 	fpb.set_input("intensity", 1.0)

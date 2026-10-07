@@ -446,6 +446,46 @@ fn damage_misfires_and_rattles() {
 }
 
 #[test]
+fn ocean_roars_in_the_middle_without_sub_bass_or_a_hissing_top() {
+    // Beach recordings (target/refs/ocean) are loudest at 250 Hz to 1 kHz, with 63 Hz 5 to 22 dB
+    // down and 16 kHz 19 to 33 dB down. The ocean before the retune was loudest at 63 Hz, with
+    // 16 kHz only 8 dB down.
+    let octaves = |preset: &str, centres: &[f32]| -> Vec<f32> {
+        let mut m = generators::create("ocean", SR).unwrap();
+        if let Some(k) = m.desc().preset_index(preset) {
+            m.load_preset(k);
+        }
+        m.set_input_by_name("size", 0.5);
+        m.snap();
+        let x = render(m.as_mut(), 13.0);
+        // Average over windows spread across a couple of waves; band energy is the mean density
+        // times the band width, in dB.
+        centres
+            .iter()
+            .map(|&c| {
+                let (lo, hi) = (c / 2f32.sqrt(), c * 2f32.sqrt());
+                let step = (hi - lo) / 11.0;
+                let e: f32 = (0..8).map(|k| {
+                    let s = ((1.0 + 1.5 * k as f32) * SR) as usize;
+                    spectral_energy(&x[s..s + (SR * 0.25) as usize], lo, hi, step) / 12.0
+                }).sum();
+                10.0 * (e * (hi - lo)).log10()
+            })
+            .collect()
+    };
+    let d = octaves("Default", &[63.0, 500.0, 16000.0]);
+    assert!(d[0] < d[1] - 6.0, "Default: 63 Hz {:.1} dB against 500 Hz", d[0] - d[1]);
+    assert!(d[2] < d[1] - 12.0, "Default: 16 kHz {:.1} dB against 500 Hz", d[2] - d[1]);
+    // Storm surf is darker and heavier, like a storm on a sandy beach.
+    let s = octaves("Storm surf", &[63.0, 250.0, 16000.0]);
+    assert!(s[0] < s[1] - 2.0, "Storm surf: 63 Hz {:.1} dB against 250 Hz", s[0] - s[1]);
+    assert!(s[2] < s[1] - 20.0, "Storm surf: 16 kHz {:.1} dB against 250 Hz", s[2] - s[1]);
+    // Lapping lake waves are brighter, but still no white hiss.
+    let l = octaves("Lake shore", &[1000.0, 16000.0]);
+    assert!(l[1] < l[0] - 9.0, "Lake shore: 16 kHz {:.1} dB against 1 kHz", l[1] - l[0]);
+}
+
+#[test]
 fn tyre_surfaces_have_their_own_character() {
     let tyre = |surface: f32, speed: f32, slip: f32| {
         let mut m = generators::create("tyre", SR).unwrap();
@@ -515,6 +555,35 @@ fn tyre_surfaces_have_their_own_character() {
     }
     // Standing still is silent.
     assert!(rms(&tyre(0.25, 0.0, 0.0)) < 0.01);
+}
+
+#[test]
+fn rain_has_a_body_and_big_drops() {
+    // Measured on recordings of real rain (garden, heavy rural rain, grass and leaves): the
+    // octaves at 250 and 500 Hz are within 2 to 10 dB of the loudest, and single close drops
+    // stand 23 to 34 dB above the rms, also in a downpour. The old rain was a narrow 2-4 kHz
+    // bump with 250-500 Hz 19-25 dB down, and turned into a smooth hiss when it got heavy.
+    let rain = |preset: &str, intensity: f32| {
+        let mut m = generators::create("rain", SR).unwrap();
+        if preset != "Default" {
+            let i = m.desc().preset_index(preset).unwrap();
+            m.load_preset(i);
+        }
+        // Quiet enough that the output limiter leaves the drop peaks alone.
+        set(m.as_mut(), "master/gain", 0.2);
+        m.set_input_by_name("intensity", intensity);
+        m.snap();
+        render(m.as_mut(), 0.5);
+        render(m.as_mut(), 6.0)
+    };
+    // (This crude band split read -9 dB and a crest of 16 to 21 dB on the old rain.)
+    for (preset, intensity, min_crest) in [("Default", 0.5, 24.0), ("Default", 1.0, 21.5), ("Monsoon", 1.0, 21.5)] {
+        let x = rain(preset, intensity);
+        let body = 10.0 * (band_energy(&x, 180.0, 700.0) / band_energy(&x, 1400.0, 5600.0)).log10();
+        let crest = 20.0 * (peak(&x) / rms(&x)).log10();
+        assert!(body > -4.0, "{preset} at {intensity}: 180-700 Hz is {body:.1} dB against 1.4-5.6 kHz");
+        assert!(crest > min_crest, "{preset} at {intensity}: drops peak only {crest:.1} dB above the rms");
+    }
 }
 
 #[test]
@@ -1064,4 +1133,58 @@ fn blizzard_is_a_low_buffeting_storm() {
         (env.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / env.len() as f32).sqrt() / mean
     };
     assert!(swing(&x) > swing(&storm(0.0)) * 1.3, "buffeting {:.3} against {:.3}", swing(&x), swing(&storm(0.0)));
+}
+
+#[test]
+fn strong_wind_sits_low_like_recorded_wind() {
+    // Recordings of strong wind are centred at 400 to 600 Hz, with 0 to 2 % of the energy above
+    // 2.5 kHz. Every preset, even near full strength, stays dark.
+    for preset in ["Default", "Desert", "Canyon", "Drafty corridor"] {
+        let mut m = generators::create("wind", SR).unwrap();
+        let k = m.desc().preset_index(preset).unwrap();
+        m.load_preset(k);
+        m.set_input_by_name("strength", 0.9);
+        m.snap();
+        let x = render(m.as_mut(), 1.5);
+        let w = &x[(SR * 1.0) as usize..];
+        let total = spectral_energy(w, 40.0, 12000.0, 20.0);
+        let body = spectral_energy(w, 200.0, 1400.0, 20.0) / total;
+        let high = spectral_energy(w, 2500.0, 12000.0, 20.0) / total;
+        assert!(body > 0.5 && high < 0.06, "{preset}: 200 to 1400 Hz {body:.2}, above 2.5 kHz {high:.3}");
+    }
+}
+
+/// A helicopter is a steady beat: every blade pass slaps nearly the same, well above the
+/// downwash between passes (the recorded Huey and Chinook repeat with an envelope autocorrelation
+/// of about 0.8 at the blade period, 7-13 dB deep). A noisy rotor with a weak beat reads as wind.
+#[test]
+fn rotor_has_a_solid_blade_beat() {
+    for (preset, blade_hz) in [(0, 11.0f32), (1, 19.0)] {
+        let mut m = generators::create("rotor", SR).unwrap();
+        m.load_preset(preset);
+        m.set_input(0, 1.0);
+        m.set_input(1, 0.5);
+        m.snap();
+        let x = render(m.as_mut(), 6.0);
+        // 1 ms RMS envelope of the last 5 s (fine enough for a slap of about 10 ms).
+        let hop = (SR * 0.001) as usize;
+        let env: Vec<f32> = x[SR as usize..].chunks(hop).map(|c| rms(c) + 1e-9).collect();
+        let mean = env.iter().sum::<f32>() / env.len() as f32;
+        let e: Vec<f32> = env.iter().map(|v| v - mean).collect();
+        let ac = |lag: usize| e.iter().zip(&e[lag..]).map(|(a, b)| a * b).sum::<f32>() / e.iter().map(|a| a * a).sum::<f32>();
+        let period = 1000.0 / blade_hz;
+        let near = (period.floor() as usize - 1..=period.ceil() as usize + 1).map(ac).fold(f32::MIN, f32::max);
+        // Depth: loudest against quietest 10 % of the blade-folded envelope.
+        let mut fold = vec![0.0f32; 20];
+        let mut count = vec![0usize; 20];
+        for (i, v) in env.iter().enumerate() {
+            let k = (((i as f32 / period).fract()) * 20.0) as usize % 20;
+            fold[k] += v;
+            count[k] += 1;
+        }
+        let folded: Vec<f32> = fold.iter().zip(&count).map(|(s, c)| s / *c as f32).collect();
+        let depth = 20.0 * (folded.iter().cloned().fold(0.0, f32::max) / folded.iter().cloned().fold(f32::MAX, f32::min)).log10();
+        assert!(near > 0.6, "preset {preset}: blade periodicity {near:.2}");
+        assert!(depth > 8.0, "preset {preset}: blade beat only {depth:.1} dB deep");
+    }
 }

@@ -14,17 +14,22 @@ use crate::params::{exp, lin, GAIN, UNIT};
 model_params! {
     /// Wind: resonant howl that tracks strength, low rumble, hiss and a gap whistle.
     WindParams / WindParamId {
-        howl_hz: "howl/hz" = 520.0, exp(100.0, 4000.0);
+        howl_hz: "howl/hz" = 340.0, exp(100.0, 4000.0);
         howl_res: "howl/resonance" = 0.78, lin(0.0, 0.95);
         howl_level: "howl/level" = 0.7, UNIT;
         gust_rate: "gusts/rate_hz" = 0.25, exp(0.02, 4.0);
         rumble_level: "rumble/level" = 0.5, UNIT;
-        hiss_level: "hiss/level" = 0.4, UNIT;
+        hiss_level: "hiss/level" = 0.04, UNIT;
         whistle_hz: "whistle/hz" = 1900.0, exp(400.0, 6000.0);
-        whistle_level: "whistle/level" = 0.3, UNIT;
-        gain: "master/gain" = 1.0, GAIN;
-        buffet: "buffet/level" = 0.0, UNIT;
+        whistle_level: "whistle/level" = 0.1, UNIT;
+        gain: "master/gain" = 1.2, GAIN;
+        buffet: "buffet/level" = 0.5, UNIT;
         buffet_hz: "buffet/rate_hz" = 2.5, exp(0.5, 8.0);
+        // The hiss is a band from hiss/hz up to hiss/top_hz (20000 leaves it open above).
+        hiss_hz: "hiss/hz" = 1500.0, exp(200.0, 8000.0);
+        hiss_top: "hiss/top_hz" = 6000.0, exp(500.0, 20000.0);
+        // Level of the second howl resonance, 2.3 times higher.
+        howl_overtone: "howl/overtone" = 0.15, UNIT;
     }
 }
 
@@ -43,6 +48,7 @@ pub struct Wind {
     buffet: SlowNoise,
     buffet_low: Svf,
     buffet_noise: Noise,
+    hiss_top: Svf,
 }
 
 impl Generator for Wind {
@@ -59,11 +65,18 @@ impl Generator for Wind {
         vec![
             // Tuned against snowstorm recordings (`tools/reference/snow`): loudest at 125 to 500 Hz,
             // with up to a tenth of the energy above 2.5 kHz. The howl sits low, and the storm
-            // shoves at whatever is out in it (buffeting) rather than hissing.
-            ("Blizzard", WindParams { howl_hz: 330.0, howl_res: 0.7, howl_level: 0.8, rumble_level: 0.8, hiss_level: 0.25, whistle_level: 0.35, gust_rate: 0.5, buffet: 0.7, buffet_hz: 2.5, ..Default::default() }),
-            ("Desert", WindParams { howl_hz: 320.0, howl_res: 0.4, hiss_level: 0.6, whistle_level: 0.0, rumble_level: 0.7, ..Default::default() }),
-            ("Canyon", WindParams { howl_hz: 650.0, howl_res: 0.88, howl_level: 0.8, gust_rate: 0.6, rumble_level: 0.45, hiss_level: 0.35, whistle_hz: 2300.0, whistle_level: 0.75, ..Default::default() }),
-            ("Drafty corridor", WindParams { howl_hz: 420.0, howl_res: 0.85, rumble_level: 0.2, hiss_level: 0.1, whistle_hz: 1300.0, whistle_level: 0.6, gust_rate: 0.12, ..Default::default() }),
+            // shoves at whatever is out in it (buffeting) rather than hissing. It keeps the original
+            // open hiss above 3.5 kHz and the stronger howl overtone it was fitted with.
+            ("Blizzard", WindParams { howl_hz: 330.0, howl_res: 0.7, howl_level: 0.8, rumble_level: 0.8, hiss_level: 0.25, whistle_level: 0.35, gust_rate: 0.5, buffet: 0.7, buffet_hz: 2.5, hiss_hz: 3500.0, hiss_top: 20000.0, howl_overtone: 0.4, gain: 1.0, ..Default::default() }),
+            // The rest, and the defaults, are tuned against recordings of strong wind (Freesound CC0:
+            // keirofinch 376534, lextrack 344887, FunWithSound 390740): centred at 400 to 600 Hz,
+            // with 0 to 2 % of the energy above 2.5 kHz, and uneven (buffeting). The desert is the
+            // broad, dry one, its loudness mostly a roar of noise at 300 to 800 Hz; the canyon rings;
+            // the corridor is a steadier draught with a whistle. Gains match the old presets'
+            // perceived loudness (LUFS), which their bright hiss used to supply.
+            ("Desert", WindParams { howl_hz: 300.0, howl_res: 0.4, howl_level: 0.65, hiss_level: 1.0, hiss_hz: 300.0, hiss_top: 800.0, whistle_level: 0.0, rumble_level: 0.42, buffet: 0.45, gain: 1.3, ..Default::default() }),
+            ("Canyon", WindParams { howl_hz: 400.0, howl_res: 0.88, howl_level: 0.8, gust_rate: 0.6, rumble_level: 0.45, hiss_level: 0.033, whistle_hz: 1500.0, whistle_level: 0.3, buffet: 0.35, howl_overtone: 0.2, gain: 1.22, ..Default::default() }),
+            ("Drafty corridor", WindParams { howl_hz: 380.0, howl_res: 0.85, rumble_level: 0.2, hiss_level: 0.017, whistle_hz: 1150.0, whistle_level: 0.4, gust_rate: 0.12, buffet: 0.25, howl_overtone: 0.2, gain: 1.04, ..Default::default() }),
         ]
     }
 
@@ -82,6 +95,7 @@ impl Generator for Wind {
             buffet: SlowNoise::new(0x50_0005),
             buffet_low: Svf::default(),
             buffet_noise: Noise::new(0x50_0006),
+            hiss_top: Svf::default(),
         }
     }
 
@@ -94,12 +108,19 @@ impl Generator for Wind {
         self.body[0].set(FilterMode::BandPass, fc, p.howl_res, sr);
         self.body[1].set(FilterMode::BandPass, fc * 2.3, p.howl_res * 0.8, sr);
         self.rumble.set(FilterMode::LowPass, 60.0 + 140.0 * s, 0.1, sr);
-        self.hiss.set(FilterMode::HighPass, 3500.0, 0.1, sr);
+        self.hiss.set(FilterMode::HighPass, p.hiss_hz, 0.1, sr);
+        // Real wind has almost nothing above 6 kHz; hiss/top_hz at its maximum leaves the hiss open.
+        let hiss_top = p.hiss_top < 20000.0;
+        if hiss_top {
+            self.hiss_top.set(FilterMode::LowPass, p.hiss_top, 0.5, sr);
+        }
         let wd = self.whistle_drift.advance(0.8, dt);
         self.whistle.set(FilterMode::BandPass, p.whistle_hz * (1.0 + 0.12 * wd) * (0.8 + 0.4 * s), 0.97, sr);
         let t = ((s - 0.45) * 3.0).clamp(0.0, 1.0);
         let whistle_gain = p.whistle_level * t * t * 0.12;
         let (howl, rumble, hiss) = (p.howl_level * 2.3, p.rumble_level * 1.4, p.hiss_level * 0.45 * s);
+        // A band of hiss carries far less energy than the open hiss did, so it gets more gain.
+        let hiss = if hiss_top { hiss * 3.0 } else { hiss };
         let level = s.powf(1.5) * p.gain;
         // Buffeting: the storm shoving in bursts a few times a second, felt more than heard,
         // as a swell of the whole wind and a low thump.
@@ -112,9 +133,9 @@ impl Generator for Wind {
         };
         for o in out.iter_mut() {
             let (w, pk) = (self.noise.white(), self.noise.pink());
-            let y = (self.body[0].tick(pk) + 0.4 * self.body[1].tick(pk)) * howl
+            let y = (self.body[0].tick(pk) + p.howl_overtone * self.body[1].tick(pk)) * howl
                 + self.rumble.tick(self.brown.tick(w)) * rumble
-                + self.hiss.tick(w) * hiss
+                + (if hiss_top { self.hiss_top.tick(self.hiss.tick(w)) } else { self.hiss.tick(w) }) * hiss
                 + self.whistle.tick(w) * whistle_gain;
             *o = y * level;
             if p.buffet > 0.0 {
@@ -129,19 +150,25 @@ impl Generator for Wind {
 // ---------------------------------------------------------------------------------------------
 
 model_params! {
-    /// Rain: a noise bed plus individual drops as randomly excited resonators; `shelter`
-    /// moves the listener under a roof (muffled air, distinct patter overhead).
+    /// Rain: individual drops as randomly excited resonators with a power-law spread of sizes,
+    /// a low splat as the bigger drops hit the ground, and a broad wash of rain further off;
+    /// `shelter` moves the listener under a roof (muffled air, distinct patter overhead).
     RainParams / RainParamId {
-        density: "drops/per_second" = 900.0, exp(20.0, 6000.0);
-        drop_hz: "drops/hz" = 2600.0, exp(500.0, 8000.0);
-        drop_res: "drops/resonance" = 0.88, lin(0.5, 0.99);
-        drop_spread: "drops/spread_octaves" = 0.7, lin(0.0, 2.0);
+        density: "drops/per_second" = 1500.0, exp(20.0, 6000.0);
+        drop_hz: "drops/hz" = 1400.0, exp(500.0, 8000.0);
+        drop_res: "drops/resonance" = 0.7, lin(0.5, 0.99);
+        drop_spread: "drops/spread_octaves" = 1.5, lin(0.0, 2.0);
         drops_level: "drops/level" = 0.6, UNIT;
-        bed_level: "bed/level" = 0.5, UNIT;
-        bed_hz: "bed/hz" = 2200.0, exp(400.0, 8000.0);
+        bed_level: "bed/level" = 0.45, UNIT;
+        bed_hz: "bed/hz" = 800.0, exp(400.0, 8000.0);
         roof_hz: "roof/hz" = 420.0, exp(100.0, 2500.0);
         roof_level: "roof/level" = 0.6, UNIT;
         gain: "master/gain" = 1.0, GAIN;
+        size_spread: "drops/size_spread" = 0.4, UNIT;
+        splat_level: "splat/level" = 0.5, UNIT;
+        splat_hz: "splat/hz" = 320.0, exp(80.0, 1000.0);
+        wander: "drops/wander" = 0.4, UNIT;
+        roof_rate: "roof/per_second" = 180.0, exp(10.0, 2000.0);
     }
 }
 
@@ -157,6 +184,8 @@ pub struct Rain {
     roof: [Svf; 2],
     bed: Svf,
     air: OnePole,
+    splat: Svf,
+    swell: SlowNoise,
 }
 
 impl Generator for Rain {
@@ -171,9 +200,22 @@ impl Generator for Rain {
 
     fn presets() -> Vec<(&'static str, RainParams)> {
         vec![
-            ("Tin roof", RainParams { roof_hz: 900.0, roof_level: 0.9, drop_res: 0.96, ..Default::default() }),
-            ("Forest drizzle", RainParams { density: 300.0, drop_hz: 1700.0, bed_level: 0.3, bed_hz: 1500.0, ..Default::default() }),
-            ("Monsoon", RainParams { density: 3500.0, bed_level: 0.8, drops_level: 0.4, bed_hz: 3000.0, ..Default::default() }),
+            // Tuned against CC0 recordings (Freesound): Default between rain in a garden and heavy
+            // rural rain, Tin roof against hard rain on a patio (bright, ringing, rising to
+            // 8 kHz), Forest drizzle against rain on grass, leaves and ferns, and Monsoon against
+            // the heavy rural rain at full intensity.
+            ("Tin roof", RainParams {
+                roof_hz: 900.0, roof_level: 0.9, density: 3000.0, drop_hz: 8000.0, drop_spread: 1.4, drop_res: 0.94, drops_level: 0.16,
+                bed_level: 0.58, bed_hz: 3000.0, splat_level: 0.225, splat_hz: 180.0, size_spread: 0.45, wander: 0.25, roof_rate: 180.0, ..Default::default()
+            }),
+            ("Forest drizzle", RainParams {
+                drop_hz: 3000.0, drop_spread: 1.8, drop_res: 0.6, drops_level: 0.24, bed_level: 0.195, bed_hz: 2000.0, splat_level: 0.105, splat_hz: 400.0,
+                size_spread: 0.4, wander: 0.15, roof_rate: 60.0, ..Default::default()
+            }),
+            ("Monsoon", RainParams {
+                density: 3500.0, drop_hz: 1600.0, drops_level: 0.52, bed_level: 0.73, splat_level: 0.62, splat_hz: 280.0, size_spread: 0.55,
+                wander: 0.6, roof_rate: 700.0, ..Default::default()
+            }),
         ]
     }
 
@@ -188,37 +230,67 @@ impl Generator for Rain {
             roof: [Svf::default(); 2],
             bed: Svf::default(),
             air: OnePole::default(),
+            splat: Svf::default(),
+            swell: SlowNoise::new(0x51_0004),
         }
     }
 
     fn block(&mut self, x: &[f32], p: &RainParams, out: &mut [f32]) {
-        let sr = self.sr;
+        let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
         let (i, shelter) = (x[0], x[1]);
         self.roof[0].set(FilterMode::BandPass, p.roof_hz, 0.9, sr);
         self.roof[1].set(FilterMode::BandPass, p.roof_hz * 1.62, 0.9, sr);
         self.bed.set(FilterMode::BandPass, p.bed_hz, 0.15, sr);
-        let drop_p = p.density * i * i / sr;
-        let patter_p = p.density * 0.2 * i * i * shelter / sr;
+        self.splat.set(FilterMode::BandPass, p.splat_hz, 0.6, sr);
+        // Real rain comes and goes in slow waves of a few dB.
+        let swell = p.wander * self.swell.advance(0.15, dt);
+        // Heavier rain is more drops and bigger ones, so the big drops still stand out of a
+        // downpour instead of melting into a smooth hiss.
+        let drop_p = p.density * i.powf(1.5) * (swell * 1.2).exp2() / sr;
+        let swell_gain = (swell * 0.6).exp2() * i.powf(0.25);
+        let patter_p = p.roof_rate * i * i * shelter / sr;
         let air_coef = hz_coef(18000.0 + (1200.0 - 18000.0) * shelter, sr);
-        let (drops_gain, bed_gain, roof_gain) = (p.drops_level * 2.0, p.bed_level * i.powf(1.5) * 1.6, p.roof_level * 5.0);
+        // Walls muffle the rain outside and also take some of it away: its body below 1 kHz
+        // passes the muffling.
+        let walls = 1.0 - 0.4 * shelter;
+        // Drops land evenly around the listener, out to 2^(8 * size_spread) times the distance
+        // of the nearest, and each is as loud as 1/distance: a power law with many faint ticks
+        // and a few close drops far above the rest (real rain has a sample crest of 23-34 dB).
+        // The gain keeps the mean drop energy the same whatever the spread.
+        let reach2 = (16.0 * p.size_spread).exp2();
+        let mean_sq = if reach2 > 1.001 { reach2.ln() / (reach2 - 1.0) } else { 1.0 };
+        let size_norm = (0.57 / mean_sq).sqrt();
+        let drops_gain = p.drops_level * 4.13 * size_norm;
+        let bed_gain = p.bed_level * i.powf(1.5) * 3.32 * (swell * 1.2).exp2();
+        let (splat_gain, roof_gain) = (p.splat_level * 8.27 * size_norm, p.roof_level * 5.0);
         for o in out.iter_mut() {
-            let d = self.drops.tick(drop_p);
             let mut which = PINGS;
-            if d > 0.0 {
+            let (mut d, mut thump) = (0.0, 0.0);
+            if self.drops.tick(drop_p) > 0.0 {
                 // Each drop rings at its own pitch; fixed pitches would sound like a chime.
                 which = self.next_ping;
                 self.next_ping = (self.next_ping + 1) % PINGS;
-                let hz = p.drop_hz * (self.drops.rng().next_bipolar() * p.drop_spread).exp2();
+                let rng = self.drops.rng();
+                let near = (1.0 + rng.next_f32() * (reach2 - 1.0)).sqrt().recip();
+                let size = near * (0.5 + 0.5 * rng.next_f32()) * swell_gain;
+                let octave = rng.next_bipolar() * p.drop_spread;
+                let hz = p.drop_hz * octave.exp2();
+                // A resonator's energy grows with its bandwidth, so high drops are scaled down
+                // to give every octave the same share; otherwise the spread tilts the rain bright.
+                d = size * (-0.5 * octave).exp2();
                 self.ping[which].set(FilterMode::BandPass, hz.min(sr * 0.4), p.drop_res, sr);
+                // The same drop hitting the ground: a short, dull thump.
+                thump = size;
             }
             let mut pings = 0.0;
             for (k, f) in self.ping.iter_mut().enumerate() {
                 pings += f.tick(if k == which { d } else { 0.0 });
             }
+            let splat = self.splat.tick(thump) * splat_gain;
             let t = self.patter.tick(patter_p);
             let roof = self.roof[0].tick(t) + 0.6 * self.roof[1].tick(t);
-            let open = pings * drops_gain + self.bed.tick(self.noise.pink()) * bed_gain;
-            *o = (self.air.lp(open, air_coef) + roof * roof_gain) * p.gain * 1.8;
+            let open = pings * drops_gain + splat + self.bed.tick(self.noise.pink()) * bed_gain;
+            *o = (self.air.lp(open, air_coef) * walls + roof * roof_gain) * p.gain * 1.8;
         }
     }
 }
@@ -228,15 +300,18 @@ impl Generator for Rain {
 // ---------------------------------------------------------------------------------------------
 
 model_params! {
-    /// Fire: fluttering low roar, hiss, crackles (short filtered noise bursts) and deeper pops.
+    /// Fire: fluttering low roar, a fizz of tiny ticks, crackles (short broadband noise bursts,
+    /// mostly small, a few loud), rare bangs and deeper pops.
     FireParams / FireParamId {
-        crackle_rate: "crackle/per_second" = 35.0, exp(1.0, 400.0);
+        crackle_rate: "crackle/per_second" = 40.0, exp(1.0, 400.0);
         crackle_level: "crackle/level" = 0.7, UNIT;
-        crackle_hz: "crackle/hz" = 2800.0, exp(600.0, 8000.0);
+        crackle_hz: "crackle/hz" = 2000.0, exp(600.0, 8000.0);
+        crackle_ms: "crackle/ms" = 1.5, lin(0.5, 10.0);
         pop_level: "crackle/pops" = 0.5, UNIT;
         roar_level: "roar/level" = 0.6, UNIT;
         roar_hz: "roar/hz" = 220.0, exp(60.0, 1200.0);
         flutter: "roar/flutter" = 0.5, UNIT;
+        // The bed between crackles: a fizz of tiny ticks across 1 to 6 kHz (it was a steady hiss).
         hiss_level: "hiss/level" = 0.3, UNIT;
         gain: "master/gain" = 1.0, GAIN;
     }
@@ -250,9 +325,16 @@ pub struct Fire {
     pops: Dust,
     env: f32,
     crack: Svf,
+    crack_lp: OnePole,
     pop: Svf,
     roar: Svf,
-    hiss: Svf,
+    bangs: Dust,
+    bang_env: f32,
+    bang: Svf,
+    fizz_dust: Dust,
+    fizz_env: f32,
+    fizz: Svf,
+    fizz_lp: OnePole,
     flutter: SlowNoise,
     tone: SlowNoise,
 }
@@ -269,9 +351,9 @@ impl Generator for Fire {
 
     fn presets() -> Vec<(&'static str, FireParams)> {
         vec![
-            ("Campfire", FireParams { crackle_rate: 22.0, roar_level: 0.35, hiss_level: 0.2, pop_level: 0.7, ..Default::default() }),
-            ("Torch", FireParams { crackle_rate: 8.0, crackle_level: 0.3, roar_hz: 380.0, flutter: 0.9, roar_level: 0.7, ..Default::default() }),
-            ("Inferno", FireParams { crackle_rate: 120.0, roar_level: 1.0, roar_hz: 160.0, hiss_level: 0.6, ..Default::default() }),
+            ("Campfire", FireParams { crackle_rate: 30.0, roar_level: 0.35, hiss_level: 0.2, pop_level: 0.7, ..Default::default() }),
+            ("Torch", FireParams { crackle_rate: 8.0, crackle_level: 0.3, roar_hz: 380.0, flutter: 0.9, roar_level: 0.7, gain: 1.25, ..Default::default() }),
+            ("Inferno", FireParams { crackle_rate: 120.0, crackle_level: 0.8, roar_level: 1.0, roar_hz: 160.0, hiss_level: 0.45, ..Default::default() }),
         ]
     }
 
@@ -284,41 +366,113 @@ impl Generator for Fire {
             pops: Dust::new(0x52_0003),
             env: 0.0,
             crack: Svf::default(),
+            crack_lp: OnePole::default(),
             pop: Svf::default(),
             roar: Svf::default(),
-            hiss: Svf::default(),
+            bangs: Dust::new(0x52_0006),
+            bang_env: 0.0,
+            bang: Svf::default(),
+            fizz_dust: Dust::new(0x52_0007),
+            fizz_env: 0.0,
+            fizz: Svf::default(),
+            fizz_lp: OnePole::default(),
             flutter: SlowNoise::new(0x52_0004),
             tone: SlowNoise::new(0x52_0005),
         }
     }
 
+    // Tuned against close campfire recordings (`target/refs`, the same changes as
+    // models/campfire.toml): real crackles are short (they fall 12 dB in about 2 ms), broadband
+    // from 1 to 8 kHz, and mostly small with a long tail of loud ones; between them is a fizz of
+    // tiny ticks, and the roar stays under the crackles even when the fire is big.
     fn block(&mut self, x: &[f32], p: &FireParams, out: &mut [f32]) {
         let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
         let (i, wind) = (x[0], x[1]);
         let fl = 1.0 + p.flutter * 0.6 * self.flutter.advance(5.0 + 10.0 * wind, dt);
         self.roar.set(FilterMode::LowPass, p.roar_hz * (0.6 + 0.9 * i) * (1.0 + 0.5 * wind), 0.25, sr);
-        self.hiss.set(FilterMode::HighPass, 4000.0, 0.1, sr);
-        // Re-tune the crackle filter quickly so every crackle has its own colour.
-        self.crack.set(FilterMode::BandPass, p.crackle_hz * (0.8 * self.tone.advance(30.0, dt)).exp2(), 0.5, sr);
+        // Re-tune the crackle filter quickly so every crackle has its own colour. A wide band
+        // and a 10 kHz top keep each crackle broadband.
+        self.crack.set(FilterMode::BandPass, p.crackle_hz * (0.8 * self.tone.advance(30.0, dt)).exp2(), 0.1, sr);
         self.pop.set(FilterMode::BandPass, 260.0, 0.85, sr);
+        self.bang.set(FilterMode::BandPass, 1500.0, 0.05, sr);
+        self.fizz.set(FilterMode::HighPass, 1000.0, 0.1, sr);
+        let (crack_lp, fizz_lp) = (hz_coef(10000.0, sr), hz_coef(6000.0, sr));
         let crackle_p = p.crackle_rate * (0.15 + 0.85 * i) / sr;
-        let pop_p = crackle_p * 0.08;
-        let decay = (-1.0 / (0.004 * sr)).exp();
-        let (crackle_gain, pop_gain) = (p.crackle_level * 4.0, p.pop_level * 3.0);
-        let (roar_gain, hiss_gain) = (p.roar_level * i * 2.5 * fl, p.hiss_level * 0.2 * i * (0.5 + 0.5 * fl));
+        let (pop_p, bang_p) = (crackle_p * 0.08, crackle_p * 0.05);
+        let fizz_p = 250.0 * (0.3 + 0.7 * i) / sr;
+        let ms = p.crackle_ms.max(0.1) * 0.001 * sr;
+        let (decay, bang_decay, fizz_decay) = ((-1.0 / ms).exp(), (-1.0 / (1.3 * ms)).exp(), (-1.0 / (0.0007 * sr)).exp());
+        // The model file's mix, raised to the level the games already mix fire at.
+        const LEVEL: f32 = 3.4;
+        let (crackle_gain, bang_gain) = (p.crackle_level * 10.0 * LEVEL, p.crackle_level * 9.0 * LEVEL);
+        let pop_gain = p.pop_level * 3.0 * LEVEL;
+        // The roar grows only a little with intensity: a bigger fire mostly crackles more.
+        let roar_gain = p.roar_level * (0.5 + 0.5 * i) * 0.5 * LEVEL * fl;
+        let fizz_gain = p.hiss_level * 0.83 * (0.4 + 0.6 * i) * LEVEL;
         for o in out.iter_mut() {
             let w = self.noise.white();
             let d = self.crackles.tick(crackle_p);
             if d > 0.0 {
-                self.env = self.env.max(d);
+                // Power-law sizes: most crackles are small, a few are loud.
+                let u = self.crackles.rng().next_f32();
+                self.env = self.env.max(d * u * u * u);
             }
             self.env *= decay;
-            let y = self.crack.tick(w * self.env) * crackle_gain
+            self.bang_env = (self.bang_env * bang_decay).max(self.bangs.tick(bang_p));
+            self.fizz_env = (self.fizz_env * fizz_decay).max(self.fizz_dust.tick(fizz_p));
+            let crack = self.crack_lp.lp(self.crack.tick(w * self.env), crack_lp);
+            let fizz = self.fizz_lp.lp(self.fizz.tick(w * self.fizz_env), fizz_lp);
+            let y = crack * crackle_gain
+                + self.bang.tick(w * self.bang_env) * bang_gain
+                + fizz * fizz_gain
                 + self.pop.tick(self.pops.tick(pop_p)) * pop_gain
-                + self.roar.tick(self.brown.tick(w)) * roar_gain
-                + self.hiss.tick(w) * hiss_gain;
+                + self.roar.tick(self.brown.tick(w)) * roar_gain;
             *o = y * p.gain;
         }
+    }
+}
+
+#[cfg(test)]
+mod fire_tests {
+    use crate::generators;
+
+    const SR: f32 = 48000.0;
+
+    /// Default preset at `intensity` with some params overridden, the first half second skipped.
+    fn render(intensity: f32, secs: f32, params: &[(&str, f32)]) -> Vec<f32> {
+        let mut m = generators::create("fire", SR).unwrap();
+        for (name, v) in params {
+            assert!(m.set_param_by_name(name, *v), "{name}");
+        }
+        m.set_input(0, intensity);
+        m.snap();
+        let mut out = vec![0.0; (secs * SR) as usize];
+        m.render_mono(&mut out);
+        out.split_off(SR as usize / 2)
+    }
+
+    #[test]
+    fn fire_bed_is_a_fizz_of_ticks_not_a_steady_hiss() {
+        // Between crackles real fire has a floor of tiny ticks. Alone, the bed's 1 ms envelope
+        // must be uneven (a steady hiss stays within a few dB of its median).
+        let x = render(0.5, 4.0, &[("crackle/level", 0.0), ("crackle/pops", 0.0), ("roar/level", 0.0)]);
+        let mut e: Vec<f32> = x.chunks(48).map(crate::render::rms).collect();
+        e.sort_by(f32::total_cmp);
+        let spread = 20.0 * (e[e.len() * 95 / 100] / e[e.len() / 2]).log10();
+        assert!(e[e.len() / 2] > 0.0 && spread > 8.0, "fizz p95 over median {spread:.1} dB");
+    }
+
+    #[test]
+    fn fire_roar_grows_little_with_intensity() {
+        // A bigger fire mostly crackles more; the low roar must not bury the crackles.
+        let low = |i: f32| {
+            let x = render(i, 6.0, &[]);
+            let (mut f, c) = (crate::blocks::OnePole::default(), crate::blocks::hz_coef(200.0, SR));
+            let y: Vec<f32> = x.iter().map(|s| f.lp(*s, c)).collect();
+            crate::render::rms(&y)
+        };
+        let ratio = low(1.0) / low(0.2);
+        assert!(ratio < 2.0, "roar grows {ratio:.2}x from intensity 0.2 to 1");
     }
 }
 
@@ -422,16 +576,21 @@ impl Generator for Stream {
 // ---------------------------------------------------------------------------------------------
 
 model_params! {
-    /// Shoreline surf: two overlapping, slightly irregular wave cycles of swell, crash and foam.
+    /// Shoreline surf: overlapping, slightly irregular breakers. Each one breaks in about a second,
+    /// washes up the beach, then drains back through the sand or pebbles with a fizzing hiss.
     OceanParams / OceanParamId {
         period: "waves/period_s" = 7.0, lin(3.0, 24.0);
         wash: "waves/background_wash" = 0.3, UNIT;
         irregular: "waves/irregularity" = 0.4, UNIT;
         crash_level: "crash/level" = 0.7, UNIT;
         crash_hz: "crash/hz" = 1800.0, exp(300.0, 6000.0);
-        foam_level: "foam/level" = 0.4, UNIT;
-        rumble_level: "rumble/level" = 0.5, UNIT;
+        foam_level: "foam/level" = 0.25, UNIT;
+        rumble_level: "rumble/level" = 0.15, UNIT;
         gain: "master/gain" = 1.0, GAIN;
+        crash_low_cut: "crash/low_cut_hz" = 200.0, exp(20.0, 800.0);
+        foam_hz: "foam/hz" = 7000.0, exp(2000.0, 16000.0);
+        backwash: "backwash/level" = 0.4, UNIT;
+        pebbles: "backwash/pebbles" = 0.2, UNIT;
     }
 }
 
@@ -448,25 +607,44 @@ pub struct Ocean {
     rng: Rng,
     waves: [Wave; 3],
     crash: Svf,
+    crash_low: Svf,
     foam: Svf,
+    foam_top: Svf,
     rumble: Svf,
     far: OnePole,
+    drain_noise: Noise,
+    drain: Svf,
+    grains: Dust,
+    grain: f32,
 }
 
-/// Swell builds slowly, breaks, then drains away.
-fn wave_env(phase: f32) -> f32 {
-    if phase < 0.35 {
-        (phase / 0.35).powf(2.5)
-    } else {
-        (-(phase - 0.35) * 3.2).exp()
-    }
+/// One breaker `t` seconds after it starts to break; `k` stretches time (bigger waves are slower).
+/// Returns the crash, the foam wash and the backwash draining out. Fitted to the average wave of
+/// close beach recordings: about a second from the break to the peak, a short plateau, then a
+/// slow fall of 6 dB in about 3 s.
+fn breaker(t: f32, k: f32, decay: f32) -> (f32, f32, f32) {
+    let env = |a: f32, h: f32, d: f32| {
+        if t < a {
+            // The break hits hard and then eases into the peak.
+            let x = 1.0 - t / a;
+            1.0 - x * x
+        } else if t < a + h {
+            1.0
+        } else {
+            (-(t - a - h) / d).exp()
+        }
+    };
+    let (attack, hold) = (0.7 * k, 0.3 * k);
+    let u = (t - attack - hold) / (0.5 * decay);
+    let drain = if u > 0.0 { u * (1.0 - u).exp() } else { 0.0 };
+    (env(attack, hold, decay), env(attack, hold + 0.4 * k, decay * 1.1), drain)
 }
 
 impl Generator for Ocean {
     type P = OceanParams;
     const NAME: &'static str = "ocean";
     const CATEGORY: &'static str = "nature";
-    const DOC: &'static str = "Waves on a shore: swell, crash, hissing foam and low rumble.";
+    const DOC: &'static str = "Waves on a shore: crash, wash, the hiss of the backwash and a low rumble.";
     const INPUTS: &'static [InputSpec] = &[
         InputSpec { name: "size", default: 0.5, doc: "Ripples to breakers: bigger waves are slower and louder" },
         InputSpec { name: "distance", default: 0.0, doc: "0 = at the waterline, 1 = far off (muffled)" },
@@ -474,8 +652,8 @@ impl Generator for Ocean {
 
     fn presets() -> Vec<(&'static str, OceanParams)> {
         vec![
-            ("Lake shore", OceanParams { period: 4.0, wash: 0.45, crash_level: 0.4, crash_hz: 2600.0, rumble_level: 0.1, foam_level: 0.5, ..Default::default() }),
-            ("Storm surf", OceanParams { period: 12.0, crash_level: 1.0, crash_hz: 1200.0, rumble_level: 0.9, irregular: 0.7, ..Default::default() }),
+            ("Lake shore", OceanParams { period: 4.0, wash: 0.45, crash_level: 0.4, crash_hz: 2600.0, rumble_level: 0.03, foam_level: 0.2, foam_hz: 6000.0, crash_low_cut: 220.0, backwash: 0.5, pebbles: 0.5, ..Default::default() }),
+            ("Storm surf", OceanParams { period: 12.0, wash: 0.45, crash_level: 1.0, crash_hz: 550.0, rumble_level: 0.35, irregular: 0.7, foam_level: 0.15, crash_low_cut: 90.0, foam_hz: 4000.0, backwash: 0.2, gain: 1.2, ..Default::default() }),
         ]
     }
 
@@ -487,9 +665,15 @@ impl Generator for Ocean {
             rng: Rng::new(0x54_0002),
             waves: [Wave { phase: 0.15, jitter: 1.0 }, Wave { phase: 0.6, jitter: 1.0 }, Wave { phase: 0.85, jitter: 1.0 }],
             crash: Svf::default(),
+            crash_low: Svf::default(),
             foam: Svf::default(),
+            foam_top: Svf::default(),
             rumble: Svf::default(),
             far: OnePole::default(),
+            drain_noise: Noise::new(0x54_0003),
+            drain: Svf::default(),
+            grains: Dust::new(0x54_0004),
+            grain: 0.0,
         }
     }
 
@@ -497,29 +681,56 @@ impl Generator for Ocean {
         let (sr, dt) = (self.sr, out.len() as f32 / self.sr);
         let (size, distance) = (x[0], x[1]);
         let period = p.period * (0.8 + 0.5 * size);
-        let (mut swell, mut fizz) = (0.0, 0.0);
+        let (mut swell, mut fizz, mut drain) = (0.0, 0.0, 0.0);
         for (k, w) in self.waves.iter_mut().enumerate() {
             let (scale, weight) = [(1.0, 1.0), (1.37, 0.6), (0.73, 0.45)][k];
-            w.phase += dt / (period * scale * w.jitter);
+            let len = period * scale * w.jitter;
+            w.phase += dt / len;
             if w.phase >= 1.0 {
                 w.phase -= 1.0;
                 w.jitter = 1.0 + p.irregular * 0.5 * self.rng.next_bipolar();
             }
-            swell += weight * wave_env(w.phase);
-            fizz += weight * wave_env((w.phase - 0.08).rem_euclid(1.0)).powf(0.7);
+            // This breaker plus the tail of the one before it, so the level never jumps.
+            let stretch = (len / 7.0).sqrt().clamp(0.6, 1.6);
+            let decay = 0.3 * len;
+            let (c, f, d) = breaker(w.phase * len, stretch, decay);
+            let (c0, f0, d0) = breaker((w.phase + 1.0) * len, stretch, decay);
+            swell += weight * (c + c0);
+            fizz += weight * (f + f0);
+            drain += weight * (d + d0);
         }
         // The sea never goes quiet between breakers.
         let swell = (p.wash + (1.0 - 0.5 * p.wash) * swell).min(1.3);
-        let fizz = p.wash * 0.6 + fizz;
-        self.crash.set(FilterMode::LowPass, 250.0 + p.crash_hz * swell, 0.2, sr);
-        self.foam.set(FilterMode::HighPass, 2500.0, 0.1, sr);
+        let fizz = (p.wash * 0.6 + fizz).min(1.3);
+        let drain = (p.wash * 0.2 + drain).min(1.3);
+        self.crash.set(FilterMode::LowPass, 250.0 + p.crash_hz * (0.4 + 0.6 * swell), 0.2, sr);
+        self.crash_low.set(FilterMode::HighPass, p.crash_low_cut, 0.1, sr);
+        self.foam.set(FilterMode::HighPass, 1800.0, 0.1, sr);
+        self.foam_top.set(FilterMode::LowPass, p.foam_hz, 0.1, sr);
         self.rumble.set(FilterMode::LowPass, 90.0, 0.1, sr);
+        // The backwash: sand fizzes in a dense spray of tiny grains, pebbles clatter.
+        self.drain.set(FilterMode::BandPass, 3200.0 - 1400.0 * p.pebbles, 0.25, sr);
+        let grain_rate = (1500.0 - 1380.0 * p.pebbles) * (0.4 + 0.6 * drain.min(1.0));
+        let grain_secs = 0.0015 + 0.0035 * p.pebbles;
+        let grain_decay = (-1.0 / (grain_secs * sr)).exp();
+        let grain_norm = 1.0 / (grain_rate * 0.463 * grain_secs * 0.5).max(1e-3).sqrt();
         let far_coef = hz_coef(16000.0 + (1500.0 - 16000.0) * distance, sr);
-        let (crash, foam, rumble) = (p.crash_level * swell * 2.8, p.foam_level * fizz.min(1.3) * 0.35, p.rumble_level * swell * 2.5);
-        let level = (0.3 + 0.7 * size) * (1.0 - 0.5 * distance) * p.gain;
+        let crash = p.crash_level * swell.powf(1.2) * 2.8;
+        let foam = p.foam_level * fizz * 0.35;
+        let rumble = p.rumble_level * swell * 2.5;
+        let backwash = p.backwash * drain * 0.3 * grain_norm;
+        // The games were mixed against the old ocean, whose level was mostly sub-bass, so this
+        // matches its loudness as heard (LUFS, within 0.5 dB per preset), not its RMS: the RMS
+        // drops about 2 dB because what it gave up was the least audible part.
+        let level = 1.35 * (0.3 + 0.7 * size) * (1.0 - 0.5 * distance) * p.gain;
+        let grain_p = grain_rate / sr;
         for o in out.iter_mut() {
             let w = self.noise.white();
-            let y = self.crash.tick(self.noise.pink()) * crash + self.foam.tick(w) * foam + self.rumble.tick(self.brown.tick(w)) * rumble;
+            let body = self.crash.tick(self.crash_low.tick(self.noise.pink())) * crash;
+            let hiss = self.foam_top.tick(self.foam.tick(w)) * foam;
+            self.grain = self.grain * grain_decay + self.grains.tick(grain_p);
+            let sand = self.drain.tick(self.drain_noise.white()) * self.grain * backwash;
+            let y = body + hiss + sand + self.rumble.tick(self.brown.tick(w)) * rumble;
             *o = self.far.lp(y, far_coef) * level;
         }
     }
