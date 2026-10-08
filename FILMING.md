@@ -65,6 +65,49 @@ RPM (from the render's `--trace`), and the params that each preset changes.
 Preset switches are fresh instances crossfaded over 50 ms. Loudness is −13.0 LUFS and the peak
 is 0.955.
 
+### 1b. V8 + Dirtrace: the lead clip now (built, 25.4 s)
+
+Game footage around a shorter engine panel, so the clip is not only an engine
+(`tools/clips/v8_game.json`, joined by `tools/clips/assemble.py`):
+
+| t | Piece | Caption |
+|---|---|---|
+| 0-3.4 | Dirtrace race start (plugger, Muscle V8): countdown, GO!, the pack launches | Every engine you hear is synthesized live. |
+| 3.4-16.9 | Engine panel, `tools/clips/v8_mid.json` (Muscle → flat-plane → war rig, 13.5 s) | as before |
+| 16.9-21.9 | Dirtrace war rig: canyon, then a jump | Same war rig, in the game. |
+| 21.9-25.4 | End card over the rig | Game sound without sound files. |
+
+- Footage comes from `sh tools/clips/dirtrace_capture.sh`: Godot's movie maker records it
+  offline at a locked 60 fps with the game's own audio. It runs with `DR_AUTOPILOT`, `DR_NO_MUSIC`
+  (the music is .ogg; every other sound is a Brusverk generator, and the logs show no fallback)
+  and the Rustback track.
+- AI races are not deterministic, so a new capture differs from this one; keep the `.avi` files
+  in `clips_out/` (gitignored), or re-pick the timestamps after a new capture.
+- Game audio is turned down 2 dB to sit with the panel; the whole clip is −13 LUFS.
+- Outputs: `clips_out/v8_game_720p.mp4` and `v8_game_1080sq.mp4`, both also in
+  ~/Movies/brusverk-clips.
+
+### 1c. V8 + Dirtrace, motion-designed (built 2026-10-08, same cut and audio as 1b)
+
+`CLIPS=clips_out sh tools/clips/v8_game_design.sh` writes `clips_out/design/v8_game_720p.mp4`,
+`v8_game_1080sq.mp4` and a before/after sheet `compare.png` (about 2 minutes).
+Direction, "live signal": sound is shown as a signal everywhere, and every motion is something a
+scope or a telemetry readout would do. The orange trace that draws the waveform also does the cuts.
+
+- Cuts: a scope-trace sweep (xfade custom + a glowing orange line), 0.2 s, starting on the sound cut.
+- Brand: a badge (symbol, wordmark, SOUND ON with a live mini waveform of the game audio) top-centre
+  on game footage from frame 0, between the position list and the minimap. The end card has the full
+  logo: the symbol pops in and sends three sound arcs out, then the wordmark, the claim, the typed URL.
+- Game footage: a slow push-in (a 3 % settle on the cut back, none on frame 0, so the thumbnail
+  HUD is whole), a grade towards the panel's navy, a vignette. The lower third has the panel's orange
+  "changed line" marker, slides in and types its sub line.
+- Panel (`compose.py --motion`, spec `v8_mid_design.json`): captions slide and type in; changed
+  values flash and roll in, cascading down the lines; a segmented rev meter with peak hold and the
+  redline at `engine/max_rpm` (it moves with the preset; the number turns red at the limiter);
+  a glow on the spectrogram and waveform, its empty start in panel colour instead of black.
+- Audio: design.py runs assemble.py's audio graph, so the AAC stream is bit-identical to 1b's
+  (checked by md5 of the copied stream); −13.0 LUFS, peak −0.4 dBFS.
+
 ### 2. Campfire: parked
 
 A 22 s campfire clip was built (`sh tools/clips/campfire.sh`, spec `tools/clips/campfire.json`)
@@ -81,7 +124,7 @@ render_timeline does not do SFX patches yet.
 
 - [x] Route chosen (B)
 - [x] V8 clip, 1280x720@60 and 1080x1080@60 (`clips_out/`, copied to ~/Movies/brusverk-clips)
-- [ ] Joakim has watched/listened to the V8 clip
+- [x] Joakim has watched the V8 + Dirtrace clip; the motion-designed cut (1c) approved 2026-10-08: "much cooler"
 - [ ] Campfire tuned against a recording (then maybe re-cut its clip)
 - [x] Reported back to the other session (first report was about the campfire draft; delivery unconfirmed)
 - [x] Commit render_timeline + tools/clips

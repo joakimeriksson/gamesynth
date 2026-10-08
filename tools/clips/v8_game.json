@@ -1,0 +1,13 @@
+{
+ "name": "v8_game",
+ "game_gain_db": -2.0,
+ "pieces": [
+  {"game": "clips_out/dirtrace_plugger.avi", "start": 3.0, "dur": 3.4,
+   "caption": "Every engine you hear is synthesized live.", "sub": "No sound files. Dirtrace, a Godot game."},
+  {"panel": "clips_out/v8_mid_{mode}.mp4"},
+  {"game": "clips_out/dirtrace_rig.avi", "start": 31.5, "dur": 5.0,
+   "caption": "Same war rig, in the game.", "sub": "Engine, tyres, wind: all of it Brusverk."},
+  {"game": "clips_out/dirtrace_rig.avi", "start": 36.5, "dur": 3.5,
+   "card": {"caption": "Game sound without sound files.", "sub": "github.com/joakimeriksson/gamesynth", "foot": "Rust  ·  Godot 4  ·  WebAssembly"}}
+ ]
+}
