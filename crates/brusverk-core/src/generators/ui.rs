@@ -23,6 +23,7 @@
 use core::marker::PhantomData;
 
 use crate::blocks::{hz_coef, mix_seed, OnePole, Reverb, BLOCK};
+use crate::dsp::balance;
 use crate::filter::{FilterMode, Svf};
 use crate::math::{midi_to_hz, Rng};
 use crate::model::{Generator, InputSpec};
@@ -544,12 +545,6 @@ fn start_phases(i: usize, fm_ratio: f32) -> [f32; 6] {
     let g = (0.618_034 * i as f32).fract();
     let m = (g * fm_ratio).fract();
     [g, m, g, (g + 0.33).fract(), (g + 0.71).fract(), m]
-}
-
-/// Balance-law pan: centre is (1, 1), so a width of zero leaves the mono signal untouched.
-#[inline]
-fn balance(pan: f32) -> (f32, f32) {
-    ((1.0 - pan).min(1.0), (1.0 + pan).min(1.0))
 }
 
 #[derive(Clone, Copy)]

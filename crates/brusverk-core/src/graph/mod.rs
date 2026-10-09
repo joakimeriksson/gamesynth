@@ -9,6 +9,11 @@
 //! is allocation-free. Audio feedback between nodes is not allowed (use `comb` / `delay`,
 //! which contain their own feedback path).
 //!
+//! A model is mono unless `[graph]` names `out_right` as well as `out`: then it renders stereo
+//! (left = `out`), built with `pan` nodes. Its mono render centres every `pan` and averages
+//! the two outputs. The building-block nodes (`powerdust`, `modal`, `chirp`, `fm`, `ad`, `adsr`,
+//! `formant`, `pattern`, `impulse`, `pan`, `distance`) wrap [`crate::dsp`].
+//!
 //! ```toml
 //! [model]
 //! name = "rain_on_tent"
@@ -36,6 +41,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 
 use crate::blocks::{hz_coef, settle_coef, Brown, DelayLine, Dust, OnePole, Reverb, BLOCK};
+use crate::dsp::{self, Air, Chirp, Envelope, FmOp, Formant, Modal, Onset, Pattern, PowerDust, Rhythm, MAX_FORMANTS};
 use crate::filter::{FilterMode, Svf};
 use crate::math::{limit, soft_clip, Rng, TAU};
 use crate::model::{InputDesc, Model, ModelDesc, PresetDesc};
@@ -49,6 +55,8 @@ pub const MAX_SIGNALS: usize = 128;
 pub const MAX_PARAMS: usize = 64;
 pub const MAX_INPUTS: usize = 16;
 pub const MAX_RESONATORS: usize = 32;
+/// Most arguments a node type takes as numbers or formulas.
+const MAX_NODE_PARAMS: usize = 8;
 const MAX_DELAY_MS: f32 = 2000.0;
 
 /// Why a model file was rejected. The message names the offending section and entry.
@@ -133,7 +141,11 @@ pub struct ParamSpecFile {
 #[serde(deny_unknown_fields)]
 pub struct GraphSpec {
     pub nodes: Vec<NodeSpec>,
+    /// The output node; the left channel when `out_right` is set.
     pub out: String,
+    /// Makes the model stereo: the node heard on the right. See [`GraphModel`].
+    #[serde(default)]
+    pub out_right: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -211,6 +223,17 @@ const NODE_TYPES: &[NodeInfo] = &[
     ("mul", &[], &[], "sum(in) * sum(by): ring modulation, envelopes, gating"),
     ("reverb", &[("time", 1.2), ("mix", 0.3), ("damping", 0.4)], &[], "Small room reverb; gives one-shots a tail"),
     ("limiter", &[], &[], "Soft limiter, never exceeds +-1"),
+    ("powerdust", &[("rate", REQ), ("skew", 3.0)], &[], "Random impulses whose sizes follow a power law: size = u^skew, so at skew 3 most are tiny and a few are big (crackle, gravel, drops, leaf contacts). skew 1 = uniform, 0 = all equal"),
+    ("impulse", &[("amp", 1.0), ("rate", 0.0)], &[], "One impulse of size `amp` when a one-shot is triggered, plus `rate` per second (0 = none) as a steady pulse train"),
+    ("pattern", &[("rate", REQ), ("count", 4.0), ("gap", 1.0), ("jitter", 0.0), ("variation", 0.0), ("run", 1.0)], &["euclid"], "Impulses in phrases: `count` at `rate` per second, then `gap` extra seconds of rest. jitter 0..1 of a step; variation 0..1 rolls each phrase's count and gap (+-50%) and each impulse's size. Plays while run > 0.5 and restarts a phrase on each one-shot trigger. euclid = [hits, steps] or [hits, steps, rotation]: a phrase is one cycle of the steps"),
+    ("ad", &[("attack", 0.005), ("hold", 0.0), ("decay", 0.3)], &[], "Click-free envelope fired by impulses or gate edges in `in`: S-curve attack (at least 0.5 ms) to the impulse's size, hold, then a decay (60 dB time) that lands exactly on zero. Retriggers from where it is"),
+    ("adsr", &[("gate", REQ), ("attack", 0.01), ("decay", 0.2), ("sustain", 0.7), ("release", 0.3)], &[], "Click-free gated envelope 0..1: attacks while gate > 0.5, releases to exactly zero when it falls. Re-attacks on each one-shot trigger"),
+    ("chirp", &[("from", REQ), ("to", REQ), ("time", 0.1), ("curve", 1.0), ("ratio", 1.0), ("index", 0.0)], &[], "Pitch glide fired by impulses in `in`: from -> to Hz in `time` s (even in octaves at curve 1; >1 late, <1 early), then holds `to`. A sine, or FM with index > 0 (modulator at ratio * pitch). Multiply by an `ad` on the same trigger"),
+    ("fm", &[("freq", REQ), ("ratio", 1.0), ("index", 1.0), ("index_decay", 0.0)], &[], "Two-operator FM: carrier at freq, modulator at ratio * freq, index in radians. Optional `in` = triggers that restart the index envelope (index_decay = its 60 dB time; 0 = steady). No DC at ratios 1 and 0.5"),
+    ("modal", &[("freq", REQ), ("size", 0.5), ("decay", 1.0), ("position", 0.23), ("variation", 0.3)], &["ratios", "t60", "levels"], "Modal resonator bank (struck objects): modes at freq * ratios, each with its own ring time (t60, seconds) and level; `in` excites them and adds to what still rings. size 0..1 (0.5 as written) lowers pitch and lengthens rings as it grows; each impulse strikes at `position` (0..0.5) moved by `variation`, which also detunes and re-times the modes a little"),
+    ("formant", &[("vowel", 0.0), ("shift", 1.0), ("q", 1.0)], &["freqs", "qs", "gains", "routing"], "Formant filter: vowel 0 a, 1 e, 2 i, 3 o, 4 u (fractions morph), or your own freqs = [..] (2 to 4) with qs and gains. shift scales the frequencies (small creature > 1, big < 1), q scales the Qs. routing = parallel (band-passes, default) | series (Klatt cascade)"),
+    ("pan", &[("pan", 0.0)], &["channel"], "Equal-power pan, -1 left .. 1 right; channel = left | right picks which side this node outputs. Feed one pan per channel into the outputs named by `out` and `out_right`"),
+    ("distance", &[("distance", REQ), ("rolloff", 24.0), ("far_hz", 1000.0), ("delay_ms", 0.0)], &["max_ms"], "Distance 0..1: level falls `rolloff` dB by distance 1, a 12 dB/oct air low-pass falls from 18 kHz to far_hz, and the sound arrives up to delay_ms later (max_ms, default 200)"),
 ];
 
 /// Node types with their parameters, for editors and documentation:
@@ -236,6 +259,26 @@ enum Kind {
     Mul,
     Reverb(Box<Reverb>),
     Limiter,
+    PowerDust(PowerDust),
+    Impulse { phase: f32 },
+    Pattern(Pattern),
+    Ad { env: Envelope, onset: Onset },
+    Adsr { env: Envelope, gate: bool },
+    Chirp { c: Chirp, onset: Onset, started: bool },
+    Fm { op: FmOp, onset: Onset, has_in: bool, env: f32, last_inc: f32 },
+    Modal(Box<Modal>),
+    Formant { f: Formant, custom: Option<Box<[(f32, f32, f32); MAX_FORMANTS]>>, n: usize },
+    Pan { right: bool, last: f32 },
+    Distance { air: Air, line: DelayLine, last_gain: f32, last_delay: f32 },
+}
+
+/// Per-block context for [`process`].
+struct Cx {
+    sr: f32,
+    /// 1 when rendering stereo, 0 for the mono render (pans centred).
+    width: f32,
+    /// A one-shot was triggered just before this block.
+    triggered: bool,
 }
 
 enum Binding {
@@ -278,6 +321,9 @@ pub struct GraphModel {
     nodes: Vec<Node>,
     bufs: Vec<[f32; BLOCK]>,
     out: usize,
+    out_right: Option<usize>,
+    /// A one-shot trigger the nodes have not seen yet.
+    triggered: bool,
     peak: f32,
     peak_decay: f32,
     trigger_rng: Rng,
@@ -310,9 +356,12 @@ impl GraphModel {
         self.vars.get(self.signal_off + i).copied()
     }
 
-    fn render_block(&mut self, out: &mut [f32]) {
+    /// One block into `out`; with `right`, a stereo model's right channel too. A stereo model
+    /// rendered without `right` is the mono render: pans centred, the channels averaged.
+    fn render_block(&mut self, out: &mut [f32], right: Option<&mut [f32]>) {
         let n = out.len();
         let (sr, dt) = (self.sample_rate, n as f32 / self.sample_rate);
+        let cx = Cx { sr, width: if right.is_some() { 1.0 } else { 0.0 }, triggered: core::mem::take(&mut self.triggered) };
         self.vars[VAR_T] += dt;
         for (i, target) in self.input_target.iter().enumerate() {
             let v = &mut self.vars[INPUT_OFF + i];
@@ -325,7 +374,7 @@ impl GraphModel {
         }
         let GraphModel { nodes, bufs, vars, programs, states, .. } = self;
         for (i, node) in nodes.iter_mut().enumerate() {
-            let mut pv = [0.0f32; 4];
+            let mut pv = [0.0f32; MAX_NODE_PARAMS];
             for (k, b) in node.params.iter().enumerate() {
                 pv[k] = value(b, programs, vars, states, dt);
             }
@@ -334,7 +383,7 @@ impl GraphModel {
             gather(&mut node.inputs, before, &mut inbuf[..n], programs, vars, states, dt);
             gather(&mut node.by, before, &mut bybuf[..n], programs, vars, states, dt);
             let dst = &mut rest[0][..n];
-            process(&mut node.kind, &pv, &inbuf[..n], &bybuf[..n], dst, sr);
+            process(&mut node.kind, &pv, &inbuf[..n], &bybuf[..n], dst, &cx);
             // A filter that blew up would otherwise stay poisoned forever.
             if !dst[n - 1].is_finite() || dst[n - 1].abs() > 1e6 {
                 dst.iter_mut().for_each(|s| *s = 0.0);
@@ -342,12 +391,35 @@ impl GraphModel {
             }
         }
         let mut peak = self.peak;
-        for (o, s) in out.iter_mut().zip(&self.bufs[self.out][..n]) {
-            let y = if s.is_finite() { limit(*s) } else { 0.0 };
-            *o = y;
-            peak = (peak * self.peak_decay).max(y.abs());
+        let clean = |s: f32| if s.is_finite() { limit(s) } else { 0.0 };
+        match (self.out_right, right) {
+            (None, _) => {
+                for (o, s) in out.iter_mut().zip(&self.bufs[self.out][..n]) {
+                    let y = clean(*s);
+                    *o = y;
+                    peak = (peak * self.peak_decay).max(y.abs());
+                }
+            }
+            (Some(r), None) => {
+                for ((o, a), b) in out.iter_mut().zip(&self.bufs[self.out][..n]).zip(&self.bufs[r][..n]) {
+                    let y = clean(0.5 * (a + b));
+                    *o = y;
+                    peak = (peak * self.peak_decay).max(y.abs());
+                }
+            }
+            (Some(r), Some(right)) => {
+                for (((o, p), a), b) in out.iter_mut().zip(right.iter_mut()).zip(&self.bufs[self.out][..n]).zip(&self.bufs[r][..n]) {
+                    (*o, *p) = (clean(*a), clean(*b));
+                    peak = (peak * self.peak_decay).max(o.abs().max(p.abs()));
+                }
+            }
         }
         self.peak = peak;
+    }
+
+    /// Whether the model file has a stereo output (`out_right`).
+    pub fn is_stereo(&self) -> bool {
+        self.out_right.is_some()
     }
 }
 
@@ -396,8 +468,9 @@ impl Model for GraphModel {
         for node in self.nodes.iter_mut() {
             node.inputs.iter_mut().chain(node.by.iter_mut()).for_each(|s| s.last = f32::NAN);
             match &mut node.kind {
-                Kind::Osc { last_dt, .. } => *last_dt = -1.0,
-                Kind::Gain { last } | Kind::Dc { last } | Kind::Comb { last, .. } => *last = f32::NAN,
+                Kind::Osc { last_dt, .. } | Kind::Fm { last_inc: last_dt, .. } => *last_dt = -1.0,
+                Kind::Gain { last } | Kind::Dc { last } | Kind::Comb { last, .. } | Kind::Pan { last, .. } => *last = f32::NAN,
+                Kind::Distance { last_gain, last_delay, .. } => (*last_gain, *last_delay) = (f32::NAN, f32::NAN),
                 _ => {}
             }
         }
@@ -406,6 +479,7 @@ impl Model for GraphModel {
     fn trigger(&mut self) {
         self.vars[VAR_T] = 0.0;
         self.vars[VAR_RND] = self.trigger_rng.next_f32();
+        self.triggered = self.desc.one_shot;
         // An event takes its inputs as they are at that instant.
         for (i, t) in self.input_target.iter().enumerate() {
             self.vars[INPUT_OFF + i] = *t;
@@ -423,10 +497,29 @@ impl Model for GraphModel {
             return;
         }
         for chunk in out.chunks_mut(BLOCK) {
-            self.render_block(chunk);
+            self.render_block(chunk, None);
         }
         if self.is_finished() {
             // Park it: the next render is free until the next trigger.
+            self.vars[VAR_T] = NEVER;
+        }
+    }
+
+    /// Mono models (no `out_right`) play the same in both channels.
+    fn render_stereo(&mut self, left: &mut [f32], right: &mut [f32]) {
+        if self.out_right.is_none() {
+            self.render_mono(left);
+            right.copy_from_slice(left);
+            return;
+        }
+        if self.desc.one_shot && self.vars[VAR_T] >= NEVER {
+            left.iter_mut().chain(right.iter_mut()).for_each(|s| *s = 0.0);
+            return;
+        }
+        for (l, r) in left.chunks_mut(BLOCK).zip(right.chunks_mut(BLOCK)) {
+            self.render_block(l, Some(r));
+        }
+        if self.is_finished() {
             self.vars[VAR_T] = NEVER;
         }
     }
@@ -480,12 +573,21 @@ fn reset(kind: &mut Kind) {
         Kind::Decay { env } => *env = 0.0,
         Kind::Reverb(r) => r.clear(),
         Kind::Noise { brown, .. } => *brown = Brown::default(),
+        Kind::Modal(m) => m.clear(),
+        Kind::Formant { f, .. } => f.reset(),
+        Kind::Distance { air, line, .. } => {
+            air.reset();
+            line.clear();
+        }
+        Kind::Fm { op, .. } => op.reset(),
+        Kind::Ad { env, .. } | Kind::Adsr { env, .. } => env.reset(),
         _ => {}
     }
 }
 
-fn process(kind: &mut Kind, pv: &[f32; 4], x: &[f32], by: &[f32], out: &mut [f32], sr: f32) {
+fn process(kind: &mut Kind, pv: &[f32; MAX_NODE_PARAMS], x: &[f32], by: &[f32], out: &mut [f32], cx: &Cx) {
     let n = out.len() as f32;
+    let sr = cx.sr;
     match kind {
         Kind::Noise { color, noise, brown } => {
             for o in out.iter_mut() {
@@ -633,6 +735,158 @@ fn process(kind: &mut Kind, pv: &[f32; 4], x: &[f32], by: &[f32], out: &mut [f32
             for (o, s) in out.iter_mut().zip(x) {
                 *o = limit(*s);
             }
+        }
+        Kind::PowerDust(d) => {
+            let (p, skew) = (pv[0].max(0.0) / sr, pv[1].max(0.0));
+            out.iter_mut().for_each(|o| *o = d.tick(p, skew));
+        }
+        Kind::Impulse { phase } => {
+            let inc = pv[1].max(0.0) / sr;
+            if cx.triggered {
+                *phase = 0.0;
+            }
+            for (i, o) in out.iter_mut().enumerate() {
+                *o = 0.0;
+                if i == 0 && cx.triggered {
+                    *o = pv[0];
+                } else if inc > 0.0 {
+                    *phase += inc;
+                    if *phase >= 1.0 {
+                        *phase -= phase.floor();
+                        *o = pv[0];
+                    }
+                }
+            }
+        }
+        Kind::Pattern(p) => {
+            if cx.triggered {
+                p.restart();
+            }
+            let r = Rhythm { rate: pv[0], count: pv[1], gap: pv[2], jitter: pv[3], variation: pv[4] };
+            let run = pv[5] > 0.5;
+            out.iter_mut().for_each(|o| *o = p.tick(run, &r, sr));
+        }
+        Kind::Ad { env, onset } => {
+            let dt = 1.0 / sr;
+            for (o, s) in out.iter_mut().zip(x) {
+                if let Some(v) = onset.tick(*s) {
+                    env.trigger(v);
+                }
+                *o = env.tick(dt, pv[0], pv[1].max(0.0), pv[2], 0.0, pv[2]);
+            }
+        }
+        Kind::Adsr { env, gate } => {
+            let g = pv[0] > 0.5;
+            if g && (!*gate || cx.triggered) {
+                env.trigger(1.0);
+            } else if !g && *gate {
+                env.release();
+            }
+            *gate = g;
+            let dt = 1.0 / sr;
+            for o in out.iter_mut() {
+                *o = env.tick(dt, pv[1], 0.0, pv[2], pv[3], pv[4]);
+            }
+        }
+        Kind::Chirp { c, onset, started } => {
+            if !*started {
+                // Rests at its end pitch until the first trigger.
+                c.start(pv[1], pv[1], pv[2], pv[3]);
+                *started = true;
+            }
+            for (o, s) in out.iter_mut().zip(x) {
+                if onset.tick(*s).is_some() {
+                    c.start(pv[0], pv[1], pv[2], pv[3]);
+                }
+                *o = c.tick(pv[4], pv[5], sr);
+            }
+        }
+        Kind::Fm { op, onset, has_in, env, last_inc } => {
+            let target = (pv[0] / sr).clamp(0.0, 0.45);
+            if *last_inc < 0.0 {
+                *last_inc = target;
+            }
+            let step = (target - *last_inc) / n;
+            let mut inc = *last_inc;
+            let k = if *has_in && pv[3] > 0.0 { (-6.91 / (pv[3] * sr)).exp() } else { 1.0 };
+            for (o, s) in out.iter_mut().zip(x) {
+                inc += step;
+                if onset.tick(*s).is_some() {
+                    *env = 1.0;
+                }
+                let index = pv[2] * *env;
+                *env *= k;
+                *o = op.tick(inc, pv[1], index);
+            }
+            *last_inc = target;
+        }
+        Kind::Modal(m) => {
+            m.set(pv[0], pv[1], pv[2], sr);
+            for (o, s) in out.iter_mut().zip(x) {
+                *o = m.tick(*s, pv[3], pv[4], sr);
+            }
+            m.end_block();
+        }
+        Kind::Formant { f, custom, n: count } => {
+            let (shift, qm) = (pv[1].max(0.01), pv[2].max(0.01));
+            let mut set = [(0.0f32, 1.0f32); MAX_FORMANTS];
+            let mut levels = [0.0f32; MAX_FORMANTS];
+            let used = match custom {
+                Some(c) => {
+                    for k in 0..*count {
+                        set[k] = (c[k].0 * shift, c[k].1 * qm);
+                        levels[k] = c[k].2;
+                    }
+                    *count
+                }
+                None => {
+                    for (k, (hz, q, level)) in dsp::vowel(pv[0]).into_iter().enumerate() {
+                        set[k] = (hz * shift, q * qm);
+                        levels[k] = level;
+                    }
+                    3
+                }
+            };
+            f.set(&set[..used], sr);
+            for (o, s) in out.iter_mut().zip(x) {
+                *o = f.tick(*s, &levels);
+            }
+        }
+        Kind::Pan { right, last } => {
+            let (l, r) = dsp::equal_power(pv[0] * cx.width);
+            let target = if *right { r } else { l };
+            if !last.is_finite() {
+                *last = target;
+            }
+            let step = (target - *last) / n;
+            let mut g = *last;
+            for (o, s) in out.iter_mut().zip(x) {
+                g += step;
+                *o = *s * g;
+            }
+            *last = target;
+        }
+        Kind::Distance { air, line, last_gain, last_delay } => {
+            let d = pv[0].clamp(0.0, 1.0);
+            air.set(d, 18000.0, pv[2].clamp(20.0, 18000.0), 1.0, sr);
+            let gain = crate::math::db_to_gain(-pv[1].max(0.0) * d);
+            let delay = (pv[3].max(0.0) * d * 0.001 * sr).min(line.max_delay());
+            if !last_gain.is_finite() {
+                *last_gain = gain;
+            }
+            if !last_delay.is_finite() {
+                *last_delay = delay;
+            }
+            let (gs, ds) = ((gain - *last_gain) / n, (delay - *last_delay) / n);
+            let (mut g, mut dl) = (*last_gain, *last_delay);
+            for (o, s) in out.iter_mut().zip(x) {
+                g += gs;
+                dl += ds;
+                let y = if dl < 1.0 { *s } else { line.read(dl) };
+                line.write(*s);
+                *o = air.tick(y) * g;
+            }
+            (*last_gain, *last_delay) = (gain, delay);
         }
     }
 }
@@ -855,6 +1109,10 @@ fn compile(spec: &ModelSpec, sr: f32) -> Result<GraphModel, ModelError> {
         nodes.push(build_node(n, inputs, by, &mut ctx, sr, pos as u32)?);
     }
     let out = position[specs.iter().position(|n| n.id == spec.graph.out).ok_or_else(|| ModelError(format!("[graph] out = '{}' is not a node id", spec.graph.out)))?];
+    let out_right = match &spec.graph.out_right {
+        None => None,
+        Some(id) => Some(position[specs.iter().position(|n| &n.id == id).ok_or_else(|| ModelError(format!("[graph] out_right = '{id}' is not a node id")))?]),
+    };
 
     let Ctx { programs, states, .. } = ctx;
     Ok(GraphModel {
@@ -872,6 +1130,8 @@ fn compile(spec: &ModelSpec, sr: f32) -> Result<GraphModel, ModelError> {
         bufs: vec![[0.0; BLOCK]; nodes.len()],
         nodes,
         out,
+        out_right,
+        triggered: false,
         peak: 0.0,
         peak_decay: (-9.21 / (0.25 * sr)).exp(),
         trigger_rng: Rng::new(crate::blocks::mix_seed(spec.graph.nodes.len() as u32 ^ 0x7E57)),
@@ -890,11 +1150,14 @@ fn build_node(n: &NodeSpec, inputs: Vec<Source>, by: Vec<Source>, ctx: &mut Ctx,
             return err(format!("{who}: unknown argument '{key}'. Valid: {}", if valid.is_empty() { "(none)".into() } else { valid.join(", ") }));
         }
     }
-    let is_source = matches!(n.kind.as_str(), "noise" | "sine" | "saw" | "tri" | "pulse" | "dust" | "dc");
+    debug_assert!(param_info.len() <= MAX_NODE_PARAMS);
+    let is_source = matches!(n.kind.as_str(), "noise" | "sine" | "saw" | "tri" | "pulse" | "dust" | "dc" | "powerdust" | "impulse" | "pattern" | "adsr");
+    // `in` is optional: fm takes triggers there if it has any.
+    let optional_in = n.kind == "fm";
     if is_source && !inputs.is_empty() {
         return err(format!("{who}: is a source and takes no `in`"));
     }
-    if !is_source && inputs.is_empty() {
+    if !is_source && !optional_in && inputs.is_empty() {
         return err(format!("{who}: needs at least one input (`in = [...]`)"));
     }
     if (n.kind == "mul") == by.is_empty() {
@@ -916,6 +1179,16 @@ fn build_node(n: &NodeSpec, inputs: Vec<Source>, by: Vec<Source>, ctx: &mut Ctx,
         }
     };
     let seed = 0x6A00_0000u32.wrapping_add(seed.wrapping_mul(2_654_435_761));
+    // A static list argument: None when absent, an error when not a list of numbers in range.
+    let list = |key: &str, max_len: usize, ok: &dyn Fn(f64) -> bool, what: &str| -> Result<Option<Vec<f32>>, ModelError> {
+        match n.args.get(key) {
+            None => Ok(None),
+            Some(Arg::List(l)) if !l.is_empty() && l.len() <= max_len && l.iter().all(|v| ok(*v)) => Ok(Some(l.iter().map(|v| *v as f32).collect())),
+            Some(Arg::Num(v)) if max_len >= 1 && ok(*v) => Ok(Some(vec![*v as f32])),
+            Some(_) => err(format!("{who}: {key} must be {what}")),
+        }
+    };
+    let has_in = !inputs.is_empty();
     let kind = match n.kind.as_str() {
         "noise" => {
             let color = match text("color", "white")?.as_str() {
@@ -984,6 +1257,67 @@ fn build_node(n: &NodeSpec, inputs: Vec<Source>, by: Vec<Source>, ctx: &mut Ctx,
         "mix" => Kind::Mix,
         "mul" => Kind::Mul,
         "reverb" => Kind::Reverb(Box::new(Reverb::new(sr))),
+        "powerdust" => Kind::PowerDust(PowerDust::new(seed)),
+        "impulse" => Kind::Impulse { phase: 0.0 },
+        "pattern" => {
+            let euclid = match list("euclid", 3, &|v| (0.0..=64.0).contains(&v) && v.fract() == 0.0, "[hits, steps] or [hits, steps, rotation], whole numbers up to 64")? {
+                None => None,
+                Some(e) if e.len() >= 2 && e[1] >= 1.0 && e[0] <= e[1] => Some((e[0] as u32, e[1] as u32, e.get(2).copied().unwrap_or(0.0) as u32)),
+                Some(_) => return err(format!("{who}: euclid = [hits, steps] needs 1 <= steps and hits <= steps")),
+            };
+            Kind::Pattern(Pattern::new(seed, euclid))
+        }
+        "ad" => Kind::Ad { env: Envelope::default(), onset: Onset::default() },
+        "adsr" => Kind::Adsr { env: Envelope::default(), gate: false },
+        "chirp" => Kind::Chirp { c: Chirp::default(), onset: Onset::default(), started: false },
+        "fm" => Kind::Fm { op: FmOp::default(), onset: Onset::default(), has_in, env: 1.0, last_inc: -1.0 },
+        "modal" => {
+            let max = dsp::MAX_MODES;
+            let Some(ratios) = list("ratios", max, &|v| v > 0.0, &format!("a list of 1 to {max} positive frequency ratios"))? else {
+                return err(format!("{who}: needs ratios = [..] with 1 to {max} positive frequency ratios"));
+            };
+            let t60 = list("t60", max, &|v| v > 0.0 && v <= 30.0, &format!("a ring time in seconds (0..30], or a list of up to {max}"))?.unwrap_or_else(|| vec![1.0]);
+            let levels = list("levels", max, &|v| (0.0..=100.0).contains(&v), &format!("a list of up to {max} levels from 0 to 100"))?.unwrap_or_else(|| vec![1.0]);
+            Kind::Modal(Box::new(Modal::new(&ratios, &t60, &levels, seed)))
+        }
+        "formant" => {
+            let series = match text("routing", "parallel")?.as_str() {
+                "parallel" => false,
+                "series" | "cascade" => true,
+                other => return err(format!("{who}: unknown routing '{other}' (parallel, series)")),
+            };
+            let max = MAX_FORMANTS;
+            let freqs = list("freqs", max, &|v| v > 0.0 && v < 20000.0, &format!("a list of 2 to {max} frequencies in Hz"))?;
+            let qs = list("qs", max, &|v| (0.5..=40.0).contains(&v), &format!("a list of up to {max} Qs from 0.5 to 40"))?;
+            let gains = list("gains", max, &|v| (0.0..=100.0).contains(&v), &format!("a list of up to {max} levels from 0 to 100"))?;
+            let (custom, count) = match freqs {
+                Some(f) if f.len() >= 2 => {
+                    let pick = |v: &Option<Vec<f32>>, k: usize, d: f32| v.as_ref().map_or(d, |v| v[k.min(v.len() - 1)]);
+                    let table: [(f32, f32, f32); MAX_FORMANTS] = core::array::from_fn(|k| if k < f.len() { (f[k], pick(&qs, k, 10.0), pick(&gains, k, 1.0)) } else { (1000.0, 1.0, 0.0) });
+                    (Some(Box::new(table)), f.len())
+                }
+                Some(_) => return err(format!("{who}: freqs needs 2 to {max} formant frequencies")),
+                None if qs.is_some() || gains.is_some() => return err(format!("{who}: qs and gains go with freqs = [..]; vowels have their own")),
+                None => (None, 3),
+            };
+            Kind::Formant { f: Formant::new(series), custom, n: count }
+        }
+        "pan" => {
+            let right = match n.args.get("channel") {
+                Some(Arg::Text(t)) if t.eq_ignore_ascii_case("left") => false,
+                Some(Arg::Text(t)) if t.eq_ignore_ascii_case("right") => true,
+                _ => return err(format!("{who}: needs channel = \"left\" or \"right\"")),
+            };
+            Kind::Pan { right, last: f32::NAN }
+        }
+        "distance" => {
+            let max_ms = match n.args.get("max_ms") {
+                None => 200.0,
+                Some(Arg::Num(v)) if *v > 0.0 && *v <= MAX_DELAY_MS as f64 => *v as f32,
+                Some(_) => return err(format!("{who}: max_ms must be a number up to {MAX_DELAY_MS}")),
+            };
+            Kind::Distance { air: Air::default(), line: DelayLine::new((max_ms * 0.001 * sr) as usize), last_gain: f32::NAN, last_delay: f32::NAN }
+        }
         _ => Kind::Limiter,
     };
     Ok(Node { kind, params, inputs, by })

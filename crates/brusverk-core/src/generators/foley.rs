@@ -39,6 +39,7 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::blocks::{hz_coef, mix_seed, OnePole, SlowNoise};
+use crate::dsp::power_event;
 use crate::filter::{FilterMode, Svf};
 use crate::math::{Rng, TAU};
 use crate::model::{Generator, InputSpec};
@@ -545,9 +546,9 @@ impl Footstep {
                 y += s.scuff_bp.tick(pk) * scuff_env;
             }
             if crunch_gain > 0.0 {
-                if self.rng.next_f32() < grain_p {
+                if let Some(a) = power_event(&mut self.rng, grain_p, mat.skew) {
                     // A few big stones among many small ones, the big ones under the heel and toe.
-                    let a = self.rng.next_f32().powf(mat.skew) * grain_scale;
+                    let a = a * grain_scale;
                     s.grain_env = s.grain_env.max(a);
                     s.grain_next ^= 1;
                     let hz = mat.grain_lo * (mat.grain_hi / mat.grain_lo).powf(self.rng.next_f32()) * s.tone;

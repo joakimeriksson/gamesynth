@@ -11,6 +11,7 @@
 use core::marker::PhantomData;
 
 use crate::blocks::{hz_coef, mix_seed, OnePole, Reverb, BLOCK};
+use crate::dsp::balance;
 use crate::filter::{FilterMode, Svf};
 use crate::math::{soft_clip, Rng, TAU};
 use crate::model::{Generator, InputSpec};
@@ -160,12 +161,6 @@ const IDLE: LayerState = LayerState {
     next: 0,
     grain_pan: [(1.0, 1.0); 3],
 };
-
-/// Balance-law pan: centre is (1, 1), so a width of zero leaves the mono signal untouched.
-#[inline]
-fn balance(pan: f32) -> (f32, f32) {
-    ((1.0 - pan).min(1.0), (1.0 + pan).min(1.0))
-}
 
 /// How a block is placed in space: the recipe's reverb and the effective stereo width.
 #[derive(Clone, Copy, Debug)]

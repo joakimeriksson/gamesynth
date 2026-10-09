@@ -1,0 +1,62 @@
+# Showcases `powerdust`: crackle sizes follow a power law (mostly tiny, a few loud), which is
+# what makes a texture sound real; uniform sizes sound like a machine. Each grain is a short
+# `ad` envelope on noise; rare pops get a longer one.
+[model]
+name = "crackle"
+category = "nature"
+doc = "A crackling texture: embers, a log settling, dry twigs, old vinyl. Mostly tiny ticks with the odd loud snap."
+
+[inputs]
+intensity = { default = 0.5, doc = "A few ticks to a busy crackle" }
+
+[params]
+rate = { default = 250, min = 10, max = 2000, scale = "exp", group = "crackle" }
+skew = { default = 3.0, min = 0, max = 6, group = "crackle" }
+colour_hz = { default = 2500, min = 500, max = 9000, scale = "exp", group = "crackle" }
+click_ms = { default = 4, min = 1, max = 30, group = "crackle" }
+pops = { default = 0.6, min = 0, max = 1, group = "pops" }
+bed = { default = 0.3, min = 0, max = 1, group = "bed" }
+gain = { default = 1.0, min = 0, max = 2, group = "master" }
+
+[signals]
+grains = "rate * (0.05 + 0.95 * pow(intensity, 1.5))"
+colour = "colour_hz * exp2(0.7 * noise(20))"
+
+[graph]
+nodes = [
+  { id = "white", type = "noise" },
+  { id = "brown", type = "noise", color = "brown" },
+  { id = "pink", type = "noise", color = "pink" },
+  # Grains: size u^skew, so at skew 3 half are below 1/8 and one in a thousand is over 0.9.
+  { id = "ticks", type = "powerdust", rate = "grains", skew = "skew" },
+  { id = "tick_env", type = "ad", in = ["ticks"], attack = 0.0005, decay = "click_ms * 0.001" },
+  { id = "tick_noise", type = "mul", in = ["white"], by = ["tick_env"] },
+  { id = "tick_band", type = "svf", mode = "bandpass", in = ["tick_noise"], cutoff = "colour", resonance = 0.15 },
+  # Pops: rare, fuller, with a little body.
+  { id = "snaps", type = "powerdust", rate = "grains * 0.015 * pops", skew = 1.5 },
+  { id = "snap_env", type = "ad", in = ["snaps"], attack = 0.001, decay = 0.05 },
+  { id = "snap_noise", type = "mul", in = ["brown"], by = ["snap_env"] },
+  { id = "snap_body", type = "svf", mode = "bandpass", in = ["snap_noise"], cutoff = 700, resonance = 0.3 },
+  { id = "hiss", type = "svf", mode = "lowpass", in = ["pink"], cutoff = "500 + 1500 * intensity", resonance = 0.1 },
+  { id = "out", type = "gain", gain = "gain", in = [
+      { from = "tick_band", gain = 2.5 },
+      { from = "snap_body", gain = "4 * pops" },
+      { from = "hiss", gain = "bed * (0.1 + 0.2 * intensity)" } ] },
+]
+out = "out"
+
+[presets.vinyl]
+rate = 120
+skew = 4.5
+colour_hz = 5000
+click_ms = 1.5
+pops = 0.15
+bed = 0.5
+
+[presets.dry_twigs]
+rate = 60
+skew = 2.0
+colour_hz = 1800
+click_ms = 8
+pops = 1.0
+bed = 0.0

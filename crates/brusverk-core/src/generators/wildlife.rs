@@ -24,6 +24,7 @@
 //! is the mono render, sample for sample.
 
 use crate::blocks::{hz_coef, mix_seed, Brown, Dust, OnePole, Reverb, SlowNoise, BLOCK};
+use crate::dsp::balance;
 use crate::filter::{FilterMode, Svf};
 use crate::math::{soft_clip, Rng, TAU};
 use crate::model::{Generator, InputSpec};
@@ -38,12 +39,6 @@ use crate::params::{exp, int, lin, GAIN, UNIT};
 fn smooth01(x: f32) -> f32 {
     let x = x.clamp(0.0, 1.0);
     x * x * (3.0 - 2.0 * x)
-}
-
-/// Balance-law pan: centre is (1, 1), so a width of zero leaves the mono signal untouched.
-#[inline]
-fn balance(pan: f32) -> (f32, f32) {
-    ((1.0 - pan).min(1.0), (1.0 + pan).min(1.0))
 }
 
 /// Piecewise-linear lookup in a table of (x, y) points sorted by x.

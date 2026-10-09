@@ -15,6 +15,7 @@
 //! object does: one playback per object, `trigger()` on every contact.
 
 use crate::blocks::{hz_coef, mix_seed, OnePole, SlowNoise, BLOCK};
+use crate::dsp::{Air, ModalBank};
 use crate::math::{Rng, TAU};
 use crate::model::{Generator, InputSpec};
 use crate::noise::Noise;
@@ -241,94 +242,7 @@ pub fn material(kind: f32) -> &'static Material {
     &MATERIALS[(kind.round().max(0.0) as usize).min(MATERIALS.len() - 1)]
 }
 
-/// The object's scale for a 0..1 `size` input: 0.25 (two octaves up) .. 4 (two octaves down).
-#[inline]
-pub fn size_scale(size: f32) -> f32 {
-    ((size.clamp(0.0, 1.0) - 0.5) * 4.0).exp2()
-}
-
-/// A bank of decaying sinusoids, each a complex one-pole resonator (four multiplies a sample).
-/// Modes that have died away are skipped.
-#[derive(Clone, Copy, Debug)]
-struct ModeBank {
-    re: [f32; MAX_MODES],
-    im: [f32; MAX_MODES],
-    /// Pole: radius times cos / sin of the step angle.
-    c: [f32; MAX_MODES],
-    s: [f32; MAX_MODES],
-    /// Excitation gain of each mode.
-    g: [f32; MAX_MODES],
-    live: [bool; MAX_MODES],
-    n: usize,
-}
-
-impl ModeBank {
-    const fn new() -> Self {
-        ModeBank {
-            re: [0.0; MAX_MODES],
-            im: [0.0; MAX_MODES],
-            c: [0.0; MAX_MODES],
-            s: [0.0; MAX_MODES],
-            g: [0.0; MAX_MODES],
-            live: [false; MAX_MODES],
-            n: 0,
-        }
-    }
-
-    /// Tune mode `k` to `hz` with ring time `t60`. Modes above 0.45 sr are silenced.
-    fn tune(&mut self, k: usize, hz: f32, t60: f32, sr: f32) {
-        if !(hz > 0.0 && hz < 0.45 * sr) {
-            self.c[k] = 0.0;
-            self.s[k] = 0.0;
-            self.g[k] = 0.0;
-            return;
-        }
-        let r = (-6.91 / (t60.max(1e-3) * sr)).exp();
-        let w = TAU * hz / sr;
-        self.c[k] = r * w.cos();
-        self.s[k] = r * w.sin();
-    }
-
-    fn clear(&mut self) {
-        self.re = [0.0; MAX_MODES];
-        self.im = [0.0; MAX_MODES];
-        self.live = [false; MAX_MODES];
-    }
-
-    #[inline]
-    fn tick(&mut self, x: f32) -> f32 {
-        let mut y = 0.0;
-        for k in 0..self.n {
-            if !self.live[k] {
-                continue;
-            }
-            let (re, im) = (self.re[k], self.im[k]);
-            self.re[k] = self.c[k] * re - self.s[k] * im + self.g[k] * x;
-            self.im[k] = self.s[k] * re + self.c[k] * im;
-            y += self.im[k];
-        }
-        y
-    }
-
-    /// Sum of mode amplitudes; retires modes that have fallen below `floor`.
-    fn energy(&mut self, floor: f32) -> f32 {
-        let mut sum = 0.0;
-        for k in 0..self.n {
-            if !self.live[k] {
-                continue;
-            }
-            let a = self.re[k].abs() + self.im[k].abs();
-            if a < floor {
-                self.live[k] = false;
-                self.re[k] = 0.0;
-                self.im[k] = 0.0;
-            } else {
-                sum += a;
-            }
-        }
-        sum
-    }
-}
+pub use crate::dsp::size_scale;
 
 /// A half-sine force pulse, normalised to unit area so a soft (long) contact delivers the same
 /// momentum as a hard one, only with less treble.
@@ -365,24 +279,8 @@ impl Pulse {
 const MAX_PULSES: usize = 8;
 
 /// Distance: quieter and duller, as for the other events (air takes the top off first).
-#[derive(Clone, Copy, Debug, Default)]
-struct Far {
-    lp: [OnePole; 2],
-    coef: f32,
-    gain: f32,
-}
-
-impl Far {
-    fn set(&mut self, distance: f32, sr: f32) {
-        self.coef = hz_coef(18000.0 * (400.0f32 / 18000.0).powf(distance), sr);
-        self.gain = 1.0 - 0.75 * distance;
-    }
-
-    #[inline]
-    fn tick(&mut self, x: f32) -> f32 {
-        let y = self.lp[0].lp(x, self.coef);
-        self.lp[1].lp(y, self.coef) * self.gain
-    }
+fn far(air: &mut Air, distance: f32, sr: f32) {
+    air.set(distance, 18000.0, 400.0, 1.0 - 0.75 * distance, sr);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -409,7 +307,7 @@ fn kind_preset(kind: f32) -> StrikeParams {
 
 pub struct Strike {
     sr: f32,
-    bank: ModeBank,
+    bank: ModalBank,
     /// Untransposed mode frequencies and ring times of the current hit.
     hz: [f32; MAX_MODES],
     t60: [f32; MAX_MODES],
@@ -426,18 +324,18 @@ pub struct Strike {
     hiss_coef: f32,
     hiss_hp_coef: f32,
     rng: Rng,
-    far: Far,
+    far: Air,
     active: bool,
     pitch_ratio: f32,
 }
 
 impl Strike {
     fn retune(&mut self) {
-        for k in 0..self.bank.n {
-            let g = self.bank.g[k];
+        for k in 0..self.bank.len() {
+            let g = self.bank.gain(k);
             self.bank.tune(k, self.hz[k] * self.pitch_ratio, self.t60[k], self.sr);
-            if self.bank.c[k] != 0.0 || self.bank.s[k] != 0.0 {
-                self.bank.g[k] = g;
+            if self.bank.is_tuned(k) {
+                self.bank.set_gain(k, g);
             }
         }
     }
@@ -490,7 +388,7 @@ impl Generator for Strike {
     fn new(sr: f32) -> Self {
         Strike {
             sr,
-            bank: ModeBank::new(),
+            bank: ModalBank::new(),
             hz: [0.0; MAX_MODES],
             t60: [0.0; MAX_MODES],
             pulses: [Pulse::default(); MAX_PULSES],
@@ -506,7 +404,7 @@ impl Generator for Strike {
             hiss_coef: 1.0,
             hiss_hp_coef: 0.0,
             rng: Rng::new(mix_seed(0x57_1F)),
-            far: Far::default(),
+            far: Air::default(),
             active: false,
             pitch_ratio: 1.0,
         }
@@ -529,13 +427,13 @@ impl Generator for Strike {
         if !self.active {
             self.bank.clear();
         }
-        self.bank.n = mat.modes.len();
+        self.bank.set_len(mat.modes.len());
         for (k, mode) in mat.modes.iter().enumerate() {
             let shape = 0.25 + 0.75 * (core::f32::consts::PI * (k as f32 + 1.0) * pos).sin().abs();
             self.hz[k] = mat.hz * mode.ratio * tune * (1.0 + v * 0.006 * self.rng.next_bipolar());
             self.t60[k] = (mode.t60 * ring * (1.0 + v * 0.3 * self.rng.next_bipolar())).clamp(0.004, 12.0);
-            self.bank.g[k] = (mode.db / 20.0 * core::f32::consts::LN_10).exp() * shape;
-            self.bank.live[k] = true;
+            self.bank.set_gain(k, (mode.db / 20.0 * core::f32::consts::LN_10).exp() * shape);
+            self.bank.set_live(k, true);
         }
         self.retune();
         let level = mat.level * power * s.powf(0.3) * (1.0 + v * 0.15 * self.rng.next_bipolar());
@@ -558,7 +456,7 @@ impl Generator for Strike {
         self.hiss_decay = (-6.91 / (mat.hiss_ms * 1e-3 * ring.min(4.0) * self.sr)).exp();
         self.hiss_coef = hz_coef((top * tune).min(1.2 / contact).min(0.45 * self.sr), self.sr);
         self.hiss_hp_coef = hz_coef(0.5 * mat.hz * tune, self.sr);
-        self.far.set(distance, self.sr);
+        far(&mut self.far, distance, self.sr);
         self.active = true;
     }
 
@@ -614,7 +512,7 @@ impl Generator for Strike {
             self.hiss_lp = [OnePole::default(); 2];
             self.hiss_hp = OnePole::default();
             self.noise_lp = [OnePole::default(); 2];
-            self.far.lp = [OnePole::default(); 2];
+            self.far.reset();
         }
         debug_assert!(out.len() <= BLOCK);
     }
@@ -655,7 +553,7 @@ fn roll_preset(kind: f32, f: impl FnOnce(&mut RollParams)) -> RollParams {
 
 pub struct Roll {
     sr: f32,
-    bank: ModeBank,
+    bank: ModalBank,
     noise: Noise,
     rng: Rng,
     /// Shape of a bump (the contact pulse), the contact band, sliding friction.
@@ -730,7 +628,7 @@ impl Generator for Roll {
     fn new(sr: f32) -> Self {
         Roll {
             sr,
-            bank: ModeBank::new(),
+            bank: ModalBank::new(),
             noise: Noise::new(mix_seed(0x8011)),
             rng: Rng::new(mix_seed(0x8012)),
             bump: [OnePole::default(); 2],
@@ -759,18 +657,18 @@ impl Generator for Roll {
             let tune = (p.pitch / 12.0).exp2() / s;
             // The floor holds the object: it rings shorter while it rolls than when struck.
             let ring = p.ring * s.powf(0.6) * 0.5;
-            self.bank.n = mat.modes.len();
+            self.bank.set_len(mat.modes.len());
             for (k, mode) in mat.modes.iter().enumerate() {
                 self.bank.tune(k, mat.hz * mode.ratio * tune, (mode.t60 * ring).clamp(0.004, 6.0), sr);
-                if self.bank.c[k] != 0.0 || self.bank.s[k] != 0.0 {
-                    self.bank.g[k] = (mode.db / 20.0 * core::f32::consts::LN_10).exp() * mat.level;
+                if self.bank.is_tuned(k) {
+                    self.bank.set_gain(k, (mode.db / 20.0 * core::f32::consts::LN_10).exp() * mat.level);
                 }
             }
         }
         // Every mode stays in the loop while the object moves (energy() retires silent ones).
         if speed > 1e-4 {
-            for k in 0..self.bank.n {
-                self.bank.live[k] = self.bank.g[k] != 0.0;
+            for k in 0..self.bank.len() {
+                self.bank.set_live(k, self.bank.gain(k) != 0.0);
             }
         }
         let v = speed * p.top_speed;

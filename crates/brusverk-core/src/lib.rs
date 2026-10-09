@@ -20,6 +20,7 @@
 pub mod params;
 
 pub mod blocks;
+pub mod dsp;
 pub mod effects;
 pub mod generators;
 #[cfg(feature = "graph")]

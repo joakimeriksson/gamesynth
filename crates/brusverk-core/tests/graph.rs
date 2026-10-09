@@ -15,6 +15,10 @@ const FILES: &[(&str, &str)] = &[
     ("recharge", include_str!("../../../models/recharge.toml")),
     ("mine_armed", include_str!("../../../models/mine_armed.toml")),
     ("rocket_flight", include_str!("../../../models/rocket_flight.toml")),
+    ("wind_chimes", include_str!("../../../models/wind_chimes.toml")),
+    ("songbird", include_str!("../../../models/songbird.toml")),
+    ("crackle", include_str!("../../../models/crackle.toml")),
+    ("creature_grunt", include_str!("../../../models/creature_grunt.toml")),
 ];
 
 fn render(m: &mut dyn Model, secs: f32) -> Vec<f32> {

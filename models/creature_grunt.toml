@@ -1,0 +1,50 @@
+# Showcases `formant`: a buzzy throat source through vowel formants that morph from "o" to "a"
+# during the grunt, scaled down for a big creature; `adsr` gives it a click-free start and end.
+[model]
+name = "creature_grunt"
+category = "creatures"
+doc = "A creature's grunt: a rough voiced 'oh-ah' whose throat size follows `size`. No two grunts the same."
+one_shot = true
+
+[inputs]
+power = { default = 1.0, doc = "A grumble to a bark: level, pitch rise and roughness" }
+size = { default = 0.5, doc = "0 a small critter (high, short throat) .. 1 a big beast (low, long throat)" }
+
+[params]
+pitch_hz = { default = 95, min = 40, max = 400, scale = "exp", group = "voice" }
+length = { default = 0.4, min = 0.1, max = 1.5, group = "voice" }
+roughness = { default = 0.5, min = 0, max = 1, group = "voice" }
+throat = { default = 1.0, min = 0.5, max = 2.0, scale = "exp", group = "voice" }
+gain = { default = 1.0, min = 0, max = 2, group = "master" }
+
+[signals]
+scale = "exp2((0.5 - size) * 1.6)"
+dur = "length * (0.8 + 0.4 * rnd) * (1.4 - 0.8 * scale / (1 + scale))"
+# Up a little at the onset, sagging at the end; rough voices waver.
+glottis = "pitch_hz * scale * (1 + 0.04 * (rnd - 0.5)) * (1 + 0.2 * power * smoothstep(0, 0.06, t) - 0.3 * smoothstep(0.1, dur, t)) * (1 + 0.05 * roughness * noise(35))"
+vowel_now = "lerp(3.2, 0.2, smoothstep(0.02, dur * 0.8, t))"
+
+[graph]
+nodes = [
+  { id = "buzz", type = "saw", freq = "glottis" },
+  { id = "breath", type = "noise" },
+  { id = "env", type = "adsr", gate = "t < dur", attack = 0.03, decay = 0.15, sustain = 0.75, release = 0.12 },
+  { id = "voiced", type = "mul", in = [{ from = "buzz", gain = "1 + 0.6 * roughness * sh(28)" }, { from = "breath", gain = "0.25 * roughness" }], by = ["env"] },
+  { id = "throat_f", type = "formant", in = ["voiced"], vowel = "vowel_now", shift = "throat * sqrt(scale)", q = "1.2 - 0.5 * roughness" },
+  { id = "rasp", type = "drive", in = [{ from = "throat_f", gain = 1.5 }], amount = "0.2 + 0.5 * roughness * power" },
+  { id = "room", type = "reverb", in = ["rasp"], time = 0.6, mix = 0.12 },
+  { id = "out", type = "gain", in = ["room"], gain = "gain * (0.4 + 0.6 * power)" },
+]
+out = "out"
+
+[presets.critter]
+pitch_hz = 260
+length = 0.2
+roughness = 0.2
+throat = 1.6
+
+[presets.beast]
+pitch_hz = 55
+length = 0.9
+roughness = 0.9
+throat = 0.7

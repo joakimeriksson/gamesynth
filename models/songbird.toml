@@ -1,0 +1,62 @@
+# Showcases `chirp` (falling, warbling syllables), `fm` (a bright call that mellows as its index
+# envelope decays), `pattern` (songs as phrases with rests) and `ad` envelopes on the same
+# triggers, placed with `distance` and stereo `pan`.
+[model]
+name = "songbird"
+category = "nature"
+doc = "One songbird: phrases of warbled whistles, a fast trill now and then, a bright call, at a distance."
+
+[inputs]
+activity = { default = 0.6, doc = "Quiet to busy: longer phrases, shorter rests, trills and calls join in" }
+distance = { default = 0.3, doc = "0 = on the next branch, 1 = across the clearing (quieter, duller)" }
+
+[params]
+pitch = { default = 1.0, min = 0.5, max = 2.0, scale = "exp", group = "song" }
+tempo = { default = 1.0, min = 0.5, max = 2.0, scale = "exp", group = "song" }
+buzz = { default = 1.5, min = 0, max = 4, group = "song" }
+pan = { default = 0.2, min = -1, max = 1, group = "space" }
+space = { default = 0.3, min = 0, max = 1, group = "space" }
+gain = { default = 1.0, min = 0, max = 2, group = "master" }
+
+[signals]
+sing = "activity > 0.05"
+# Each syllable latches its pitches when it starts, so stepped random values vary them.
+high = "4200 * pitch * (1 + 0.12 * sh(2.3))"
+low = "2800 * pitch * (1 + 0.1 * sh(1.7))"
+drift = "pan + 0.15 * noise(0.1)"
+
+[graph]
+nodes = [
+  # Warbled whistles: 3..7 syllables a phrase.
+  { id = "song", type = "pattern", rate = "9 * tempo", count = "lerp(3, 7, activity)", gap = "lerp(4, 1.2, activity) / tempo", jitter = 0.15, variation = 0.6, run = "sing" },
+  { id = "whistle", type = "chirp", in = ["song"], from = "high", to = "low", time = "0.07 / tempo", curve = 0.6, ratio = 0.02, index = "buzz" },
+  { id = "whistle_env", type = "ad", in = ["song"], attack = 0.012, hold = "0.025 / tempo", decay = "0.07 / tempo" },
+  { id = "whistles", type = "mul", in = ["whistle"], by = ["whistle_env"] },
+  # A fast trill of short down-sweeps.
+  { id = "trill", type = "pattern", rate = "22 * tempo", count = "lerp(6, 14, activity)", gap = "lerp(9, 2.5, activity)", jitter = 0.05, variation = 0.4, run = "activity > 0.25" },
+  { id = "tick", type = "chirp", in = ["trill"], from = "6000 * pitch", to = "3600 * pitch", time = 0.02, curve = 1.5 },
+  { id = "tick_env", type = "ad", in = ["trill"], attack = 0.003, decay = 0.03 },
+  { id = "ticks", type = "mul", in = ["tick"], by = ["tick_env"] },
+  # A two-note call: bright at its onset (high FM index), mellowing as the index decays.
+  { id = "call", type = "pattern", rate = 5, count = 2, gap = "lerp(12, 4, activity)", variation = 0.5, run = "activity > 0.45" },
+  { id = "call_tone", type = "fm", in = ["call"], freq = "3100 * pitch", ratio = 1.5, index = 3, index_decay = 0.08 },
+  { id = "call_env", type = "ad", in = ["call"], attack = 0.006, hold = 0.04, decay = 0.12 },
+  { id = "calls", type = "mul", in = ["call_tone"], by = ["call_env"] },
+  { id = "bird", type = "mix", in = [{ from = "whistles", gain = 0.8 }, { from = "ticks", gain = 0.5 }, { from = "calls", gain = 0.4 }] },
+  { id = "far", type = "distance", in = ["bird"], distance = "distance", rolloff = 10, far_hz = 3000, delay_ms = 20 },
+  { id = "room", type = "reverb", in = ["far"], time = 1.4, mix = "space * (0.5 + distance)", damping = 0.6 },
+  { id = "left", type = "pan", in = [{ from = "room", gain = "1.8 * gain" }], pan = "drift", channel = "left" },
+  { id = "right", type = "pan", in = [{ from = "room", gain = "1.8 * gain" }], pan = "drift", channel = "right" },
+]
+out = "left"
+out_right = "right"
+
+[presets.small_and_quick]
+pitch = 1.4
+tempo = 1.5
+buzz = 0.6
+
+[presets.thrush]
+pitch = 0.7
+tempo = 0.75
+buzz = 2.5
