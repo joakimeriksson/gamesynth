@@ -197,23 +197,29 @@ model_params! {
     ///
     /// Revs either follow `throttle` with rev_up / rev_down inertia, or, with
     /// `engine/external_rpm` on, come straight from the `rpm` input (a geared vehicle knows its
-    /// RPM: shifts, limiter bounces, clutch-in). The parameters after `master/gain` were added
-    /// later; at their defaults the engine sounds exactly as before.
+    /// RPM: shifts, limiter bounces, clutch-in).
+    ///
+    /// Retuned in October 2026 against recordings (lawnmowers, motorcycles, a dirt bike and a
+    /// scooter, diesel trucks, a VW flat-four, V8s; see `tools/reference/combustion/`). What
+    /// they share and the first version lacked: the sound never stops between firings (the
+    /// pipe rings, the engine clatters), cylinders differ from each other in a repeating way
+    /// (energy between the firing harmonics), and the noise reaches well above the exhaust
+    /// note. The parameters after `damage/exhaust_leak` were added for that.
     CombustionParams / CombustionParamId {
         cylinders: "engine/cylinders" = 4.0, int(1, 12);
         idle_rpm: "engine/idle_rpm" = 900.0, lin(300.0, 3000.0);
         max_rpm: "engine/max_rpm" = 7000.0, lin(2000.0, 16000.0);
-        rev_up: "engine/rev_up" = 0.8, lin(0.05, 6.0);
-        rev_down: "engine/rev_down" = 1.6, lin(0.05, 6.0);
-        roughness: "engine/roughness" = 0.3, UNIT;
-        pulse_sharp: "engine/pulse_sharpness" = 8.0, lin(2.0, 30.0);
+        rev_up: "engine/rev_up" = 0.5, lin(0.05, 6.0);
+        rev_down: "engine/rev_down" = 0.9, lin(0.05, 6.0);
+        roughness: "engine/roughness" = 0.9, UNIT;
+        pulse_sharp: "engine/pulse_sharpness" = 16.0, lin(2.0, 30.0);
         noise_level: "engine/combustion_noise" = 0.4, UNIT;
         exhaust_hz: "exhaust/hz" = 140.0, exp(40.0, 800.0);
-        exhaust_res: "exhaust/resonance" = 0.7, lin(0.0, 0.95);
-        drive: "exhaust/drive" = 0.4, UNIT;
+        exhaust_res: "exhaust/resonance" = 0.87, lin(0.0, 0.95);
+        drive: "exhaust/drive" = 0.05, UNIT;
         burble: "exhaust/overrun_burble" = 0.5, UNIT;
-        intake_level: "intake/level" = 0.3, UNIT;
-        gain: "master/gain" = 0.9, GAIN;
+        intake_level: "intake/level" = 0.0, UNIT;
+        gain: "master/gain" = 1.5, GAIN;
         external_rpm: "engine/external_rpm" = 0.0, ParamKind::Enum(&OFF_ON);
         cycle: "engine/cycle" = 0.0, ParamKind::Enum(&ENGINE_CYCLES);
         lope: "engine/cam_lope" = 0.0, UNIT;
@@ -226,8 +232,52 @@ model_params! {
         misfire: "damage/misfire" = 0.6, UNIT;
         rattle: "damage/rattle" = 0.5, UNIT;
         leak: "damage/exhaust_leak" = 0.5, UNIT;
+        fire_spread: "engine/fire_spread" = 0.6, UNIT;
+        pipe_level: "exhaust/pipe_level" = 1.0, UNIT;
+        pipe_hz: "exhaust/pipe_hz" = 120.0, exp(30.0, 600.0);
+        pipe_ring: "exhaust/pipe_ring" = 0.75, lin(0.0, 0.95);
+        tone_hz: "exhaust/tone_hz" = 5000.0, exp(200.0, 16000.0);
+        clatter: "mechanical/clatter" = 0.2, UNIT;
+        clatter_hz: "mechanical/clatter_hz" = 2400.0, exp(500.0, 8000.0);
+        mech_noise: "mechanical/noise" = 0.08, UNIT;
+        low_cut_hz: "exhaust/low_cut_hz" = 20.0, exp(20.0, 400.0);
+        muffler: "exhaust/muffler" = 0.4, UNIT;
+        muffler_secs: "exhaust/muffler_secs" = 0.12, exp(0.02, 0.5);
     }
 }
+
+const MUFFLER_MS: [f32; 4] = [3.1, 4.7, 6.9, 9.3];
+
+/// Muffler chambers: four short damped delay lines mixed into each other, which smear every
+/// exhaust pulse over tens of milliseconds the way a silencer and its surroundings do.
+struct Muffler {
+    lines: [DelayLine; 4],
+    damp: [OnePole; 4],
+}
+
+impl Muffler {
+    fn new(sr: f32) -> Self {
+        Muffler { lines: MUFFLER_MS.map(|ms| DelayLine::new((ms * 0.001 * sr) as usize + 2)), damp: [OnePole::default(); 4] }
+    }
+
+    #[inline]
+    fn tick(&mut self, x: f32, gains: &[f32; 4], damp_coef: f32, sr: f32) -> f32 {
+        let mut y = [0.0f32; 4];
+        for (k, ((line, damp), ms)) in self.lines.iter().zip(self.damp.iter_mut()).zip(MUFFLER_MS).enumerate() {
+            y[k] = damp.lp(line.read(ms * 0.001 * sr), damp_coef);
+        }
+        let mix = [y[0] + y[1] + y[2] + y[3], y[0] - y[1] + y[2] - y[3], y[0] + y[1] - y[2] - y[3], y[0] - y[1] - y[2] + y[3]];
+        for (k, line) in self.lines.iter_mut().enumerate() {
+            line.write(x + 0.5 * mix[k] * gains[k]);
+        }
+        0.5 * mix[0]
+    }
+}
+
+/// Fixed differences between cylinders (level, firing time), scaled by `engine/fire_spread`:
+/// no two cylinders breathe, burn or exhaust alike, and the pattern repeats every cycle.
+const CYL_LEVEL: [f32; 12] = [0.45, -0.35, 0.1, -0.6, 0.3, 0.6, -0.2, -0.45, 0.55, -0.1, 0.25, -0.5];
+const CYL_TIME: [f32; 12] = [-0.4, 0.5, 0.15, -0.3, 0.6, -0.55, 0.2, -0.1, 0.35, -0.6, 0.05, 0.25];
 
 /// Firing-interval pattern of a lumpy cam: alternating early and late cylinders.
 const LOPE_TIMING: [f32; 12] = [0.9, -0.6, 0.3, -1.0, 0.7, -0.2, 1.0, -0.8, 0.4, -0.5, 0.6, -0.3];
@@ -241,7 +291,6 @@ pub struct Combustion {
     amp: f32,
     /// Cycle-to-cycle timing variation of the current firing.
     timing: f32,
-    cyl_gain: [f32; 12],
     noise: Noise,
     dust: Dust,
     dc: OnePole,
@@ -267,6 +316,16 @@ pub struct Combustion {
     skip_next: bool,
     /// Smoothed inputs, in `INPUTS` order.
     x: [f32; 5],
+    /// The tailpipe: a reflection back up the pipe (inverted at the open end), damped.
+    pipe: DelayLine,
+    pipe_damp: OnePole,
+    tone: Svf,
+    low_cut: Svf,
+    muffler: Muffler,
+    mech_noise: Noise,
+    clatter: Svf,
+    clatter_env: f32,
+    mech: Svf,
 }
 
 impl Combustion {
@@ -299,33 +358,70 @@ impl Generator for Combustion {
 
     fn presets() -> Vec<(&'static str, CombustionParams)> {
         vec![
-            ("V8 muscle", CombustionParams { cylinders: 8.0, idle_rpm: 700.0, max_rpm: 6200.0, exhaust_hz: 95.0, exhaust_res: 0.8, roughness: 0.45, drive: 0.6, ..Default::default() }),
-            ("Motorbike", CombustionParams { cylinders: 2.0, idle_rpm: 1300.0, max_rpm: 11000.0, rev_up: 0.4, rev_down: 0.9, exhaust_hz: 210.0, pulse_sharp: 12.0, ..Default::default() }),
-            ("Diesel truck", CombustionParams { cylinders: 6.0, idle_rpm: 600.0, max_rpm: 2800.0, rev_up: 2.2, rev_down: 2.8, exhaust_hz: 70.0, noise_level: 0.7, roughness: 0.5, burble: 0.1, ..Default::default() }),
-            ("Lawnmower", CombustionParams { cylinders: 1.0, idle_rpm: 1600.0, max_rpm: 3600.0, exhaust_hz: 260.0, exhaust_res: 0.5, roughness: 0.6, noise_level: 0.6, gain: 1.4, ..Default::default() }),
+            // Fitted to a Mustang GT500 idling and a Challenger pulling away: a dark roar,
+            // nearly all of it below 1 kHz.
+            ("V8 muscle", CombustionParams {
+                cylinders: 8.0, idle_rpm: 900.0, max_rpm: 6200.0, rev_up: 0.5, rev_down: 1.0, burble: 0.5,
+                pulse_sharp: 2.0, noise_level: 0.0, roughness: 0.3, fire_spread: 1.0, exhaust_hz: 626.0, exhaust_res: 0.45, drive: 0.22,
+                pipe_level: 1.0, pipe_hz: 150.0, pipe_ring: 0.95, tone_hz: 410.0, intake_level: 1.0, clatter: 0.0, clatter_hz: 1680.0,
+                mech_noise: 0.57, low_cut_hz: 40.3, muffler: 0.5, muffler_secs: 0.14, gain: 1.08, ..Default::default()
+            }),
+            // Fitted to a BMW twin idling and blipped, and a Harley-Davidson held at revs.
+            ("Motorbike", CombustionParams {
+                cylinders: 2.0, idle_rpm: 1200.0, max_rpm: 11000.0, rev_up: 0.35, rev_down: 0.8,
+                pulse_sharp: 20.0, noise_level: 1.0, roughness: 0.3, fire_spread: 0.4, exhaust_hz: 91.6, exhaust_res: 0.79, drive: 0.0,
+                pipe_level: 0.27, pipe_hz: 400.0, pipe_ring: 0.82, tone_hz: 13100.0, intake_level: 0.0, clatter: 0.35, clatter_hz: 2500.0,
+                mech_noise: 0.57, low_cut_hz: 40.3, muffler: 0.8, muffler_secs: 0.5, gain: 0.94, ..Default::default()
+            }),
+            // Fitted to a diesel idling and revved, a semi idling and a truck working up a hill:
+            // broadband and gritty, a fifth of it above 2.5 kHz (injector knock).
+            ("Diesel truck", CombustionParams {
+                cylinders: 6.0, idle_rpm: 600.0, max_rpm: 2800.0, rev_up: 1.0, rev_down: 1.5, burble: 0.1,
+                pulse_sharp: 4.7, noise_level: 0.97, roughness: 0.3, fire_spread: 0.94, exhaust_hz: 76.5, exhaust_res: 0.38, drive: 1.0,
+                pipe_level: 1.0, pipe_hz: 113.0, pipe_ring: 0.33, tone_hz: 6607.0, intake_level: 0.1, clatter: 0.31, clatter_hz: 1919.0,
+                mech_noise: 0.39, low_cut_hz: 20.0, muffler: 0.6, muffler_secs: 0.09, gain: 0.88, ..Default::default()
+            }),
+            // Fitted to three mowers running at 2600-3500 rpm: a steady drone loudest at
+            // 125-500 Hz, the firings smeared by the muffler.
+            ("Lawnmower", CombustionParams {
+                cylinders: 1.0, idle_rpm: 2000.0, max_rpm: 3600.0,
+                pulse_sharp: 6.0, noise_level: 0.0, roughness: 0.3, fire_spread: 0.54, exhaust_hz: 200.0, exhaust_res: 0.78, drive: 0.99,
+                pipe_level: 1.0, pipe_hz: 150.0, pipe_ring: 0.7, tone_hz: 2008.0, intake_level: 0.6, clatter: 0.5, clatter_hz: 1883.0,
+                mech_noise: 0.06, low_cut_hz: 54.4, muffler: 0.6, muffler_secs: 0.27, gain: 0.56, ..Default::default()
+            }),
+            // Fitted to a 2000 hp drag car idling (1600 rpm) and driving past slowly.
             ("Blown V8", CombustionParams {
-                cylinders: 8.0, idle_rpm: 750.0, max_rpm: 6500.0, exhaust_hz: 88.0, exhaust_res: 0.82, roughness: 0.5, noise_level: 0.45, drive: 0.72,
-                burble: 0.7, lope: 0.75, limiter: 0.6, backfire: 0.55, blower_level: 0.55, blower_ratio: 14.0, ..Default::default()
+                cylinders: 8.0, idle_rpm: 1500.0, max_rpm: 6500.0, rev_up: 0.4, rev_down: 0.9,
+                burble: 0.7, lope: 0.75, limiter: 0.6, backfire: 0.55, blower_level: 0.55, blower_ratio: 14.0,
+                pulse_sharp: 2.0, noise_level: 0.25, roughness: 0.9, fire_spread: 0.08, exhaust_hz: 115.0, exhaust_res: 0.95, drive: 0.3,
+                pipe_level: 0.3, pipe_hz: 344.0, pipe_ring: 0.88, tone_hz: 2025.0, intake_level: 0.0, clatter: 0.0, clatter_hz: 2165.0,
+                mech_noise: 1.0, low_cut_hz: 20.0, muffler: 0.06, muffler_secs: 0.4, gain: 0.55, ..Default::default()
             }),
+            // Fitted to a VW dune buggy idling, revving and flat out at 7450 rpm.
             ("Buggy flat-four", CombustionParams {
-                cylinders: 4.0, idle_rpm: 1000.0, max_rpm: 7500.0, rev_up: 0.5, rev_down: 0.9, exhaust_hz: 185.0, exhaust_res: 0.55, roughness: 0.4,
-                pulse_sharp: 14.0, noise_level: 0.68, drive: 0.62, intake_level: 0.5, lope: 0.3, limiter: 0.5, backfire: 0.3, ..Default::default()
+                cylinders: 4.0, idle_rpm: 1100.0, max_rpm: 7500.0, rev_up: 0.5, rev_down: 0.9, lope: 0.3, limiter: 0.5, backfire: 0.3,
+                pulse_sharp: 2.0, noise_level: 0.4, roughness: 0.9, fire_spread: 1.0, exhaust_hz: 189.0, exhaust_res: 0.95, drive: 0.7,
+                pipe_level: 0.8, pipe_hz: 120.0, pipe_ring: 0.49, tone_hz: 6677.0, intake_level: 0.55, clatter: 0.2, clatter_hz: 1996.0,
+                mech_noise: 0.34, low_cut_hz: 32.4, muffler: 0.8, muffler_secs: 0.25, gain: 0.22, ..Default::default()
             }),
+            // Fitted to a Honda CR85 flat out and a two-stroke scooter idling and revving.
             ("Dirt bike 2-stroke", CombustionParams {
-                cylinders: 1.0, cycle: 1.0, idle_rpm: 1800.0, max_rpm: 12000.0, rev_up: 0.25, rev_down: 0.5, exhaust_hz: 320.0, exhaust_res: 0.78,
-                roughness: 0.45, pulse_sharp: 16.0, noise_level: 0.72, drive: 0.5, limiter: 0.7, backfire: 0.2, gain: 1.15, ..Default::default()
+                cylinders: 1.0, cycle: 1.0, idle_rpm: 1800.0, max_rpm: 12000.0, rev_up: 0.25, rev_down: 0.6, limiter: 0.7, backfire: 0.2,
+                pulse_sharp: 2.0, noise_level: 0.77, roughness: 0.3, fire_spread: 0.44, exhaust_hz: 144.0, exhaust_res: 0.95, drive: 1.0,
+                pipe_level: 0.93, pipe_hz: 204.0, pipe_ring: 0.83, tone_hz: 3332.0, intake_level: 0.01, clatter: 0.16, clatter_hz: 1294.0,
+                mech_noise: 0.5, low_cut_hz: 20.0, muffler: 0.0, muffler_secs: 0.12, gain: 0.63, ..Default::default()
             }),
+            // Fitted to a worn engine idling and revving: rattly, a quarter of it above 2.5 kHz.
             ("Rattletrap V8", CombustionParams {
-                cylinders: 8.0, idle_rpm: 600.0, max_rpm: 5200.0, exhaust_hz: 82.0, exhaust_res: 0.65, roughness: 0.85, noise_level: 0.6, drive: 0.66,
-                burble: 0.8, lope: 0.4, limiter: 0.4, backfire: 0.7, wear: 0.35, rattle: 0.7, ..Default::default()
+                cylinders: 8.0, idle_rpm: 700.0, max_rpm: 5200.0, rev_down: 1.0, burble: 0.8, lope: 0.4, limiter: 0.4, backfire: 0.7, wear: 0.35, rattle: 0.7,
+                pulse_sharp: 10.0, noise_level: 1.0, roughness: 0.3, fire_spread: 0.6, exhaust_hz: 65.9, exhaust_res: 0.85, drive: 0.37,
+                pipe_level: 0.5, pipe_hz: 66.7, pipe_ring: 0.86, tone_hz: 11853.0, intake_level: 1.0, clatter: 0.95, clatter_hz: 1265.0,
+                mech_noise: 0.81, low_cut_hz: 24.4, muffler: 0.45, muffler_secs: 0.11, gain: 0.68, ..Default::default()
             }),
         ]
     }
 
     fn new(sr: f32) -> Self {
-        let mut rng = crate::math::Rng::new(0x41_0001);
-        let mut cyl_gain = [1.0; 12];
-        cyl_gain.iter_mut().for_each(|g| *g = rng.range(0.72, 1.0));
         Combustion {
             sr,
             rev: 0.0,
@@ -333,7 +429,6 @@ impl Generator for Combustion {
             cyl: 0,
             amp: 1.0,
             timing: 1.0,
-            cyl_gain,
             noise: Noise::new(0x41_0002),
             dust: Dust::new(0x41_0003),
             dc: OnePole::default(),
@@ -354,6 +449,15 @@ impl Generator for Combustion {
             blower: [Phasor::default(); 2],
             skip_next: false,
             x: [0.0, 0.3, 0.0, 0.0, 0.0],
+            pipe: DelayLine::new((sr / 50.0) as usize),
+            pipe_damp: OnePole::default(),
+            tone: Svf::default(),
+            low_cut: Svf::default(),
+            muffler: Muffler::new(sr),
+            mech_noise: Noise::new(0x41_0005),
+            clatter: Svf::default(),
+            clatter_env: 0.0,
+            mech: Svf::default(),
         }
     }
 
@@ -394,9 +498,27 @@ impl Generator for Combustion {
         // Lifting off at high revs: unburnt fuel pops in the exhaust.
         let overrun = (rev - throttle - 0.15).max(0.0) * p.burble;
         let pop_p = 40.0 * overrun / sr;
-        let drive = 1.0 + p.drive * 5.0 + boost * p.boost_drive * 4.0;
+        // Gentle drive: hard enough to thicken the pulses, not so hard that they flatten into
+        // a square buzz (the first version clipped at every firing).
+        let drive = 1.0 + p.drive * 2.5 + boost * p.boost_drive * 3.0;
         let intake_gain = p.intake_level * (0.2 + 0.8 * throttle) * 1.5 * (1.0 + boost);
         let level = (0.35 + 0.65 * load.max(throttle * 0.5)) * (0.7 + 0.6 * rev) * p.gain * 1.1 * (1.0 + 0.25 * boost);
+        // The pipe's quarter-wave note rises as the gas heats up with revs.
+        let pipe_delay = (sr / (2.0 * p.pipe_hz * (0.9 + 0.3 * rev))).min(self.pipe.max_delay());
+        let pipe_fb = -p.pipe_ring;
+        let pipe_damp = hz_coef(2500.0 + 2500.0 * rev, sr);
+        let pipe_gain = p.pipe_level * 0.8;
+        self.tone.set(FilterMode::LowPass, (p.tone_hz * (0.75 + 0.5 * rev)).min(0.45 * sr), 0.15, sr);
+        // Small mufflers and distance take the bottom out of the note.
+        self.low_cut.set(FilterMode::HighPass, p.low_cut_hz, 0.1, sr);
+        let muffler_gains = MUFFLER_MS.map(|ms| 10f32.powf(-3.0 * ms * 0.001 / p.muffler_secs));
+        let muffler_damp = hz_coef(1800.0 + 2500.0 * rev, sr);
+        let (muffler_dry, muffler_wet) = (1.0 - 0.6 * p.muffler, 1.4 * p.muffler);
+        self.clatter.set(FilterMode::BandPass, p.clatter_hz, 0.45, sr);
+        self.mech.set(FilterMode::BandPass, p.clatter_hz * 0.6, 0.2, sr);
+        let clatter_gain = p.clatter * (0.5 + 0.5 * load.max(throttle)) * 2.0;
+        let clatter_decay = (-1.0 / (0.004 * sr)).exp();
+        let mech_gain = p.mech_noise * (0.5 + 0.5 * rev) * 0.6;
 
         // ---- added features (all inert at their defaults) ----
         // Backfire: a sharp lift-off at speed sets off one to three bangs in the exhaust.
@@ -431,7 +553,7 @@ impl Generator for Combustion {
         let blower_inc = self.rpm(p) / 60.0 * p.blower_ratio / sr;
         let rattle_decay = (-1.0 / (0.004 * sr)).exp();
         let bang_decay = (-1.0 / (0.03 * sr)).exp();
-        let bang_gain = 0.9 * (0.6 + 0.8 * damage) * p.backfire.sqrt();
+        let bang_gain = 1.2 * (0.6 + 0.8 * damage) * p.backfire.sqrt();
         if p.backfire > 0.0 {
             // A backfire is a bang in the pipe: a low boom plus a crack at the tailpipe.
             self.bang_pipe[0].set(FilterMode::LowPass, p.exhaust_hz * 3.0, 0.4, sr);
@@ -441,10 +563,12 @@ impl Generator for Combustion {
         for s in out.iter_mut() {
             if self.fire.tick(inc * self.timing) {
                 self.cyl = (self.cyl + 1) % n_cyl;
-                self.amp = self.cyl_gain[self.cyl] * (1.0 + p.roughness * 0.5 * self.dust.rng().next_bipolar());
+                let c = self.cyl;
+                self.amp = (1.0 + p.fire_spread * CYL_LEVEL[c]) * (1.0 + p.roughness * 0.5 * self.dust.rng().next_bipolar());
                 // No two combustion cycles take exactly as long; this is what keeps the upper
-                // harmonics from sounding like a clean synth buzz.
-                self.timing = 1.0 + (0.015 + 0.06 * p.roughness) * self.dust.rng().next_bipolar();
+                // harmonics from sounding like a clean synth buzz. Each cylinder also fires a
+                // little early or late, the same every cycle.
+                self.timing = (1.0 + 0.12 * p.fire_spread * CYL_TIME[c]) * (1.0 + (0.015 + 0.06 * p.roughness) * self.dust.rng().next_bipolar());
                 if p.lope > 0.0 {
                     // A lumpy cam: an uneven, repeating firing pattern that smooths out with revs.
                     let lumpy = p.lope * (1.0 - rev).max(0.0);
@@ -464,10 +588,14 @@ impl Generator for Combustion {
                 if rattle_on && self.rng.chance(damage * p.rattle * 0.6) {
                     self.rattle_env = self.rattle_env.max(self.rng.range(0.4, 1.0));
                 }
+                // Every firing knocks the block and the valvetrain: a short clatter burst.
+                self.clatter_env = self.clatter_env.max(self.amp.abs().min(2.0));
             }
             let pulse = self.amp * (-self.fire.phase * p.pulse_sharp).exp();
             let w = self.noise.white();
-            let bang = pulse * (0.6 + p.noise_level * 1.5 * w) + self.dust.tick(pop_p) * 1.5;
+            // Turbulent combustion: at full `engine/combustion_noise` the burst is mostly noise,
+            // which is what keeps a real engine at revs from being a clean harmonic buzz.
+            let bang = pulse * (0.6 * (1.0 - 0.4 * p.noise_level) + p.noise_level * 2.2 * w) + self.dust.tick(pop_p) * 1.5;
             let mut backfire = 0.0;
             if self.pops_left > 0 || self.bang > 1e-4 {
                 if self.pops_left > 0 {
@@ -483,9 +611,18 @@ impl Generator for Combustion {
                 self.bang *= bang_decay;
             }
             let x0 = self.dc.hp(bang, dc_coef);
-            let pipe = self.exhaust[0].tick(x0) + 0.8 * self.exhaust[1].tick(x0) + 0.35 * self.body.lp(x0, body_coef);
+            // The reflection keeps the pipe ringing between firings.
+            let ring = x0 + pipe_fb * self.pipe_damp.lp(self.pipe.read(pipe_delay), pipe_damp);
+            self.pipe.write(ring);
+            let pipe = self.exhaust[0].tick(x0) + 0.8 * self.exhaust[1].tick(x0) + 0.35 * self.body.lp(x0, body_coef) + pipe_gain * ring;
             let intake = self.intake.tick(self.noise.pink()) * intake_gain * (0.5 + 0.5 * pulse);
-            let mut y = soft_clip((pipe + intake) * drive) / (1.0 + 0.2 * (drive - 1.0)) + backfire;
+            let exhaust = soft_clip((pipe + intake) * drive) / (1.0 + 0.2 * (drive - 1.0));
+            let exhaust = exhaust * muffler_dry + self.muffler.tick(exhaust, &muffler_gains, muffler_damp, sr) * muffler_wet;
+            let m = self.mech_noise.white();
+            let clatter = self.clatter.tick(m * self.clatter_env) * clatter_gain;
+            self.clatter_env *= clatter_decay;
+            let mech = self.mech.tick(self.mech_noise.pink()) * mech_gain * (0.7 + 0.3 * pulse.min(1.0));
+            let mut y = self.low_cut.tick(self.tone.tick(exhaust)) + clatter + mech + backfire;
             if rattle_on {
                 y += self.rattle.tick(w * self.rattle_env) * 1.5;
                 self.rattle_env *= rattle_decay;

@@ -420,10 +420,25 @@ impl Chirp {
         self.from * (self.octaves * u).exp2()
     }
 
+    /// Advance the glide by one sample without sounding it: the frequency (Hz) for this sample.
+    /// A pitch contour for another source (a pulse train through formants), or for a voice
+    /// that is silent between its syllables.
+    #[inline]
+    pub fn step(&mut self, sr: f32) -> f32 {
+        let f = self.freq();
+        self.t += 1.0 / sr;
+        f
+    }
+
+    /// Whether the glide has reached `to` and now holds it.
+    #[inline]
+    pub fn is_settled(&self) -> bool {
+        self.t >= self.time
+    }
+
     #[inline]
     pub fn tick(&mut self, ratio: f32, index: f32, sr: f32) -> f32 {
-        let inc = (self.freq() / sr).min(0.45);
-        self.t += 1.0 / sr;
+        let inc = (self.step(sr) / sr).min(0.45);
         self.op.tick(inc, ratio, index)
     }
 }
@@ -810,5 +825,167 @@ impl Air {
 
     pub fn reset(&mut self) {
         self.lp = [OnePole::default(); 2];
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bubbles
+// ---------------------------------------------------------------------------------------------
+
+/// Pitch of an air bubble ringing in water (Minnaert): `3.26 / radius` Hz with the radius in
+/// metres, so a 1 mm bubble sings at 3.3 kHz and a 1 cm one at 330 Hz.
+#[inline]
+pub fn minnaert_hz(radius_mm: f32) -> f32 {
+    3260.0 / radius_mm.max(0.05)
+}
+
+/// How fast a bubble at `hz` dies away, as the decay rate `d` of its amplitude `exp(-d t)`, per
+/// second (van den Doel's fit to thermal, viscous and radiation losses): a 200 Hz bubble
+/// rings about 150 ms (60 dB), a 1 kHz one 19 ms, a 3 kHz one 4 ms.
+#[inline]
+pub fn bubble_damping(hz: f32) -> f32 {
+    0.13 * hz + 0.0072 * hz * hz.sqrt()
+}
+
+/// Most bubbles a [`Bubbles`] pool rings at once.
+pub const MAX_BUBBLES: usize = 16;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Bubble {
+    /// The ringing sine as a rotating phasor (it starts at zero, so no click).
+    re: f32,
+    im: f32,
+    /// Rotation per sample, and its own rotation (the pitch rises linearly in time).
+    c: f32,
+    s: f32,
+    dc: f32,
+    ds: f32,
+    /// Amplitude decay per sample; the step angle and its ceiling.
+    decay: f32,
+    w: f32,
+    dw: f32,
+    w_max: f32,
+    amp: f32,
+}
+
+/// Bubbles in water: each one is a sine at its Minnaert pitch that starts at once, dies away at
+/// the bubble's own rate ([`bubble_damping`], times `damping`) and rises in pitch linearly in
+/// time, as in van den Doel's model, by `rise` (a fraction) over the bubble's natural 60 dB
+/// ring time. Measured drips and splashes rise only about a tenth of an octave over a ping
+/// that rings a few times longer than that, which is `rise` 0.02-0.04: short pings at a
+/// nearly steady pitch, not long zips.
+///
+/// Recordings of streams, drips and splashes measure as dense swarms of 5-40 ms pings, so a
+/// sound made of bubbles is many [`Bubbles::spawn`]s with a spread of radii, not a few long
+/// chirps. A full pool steals its quietest bubble. No transcendental functions per sample.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Bubbles {
+    b: [Bubble; MAX_BUBBLES],
+    live: [bool; MAX_BUBBLES],
+    /// Pitch ratio applied to every new bubble (1 = as given; a host's `pitch_scale`).
+    pub pitch: f32,
+}
+
+impl Bubbles {
+    pub fn new() -> Self {
+        Bubbles { pitch: 1.0, ..Default::default() }
+    }
+
+    /// Start a bubble at `hz` with peak amplitude `amp`. `rise` is the fractional pitch rise over
+    /// the natural 60 dB ring time (0.03 as measured, 0 steady), whatever `damping` (which
+    /// multiplies the natural decay rate) does to the ring.
+    pub fn spawn(&mut self, hz: f32, amp: f32, rise: f32, damping: f32, sr: f32) {
+        let hz = hz * if self.pitch > 0.0 { self.pitch } else { 1.0 };
+        if !(hz > 0.0 && hz < 0.45 * sr) || amp == 0.0 {
+            return;
+        }
+        let k = match self.live.iter().position(|l| !l) {
+            Some(k) => k,
+            None => {
+                let mut k = 0;
+                for i in 1..MAX_BUBBLES {
+                    if self.b[i].amp < self.b[k].amp {
+                        k = i;
+                    }
+                }
+                k
+            }
+        };
+        let natural = bubble_damping(hz);
+        let d = natural * damping.max(0.05);
+        let w = TAU * hz / sr;
+        let dw = w * rise.max(0.0) * natural / (6.91 * sr);
+        self.b[k] = Bubble {
+            re: 1.0,
+            im: 0.0,
+            c: w.cos(),
+            s: w.sin(),
+            dc: dw.cos(),
+            ds: dw.sin(),
+            decay: (-d / sr).exp(),
+            w,
+            dw,
+            w_max: TAU * 0.45,
+            amp,
+        };
+        self.live[k] = true;
+    }
+
+    /// Number of bubbles still ringing.
+    pub fn active(&self) -> usize {
+        self.live.iter().filter(|l| **l).count()
+    }
+
+    pub fn clear(&mut self) {
+        self.live = [false; MAX_BUBBLES];
+    }
+
+    /// One sample of the sum of all ringing bubbles.
+    #[inline]
+    pub fn tick(&mut self) -> f32 {
+        let mut y = 0.0;
+        for (b, live) in self.b.iter_mut().zip(self.live.iter()) {
+            if !*live {
+                continue;
+            }
+            let (re, im) = (b.re, b.im);
+            b.re = re * b.c - im * b.s;
+            b.im = re * b.s + im * b.c;
+            y += b.im * b.amp;
+            b.amp *= b.decay;
+            if b.dw != 0.0 {
+                let (c, s) = (b.c, b.s);
+                b.c = c * b.dc - s * b.ds;
+                b.s = c * b.ds + s * b.dc;
+                b.w += b.dw;
+                if b.w >= b.w_max {
+                    b.dw = 0.0;
+                }
+            }
+        }
+        y
+    }
+
+    /// Call once per block: renormalises the phasors and retires bubbles below `floor`.
+    pub fn end_block(&mut self, floor: f32) {
+        for (b, live) in self.b.iter_mut().zip(self.live.iter_mut()) {
+            if !*live {
+                continue;
+            }
+            if b.amp < floor {
+                *live = false;
+                continue;
+            }
+            let m = (b.re * b.re + b.im * b.im).sqrt();
+            if m > 0.0 {
+                b.re /= m;
+                b.im /= m;
+            }
+            let m = (b.c * b.c + b.s * b.s).sqrt();
+            if m > 0.0 {
+                b.c /= m;
+                b.s /= m;
+            }
+        }
     }
 }

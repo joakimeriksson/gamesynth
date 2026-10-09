@@ -12,7 +12,7 @@
 //! A model is mono unless `[graph]` names `out_right` as well as `out`: then it renders stereo
 //! (left = `out`), built with `pan` nodes. Its mono render centres every `pan` and averages
 //! the two outputs. The building-block nodes (`powerdust`, `modal`, `chirp`, `fm`, `ad`, `adsr`,
-//! `formant`, `pattern`, `impulse`, `pan`, `distance`) wrap [`crate::dsp`].
+//! `formant`, `pattern`, `impulse`, `pan`, `distance`, `bubbles`) wrap [`crate::dsp`].
 //!
 //! ```toml
 //! [model]
@@ -41,7 +41,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 
 use crate::blocks::{hz_coef, settle_coef, Brown, DelayLine, Dust, OnePole, Reverb, BLOCK};
-use crate::dsp::{self, Air, Chirp, Envelope, FmOp, Formant, Modal, Onset, Pattern, PowerDust, Rhythm, MAX_FORMANTS};
+use crate::dsp::{self, Air, Bubbles, Chirp, Envelope, FmOp, Formant, Modal, Onset, Pattern, PowerDust, Rhythm, MAX_FORMANTS};
 use crate::filter::{FilterMode, Svf};
 use crate::math::{limit, soft_clip, Rng, TAU};
 use crate::model::{InputDesc, Model, ModelDesc, PresetDesc};
@@ -234,6 +234,7 @@ const NODE_TYPES: &[NodeInfo] = &[
     ("formant", &[("vowel", 0.0), ("shift", 1.0), ("q", 1.0)], &["freqs", "qs", "gains", "routing"], "Formant filter: vowel 0 a, 1 e, 2 i, 3 o, 4 u (fractions morph), or your own freqs = [..] (2 to 4) with qs and gains. shift scales the frequencies (small creature > 1, big < 1), q scales the Qs. routing = parallel (band-passes, default) | series (Klatt cascade)"),
     ("pan", &[("pan", 0.0)], &["channel"], "Equal-power pan, -1 left .. 1 right; channel = left | right picks which side this node outputs. Feed one pan per channel into the outputs named by `out` and `out_right`"),
     ("distance", &[("distance", REQ), ("rolloff", 24.0), ("far_hz", 1000.0), ("delay_ms", 0.0)], &["max_ms"], "Distance 0..1: level falls `rolloff` dB by distance 1, a 12 dB/oct air low-pass falls from 18 kHz to far_hz, and the sound arrives up to delay_ms later (max_ms, default 200)"),
+    ("bubbles", &[("radius_mm", 3.0), ("spread", 1.0), ("rise", 0.03), ("damping", 1.0)], &[], "Air bubbles in water, one per impulse in `in` (its size is the loudness): each rings at its Minnaert pitch (3260 / radius_mm Hz; 3 mm is about 1.1 kHz), dies away at its natural rate times `damping`, and rises in pitch by `rise` over its natural ring. Radii spread log-evenly up to +-spread octaves around radius_mm, smaller ones more often. Up to 16 ring at once"),
 ];
 
 /// Node types with their parameters, for editors and documentation:
@@ -270,6 +271,7 @@ enum Kind {
     Formant { f: Formant, custom: Option<Box<[(f32, f32, f32); MAX_FORMANTS]>>, n: usize },
     Pan { right: bool, last: f32 },
     Distance { air: Air, line: DelayLine, last_gain: f32, last_delay: f32 },
+    Bubbles { pool: Box<Bubbles>, onset: Onset, rng: Rng },
 }
 
 /// Per-block context for [`process`].
@@ -383,7 +385,11 @@ impl GraphModel {
             gather(&mut node.inputs, before, &mut inbuf[..n], programs, vars, states, dt);
             gather(&mut node.by, before, &mut bybuf[..n], programs, vars, states, dt);
             let dst = &mut rest[0][..n];
-            process(&mut node.kind, &pv, &inbuf[..n], &bybuf[..n], dst, &cx);
+            if let Kind::Bubbles { pool, onset, rng } = &mut node.kind {
+                process_bubbles(pool, onset, rng, &pv, &inbuf[..n], dst, cx.sr);
+            } else {
+                process(&mut node.kind, &pv, &inbuf[..n], &bybuf[..n], dst, &cx);
+            }
             // A filter that blew up would otherwise stay poisoned forever.
             if !dst[n - 1].is_finite() || dst[n - 1].abs() > 1e6 {
                 dst.iter_mut().for_each(|s| *s = 0.0);
@@ -574,6 +580,7 @@ fn reset(kind: &mut Kind) {
         Kind::Reverb(r) => r.clear(),
         Kind::Noise { brown, .. } => *brown = Brown::default(),
         Kind::Modal(m) => m.clear(),
+        Kind::Bubbles { pool, .. } => pool.clear(),
         Kind::Formant { f, .. } => f.reset(),
         Kind::Distance { air, line, .. } => {
             air.reset();
@@ -583,6 +590,25 @@ fn reset(kind: &mut Kind) {
         Kind::Ad { env, .. } | Kind::Adsr { env, .. } => env.reset(),
         _ => {}
     }
+}
+
+/// The `bubbles` node, run by the caller of [`process`] and kept out of line: as an arm of
+/// `process` it changed how the compiler inlined the other nodes (a `pan`'s sin and cos), which
+/// moved the last bit of existing stereo renders. This way every older model renders exactly
+/// as before.
+#[inline(never)]
+fn process_bubbles(pool: &mut Bubbles, onset: &mut Onset, rng: &mut Rng, pv: &[f32; MAX_NODE_PARAMS], x: &[f32], out: &mut [f32], sr: f32) {
+    let (radius, spread) = (pv[0].clamp(0.05, 200.0), pv[1].clamp(0.0, 4.0));
+    for (o, s) in out.iter_mut().zip(x) {
+        if let Some(v) = onset.tick(*s) {
+            // Log-even in radius, skewed towards the small end (u^1.5 of the range).
+            let u = 2.0 * rng.next_f32().powf(1.5) - 1.0;
+            let r = radius * (-u * spread).exp2();
+            pool.spawn(dsp::minnaert_hz(r), v, pv[2], pv[3], sr);
+        }
+        *o = pool.tick();
+    }
+    pool.end_block(1e-6);
 }
 
 fn process(kind: &mut Kind, pv: &[f32; MAX_NODE_PARAMS], x: &[f32], by: &[f32], out: &mut [f32], cx: &Cx) {
@@ -820,6 +846,8 @@ fn process(kind: &mut Kind, pv: &[f32; MAX_NODE_PARAMS], x: &[f32], by: &[f32], 
             }
             *last_inc = target;
         }
+        // Rendered by the caller, out of line (see `process_bubbles`).
+        Kind::Bubbles { .. } => {}
         Kind::Modal(m) => {
             m.set(pv[0], pv[1], pv[2], sr);
             for (o, s) in out.iter_mut().zip(x) {
@@ -1270,6 +1298,7 @@ fn build_node(n: &NodeSpec, inputs: Vec<Source>, by: Vec<Source>, ctx: &mut Ctx,
         "ad" => Kind::Ad { env: Envelope::default(), onset: Onset::default() },
         "adsr" => Kind::Adsr { env: Envelope::default(), gate: false },
         "chirp" => Kind::Chirp { c: Chirp::default(), onset: Onset::default(), started: false },
+        "bubbles" => Kind::Bubbles { pool: Box::new(Bubbles::new()), onset: Onset::default(), rng: Rng::new(seed) },
         "fm" => Kind::Fm { op: FmOp::default(), onset: Onset::default(), has_in, env: 1.0, last_inc: -1.0 },
         "modal" => {
             let max = dsp::MAX_MODES;

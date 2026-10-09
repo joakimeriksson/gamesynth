@@ -82,3 +82,48 @@ low-heavy, with about 5 % of their energy above 2.5 kHz, and cold snow squeaks i
 near 1 to 1.5 kHz. A studded tyre is a steady band at 250 Hz and 1 kHz. No recording of a car in
 powder was found, so powder is by judgement. Snowstorms are loudest at 125 to 500 Hz, with up to
 a tenth of the energy above 2.5 kHz, and they come in shoves.
+
+## Combustion
+
+`combustion/` holds what the `combustion` generator's presets were tuned against in October 2026:
+public-domain (CC0) excerpts from [Freesound](https://freesound.org), cut and levelled like the
+others. The V8 presets were also measured against the Mustang GT500, Challenger and drag car
+clips in `engines/`.
+
+| File | Preset | What | Source | Excerpt |
+|---|---|---|---|---|
+| `mower_honda.ogg` | Lawnmower | Honda HRB 475 mowing | [Lawn mower Honda HRB 475](https://freesound.org/people/Breviceps/sounds/761922/) by Breviceps | 40 to 50 s, +0 dB |
+| `mower_running.ogg` | Lawnmower | a mower running | [Lawnmower](https://freesound.org/people/sweet_niche/sounds/450109/) by sweet_niche | 2 to 12 s, -6 dB |
+| `mower_pops.ogg` | Lawnmower | a mower with pops | [motor lawnmower with pops.flac](https://freesound.org/people/kyles/sounds/637696/) by kyles | 3 to 13 s, +7 dB |
+| `bmw_twin_idle.ogg` | Motorbike | BMW twin idling in a garage | [motorcycle, bmw, idle, underground, garage.wav](https://freesound.org/people/golovlev.sound/sounds/632219/) by golovlev.sound | 5 to 13 s, +7 dB |
+| `bmw_twin_blips.ogg` | Motorbike | the same bike blipped | [motorcycle, bmw, engine rev, underground, garage.wav](https://freesound.org/people/golovlev.sound/sounds/632218/) by golovlev.sound | 0 to 10 s, +2 dB |
+| `harley_revs.ogg` | Motorbike | Harley-Davidson Sportster held at revs | [Harley Davidson Sportster - Idling with Engine Revs](https://freesound.org/people/demodave/sounds/502690/) by demodave | 80 to 89 s, +2 dB |
+| `cr85_riding.ogg` | Dirt bike 2-stroke | Honda CR85 two-stroke riding | [HONDA_85CR.wav](https://freesound.org/people/Olympia_94/sounds/704792/) by Olympia_94 | 30 to 42 s, -5 dB |
+| `scooter_idle_revs.ogg` | Dirt bike 2-stroke | Gilera Runner two-stroke scooter: cold idle, revs | [Gilera Runner 2007 revs backfire cold idle](https://freesound.org/people/lovretta/sounds/140384/) by lovretta | 4 to 16 s, +4 dB |
+| `scooter_revs.ogg` | Dirt bike 2-stroke | the same scooter revving | as above | 19 to 30 s, +2 dB |
+| `diesel_idle_rev.ogg` | Diesel truck | a diesel idling, then revved | [Diesel engine starting revving and stopping](https://freesound.org/people/chlund/sounds/500193/) by chlund | 2 to 14 s, +6 dB |
+| `vw_buggy.ogg` | Buggy flat-four | VW dune buggy starting and driving off (a 1960s recording) | [S07-14 VW dune buggy starts & drives around.wav](https://freesound.org/people/craigsmith/sounds/675200/) by craigsmith | 4 to 16 s, +4 dB |
+| `open_header_v8s.ogg` | Blown V8 | open-header V8s idling and revving | [Open header V8 cars idling and revving](https://freesound.org/people/holderall/sounds/432508/) by holderall | 15 to 27 s, -5 dB |
+| `worn_v8_idle.ogg` | Rattletrap V8 | a worn engine idling | [worn_engine_idle.flac](https://freesound.org/people/Kevaaq/sounds/203962/) by Kevaaq | whole clip, +4 dB |
+| `worn_v8_revs.ogg` | Rattletrap V8 | the same engine revving | [worn_engine_revving.flac](https://freesound.org/people/Kevaaq/sounds/203963/) by Kevaaq | whole clip, +2 dB |
+
+What they show, measured the same way on recordings and renders (firing frequency from a
+harmonic comb, the share of energy on the firing harmonics, energy between them, the 1 ms
+envelope folded over one firing, octave bands, energy above 2.5 kHz):
+
+- A running engine never falls silent between firings. Folded over one firing, the envelope of
+  every recording swings 0.3 to 2 dB. The first `combustion` clicked and went quiet: 4 to 30 dB.
+  The muffler and the pipe smear each pulse; `exhaust/muffler` and `exhaust/pipe_*` do that now.
+- Cylinders differ, and the difference repeats every cycle, so recordings carry energy between
+  the firing harmonics (half orders within 1 to 10 dB of them). The first version had them
+  14 to 24 dB down; `engine/fire_spread` gives each cylinder its own level and timing.
+- At revs, real engines are noisy, not a clean buzz: 9 to 60 % of the energy below 2 kHz sits on
+  the firing harmonics. The first version had 86 to 95 %.
+- Diesels clatter: 6 to 29 % of their energy is above 2.5 kHz (`mechanical/clatter`). The
+  Mustang and Challenger are the opposite, with almost nothing above 1 kHz.
+- Mowers run at 2600 to 3500 rpm, loudest at 125 to 500 Hz.
+- Revved in neutral, engines rise in 0.15 to 0.5 s and fall back to idle in 0.3 to 0.8 s.
+
+The presets were fitted to these with a coordinate-descent fitter over the exhaust, pipe,
+muffler and noise parameters. The tests in `crates/brusverk-core/tests/combustion.rs` hold the
+traits above, and the loudness of every preset's sweep stays within 1 LU of the first version.

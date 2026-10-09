@@ -207,25 +207,389 @@ impl Generator for Drone {
 // ---------------------------------------------------------------------------------------------
 
 model_params! {
-    /// Crowd murmur: formant-filtered noise "voices" with independent syllable rhythms, plus
-    /// cheering and a low roar when excited.
+    /// Crowd murmur: formant-filtered noise "voices" with independent syllable rhythms, or
+    /// (`murmur/voiced`) talkers with pitch, vowels and consonants; cheering and a roar when
+    /// excited; single people over it (calls, laughs, whistles, claps, air horns); slow swells.
     CrowdParams / CrowdParamId {
-        formant_hz: "murmur/formant_hz" = 700.0, exp(300.0, 2000.0);
+        formant_hz: "murmur/formant_hz" = 800.0, exp(300.0, 2000.0);
         formant_spread: "murmur/spread_octaves" = 0.8, lin(0.0, 2.0);
         syllable_hz: "murmur/syllable_hz" = 4.0, lin(1.0, 10.0);
-        murmur_level: "murmur/level" = 0.7, UNIT;
+        murmur_level: "murmur/level" = 0.375, UNIT;
         cheer_level: "cheer/level" = 0.6, UNIT;
         cheer_hz: "cheer/hz" = 2600.0, exp(1000.0, 6000.0);
         roar_level: "cheer/roar" = 0.4, UNIT;
-        gain: "master/gain" = 1.0, GAIN;
+        gain: "master/gain" = 1.58, lin(0.0, 4.0);
         horns_rate: "horns/per_minute" = 0.0, lin(0.0, 60.0);
         horns_level: "horns/level" = 0.6, UNIT;
         cheer_dark: "cheer/dark" = 0.0, UNIT;
         room: "arena/room" = 0.0, UNIT;
         react_level: "reactions/level" = 0.8, UNIT;
         chant_bpm: "chant/bpm" = 120.0, lin(60.0, 200.0);
+        voiced: "murmur/voiced" = 0.8, UNIT;
+        talkers_hz: "murmur/pitch_hz" = 150.0, exp(80.0, 300.0);
+        swell: "murmur/swell" = 0.3, UNIT;
+        roar_hz: "cheer/roar_hz" = 400.0, exp(150.0, 2000.0);
+        low_cut: "master/low_cut_hz" = 80.0, exp(20.0, 800.0);
+        high_cut: "master/high_cut_hz" = 12000.0, exp(1000.0, 20000.0);
+        calls_rate: "calls/per_second" = 1.0, lin(0.0, 8.0);
+        calls_level: "calls/level" = 0.6, UNIT;
+        calls_hz: "calls/woo_hz" = 750.0, exp(400.0, 1400.0);
+        laughter: "calls/laughter" = 0.4, UNIT;
+        whistles_rate: "whistles/per_minute" = 0.0, lin(0.0, 120.0);
+        whistles_level: "whistles/level" = 0.5, UNIT;
+        claps_rate: "claps/per_second" = 0.0, lin(0.0, 60.0);
+        claps_level: "claps/level" = 0.5, UNIT;
     }
 }
+
+/// Vowels as (F1, F2) for a voice whose `murmur/formant_hz` is 620: a, e, i-ish, o, u-ish, ae, er.
+const VOWELS: [(f32, f32); 7] = [(730.0, 1090.0), (530.0, 1840.0), (400.0, 2000.0), (570.0, 840.0), (440.0, 1020.0), (660.0, 1720.0), (490.0, 1350.0)];
+
+/// One voice of speech-like walla (`murmur/voiced`): a pitched glottal buzz through two formants
+/// that jump from syllable to syllable, a consonant at the start of most syllables, and pauses
+/// between phrases.
+#[derive(Clone, Copy)]
+struct Talker {
+    glottis: Oscillator,
+    /// Base pitch as a ratio of `murmur/pitch_hz`.
+    pitch: f32,
+    /// Vowel formants scale with the speaker (larger for higher voices).
+    size: f32,
+    syl_phase: f32,
+    syl_rate: f32,
+    f1: f32,
+    f2: f32,
+    f1_to: f32,
+    f2_to: f32,
+    /// This syllable's pitch (a ratio, glided to) and stress.
+    inton: f32,
+    inton_to: f32,
+    accent: f32,
+    tilt: OnePole,
+    bp: [Svf; 3],
+    cons: f32,
+    gate: f32,
+    phrase: SlowNoise,
+    tune: SlowNoise,
+}
+
+/// A single call over the crowd: a high "woooo" (nearly a pure tone), a shouted "hey!", or a
+/// laugh ("ha-ha-ha", the shout's vowel pulsed).
+#[derive(Clone, Copy, Default)]
+struct Call {
+    /// Seconds left; <= 0 is idle.
+    left: f32,
+    len: f32,
+    hz: f32,
+    amp: f32,
+    woo: bool,
+    laugh: bool,
+    phase: f32,
+    bp: [Svf; 2],
+    tilt: OnePole,
+}
+
+/// A finger whistle: a near-sine between about 1.8 and 3.6 kHz in one of a few shapes.
+#[derive(Clone, Copy, Default)]
+struct Whistle {
+    left: f32,
+    len: f32,
+    hz: f32,
+    amp: f32,
+    shape: u8,
+    phase: f32,
+}
+
+/// Everything a crowd's extras need, kept apart from the original voices' random streams so
+/// that a preset without them renders exactly as before.
+struct CrowdExtras {
+    rng: crate::math::Rng,
+    noise: Noise,
+    talkers: [Talker; VOICES],
+    cons_bp: Svf,
+    calls: [Call; 3],
+    whistles: [Whistle; 2],
+    clap_env: f32,
+    clap_decay: f32,
+    clap_bp: Svf,
+    clap_hp: Svf,
+    swell: SlowNoise,
+    low_cut: [Svf; 2],
+    high_cut: Svf,
+}
+
+impl CrowdExtras {
+    fn new() -> Self {
+        let mut rng = crate::math::Rng::new(crate::blocks::mix_seed(0x62_0600));
+        let talkers = core::array::from_fn(|k| {
+            // Alternate lower and higher voices, each its own pitch.
+            let high = k % 2 == 1;
+            let pitch = if high { rng.range(1.25, 1.65) } else { rng.range(0.7, 0.95) };
+            Talker {
+                glottis: Oscillator::new(0x62_0610 + k as u32),
+                pitch,
+                size: if high { rng.range(1.08, 1.2) } else { rng.range(0.92, 1.02) },
+                syl_phase: rng.next_f32(),
+                syl_rate: 1.0,
+                f1: 600.0,
+                f2: 1400.0,
+                f1_to: 600.0,
+                f2_to: 1400.0,
+                inton: 1.0,
+                inton_to: 1.0,
+                accent: 1.0,
+                tilt: OnePole::default(),
+                bp: [Svf::default(); 3],
+                cons: 0.0,
+                gate: 0.0,
+                phrase: SlowNoise::new(0x62_0620 + k as u32 * 53),
+                tune: SlowNoise::new(0x62_0640 + k as u32 * 59),
+            }
+        });
+        CrowdExtras {
+            rng,
+            noise: Noise::new(0x62_0601),
+            talkers,
+            cons_bp: Svf::default(),
+            calls: [Call::default(); 3],
+            whistles: [Whistle::default(); 2],
+            clap_env: 0.0,
+            clap_decay: 0.0,
+            clap_bp: Svf::default(),
+            clap_hp: Svf::default(),
+            // A seed whose first swell rises through the middle: a crowd starts at its usual
+            // level, so even a short render is as loud as a long one.
+            swell: SlowNoise::new(0x62_0669),
+            low_cut: [Svf::default(); 2],
+            high_cut: Svf::default(),
+        }
+    }
+
+    /// Control-rate update of the talkers: syllables, vowels, phrases. `talk` does the per-sample work.
+    fn talkers_block(&mut self, p: &CrowdParams, ex: f32, joined: &[f32; VOICES], sr: f32, dt: f32) {
+        for (k, t) in self.talkers.iter_mut().enumerate() {
+            let spot = k as f32 / (VOICES - 1) as f32;
+            t.syl_phase += p.syllable_hz * (0.8 + 0.4 * spot) * (1.0 + 0.6 * ex) * t.syl_rate * dt;
+            if t.syl_phase >= 1.0 {
+                t.syl_phase -= t.syl_phase.floor();
+                t.syl_rate = self.rng.range(0.7, 1.35);
+                let (f1, f2) = VOWELS[(self.rng.next_u32() % VOWELS.len() as u32) as usize];
+                let scale = p.formant_hz / 620.0 * t.size;
+                // Excited voices open up: the vowels rise and brighten.
+                t.f1_to = f1 * scale * (0.3 * ex).exp2();
+                t.f2_to = f2 * scale * (0.15 * ex).exp2();
+                // Speech melody: each syllable on its own pitch, some stressed.
+                t.inton_to = self.rng.range(-0.3, 0.3).exp2();
+                t.accent = self.rng.range(0.35, 1.0);
+                if self.rng.chance(0.7) {
+                    t.cons = self.rng.range(0.4, 1.0) * joined[k];
+                }
+            }
+            // A speaker talks in phrases and pauses; excited crowds pause less.
+            let talking = if t.phrase.advance(0.35 + 0.25 * spot, dt) > -0.35 - 0.5 * ex { joined[k] } else { 0.0 };
+            t.gate += (talking - t.gate) * (1.0 - (-dt / 0.08).exp());
+            let glide = 1.0 - (-dt / 0.035).exp();
+            t.f1 += (t.f1_to - t.f1) * glide;
+            t.f2 += (t.f2_to - t.f2) * glide;
+            t.bp[0].set(FilterMode::BandPass, t.f1, 0.86, sr);
+            t.bp[1].set(FilterMode::BandPass, t.f2, 0.88, sr);
+            t.bp[2].set(FilterMode::BandPass, 2600.0 * p.formant_hz / 620.0 * t.size, 0.8, sr);
+            t.inton += (t.inton_to - t.inton) * (1.0 - (-dt / 0.06).exp());
+        }
+        self.cons_bp.set(FilterMode::BandPass, 4200.0, 0.3, sr);
+    }
+
+    /// One sample of speech-like walla from all talkers.
+    fn talk(&mut self, p: &CrowdParams, ex: f32, sr: f32, cons_decay: f32, tilt_coef: f32) -> f32 {
+        let mut y = 0.0;
+        let mut cons = 0.0;
+        let breath = self.noise.white();
+        for t in self.talkers.iter_mut() {
+            if t.gate < 1e-4 && t.cons < 1e-4 {
+                continue;
+            }
+            // Each syllable swells and fades; the pitch falls a little through it and wanders.
+            let s = t.syl_phase;
+            let hump = (core::f32::consts::PI * s).sin();
+            let syl = hump * hump.sqrt() * t.accent;
+            let f0 = p.talkers_hz * t.pitch * t.inton * (1.0 + 0.35 * ex) * (0.08 * t.tune.advance(3.0, 1.0 / sr) - 0.1 * s).exp2();
+            let buzz = t.tilt.lp(t.glottis.next(Waveform::Saw, f0 / sr, 0.5) + 0.7 * breath, tilt_coef);
+            let v = t.bp[0].tick(buzz) + 0.9 * t.bp[1].tick(buzz) + 0.35 * t.bp[2].tick(buzz);
+            y += v * syl * t.gate;
+            cons += t.cons;
+            t.cons *= cons_decay;
+        }
+        y * 0.5 + self.cons_bp.tick(self.noise.white() * cons) * 0.25
+    }
+
+    /// Control-rate update for calls, whistles and claps: start new ones.
+    fn events_block(&mut self, p: &CrowdParams, ex: f32, size: f32, sr: f32, dt: f32) {
+        let crowd = 0.4 + 0.6 * size;
+        if p.calls_rate > 0.0 && p.calls_level > 0.0 {
+            let start = p.calls_rate * (0.3 + 0.7 * ex) * crowd * dt;
+            for c in self.calls.iter_mut() {
+                if c.left <= 0.0 && self.rng.chance(start) {
+                    let laugh = self.rng.chance(p.laughter);
+                    let woo = !laugh && self.rng.chance(0.6);
+                    // Most of them are far off in the crowd; a few are close.
+                    let near = self.rng.next_f32();
+                    let (len, hz) = if woo {
+                        (self.rng.range(0.5, 1.6), p.calls_hz * self.rng.range(0.75, 1.3))
+                    } else if laugh {
+                        (self.rng.range(0.6, 1.6), p.talkers_hz * self.rng.range(1.1, 2.4))
+                    } else {
+                        (self.rng.range(0.22, 0.55), p.talkers_hz * self.rng.range(1.4, 2.6))
+                    };
+                    *c = Call { left: len, len, hz, amp: 0.15 + 0.85 * near * near, woo, laugh, phase: 0.0, bp: c.bp, tilt: c.tilt };
+                    if !woo {
+                        let scale = p.formant_hz / 620.0;
+                        let (f1, f2) = if laugh { (800.0, 1300.0) } else { (700.0, 1650.0) };
+                        c.bp[0].set(FilterMode::BandPass, f1 * scale, 0.85, sr);
+                        c.bp[1].set(FilterMode::BandPass, f2 * scale, 0.85, sr);
+                    }
+                }
+            }
+        }
+        if p.whistles_rate > 0.0 && p.whistles_level > 0.0 {
+            let start = p.whistles_rate / 60.0 * (0.4 + 0.6 * ex) * crowd * dt;
+            for w in self.whistles.iter_mut() {
+                if w.left <= 0.0 && self.rng.chance(start) {
+                    let shape = (self.rng.next_u32() % 4) as u8;
+                    let len = match shape {
+                        0 => self.rng.range(0.5, 1.1),
+                        1 => self.rng.range(0.6, 1.3),
+                        2 => self.rng.range(0.4, 1.2),
+                        _ => self.rng.range(0.9, 1.2),
+                    };
+                    let near = self.rng.next_f32();
+                    *w = Whistle { left: len, len, hz: self.rng.range(1900.0, 3100.0), amp: 0.2 + 0.8 * near * near, shape, phase: 0.0 };
+                }
+            }
+        }
+        if p.claps_rate > 0.0 && p.claps_level > 0.0 {
+            self.clap_hp.set(FilterMode::HighPass, 700.0, 0.1, sr);
+        }
+    }
+
+    /// One sample of calls, whistles and claps.
+    fn events(&mut self, p: &CrowdParams, ex: f32, size: f32, sr: f32) -> f32 {
+        let mut y = 0.0;
+        let dt = 1.0 / sr;
+        // Shouted voices: a buzz that falls off like a voice's, not a bare sawtooth.
+        let tilt = hz_coef(900.0, sr);
+        for c in self.calls.iter_mut() {
+            if c.left <= 0.0 {
+                continue;
+            }
+            let age = c.len - c.left;
+            let env = (age / 0.06).min(1.0) * (c.left / 0.15).min(1.0);
+            if c.woo {
+                // "Woooo": slides up into the note, holds it with a little vibrato, falls away.
+                let rise = (age / 0.18).min(1.0);
+                let fall = 1.0 - (c.left / 0.25).min(1.0);
+                let f = c.hz * (0.8 + 0.2 * rise * rise * (3.0 - 2.0 * rise)) * (1.0 - 0.15 * fall * fall) * (1.0 + 0.012 * (TAU * 5.5 * age).sin());
+                c.phase = (c.phase + f * dt).fract();
+                let a = TAU * c.phase;
+                y += (a.sin() + 0.22 * (2.0 * a).sin() + 0.08 * (3.0 * a).sin()) * env * c.amp * 0.5;
+            } else if c.laugh {
+                // "Ha-ha-ha": about five pulses a second, each a little lower, breathy.
+                let pulse = (0.5 - 0.5 * (TAU * 4.8 * age).cos()).powi(2);
+                let f = c.hz * (1.0 - 0.18 * age / c.len) * (1.0 + 0.05 * pulse);
+                c.phase = (c.phase + f * dt).fract();
+                let buzz = c.tilt.lp(2.0 * c.phase - 1.0 + 0.4 * self.noise.white(), tilt);
+                y += (c.bp[0].tick(buzz) + 0.7 * c.bp[1].tick(buzz)) * env * pulse * c.amp * 1.8;
+            } else {
+                // "Hey!": a shouted vowel, falling at the end.
+                let fall = 1.0 - (c.left / 0.12).min(1.0);
+                let f = c.hz * (1.0 - 0.12 * fall);
+                c.phase = (c.phase + f * dt).fract();
+                let buzz = c.tilt.lp(2.0 * c.phase - 1.0, tilt);
+                y += (c.bp[0].tick(buzz) + 0.7 * c.bp[1].tick(buzz)) * env * c.amp * 1.6;
+            }
+            c.left -= dt;
+        }
+        let mut wy = 0.0;
+        for w in self.whistles.iter_mut() {
+            if w.left <= 0.0 {
+                continue;
+            }
+            let age = w.len - w.left;
+            let u = age / w.len;
+            let bend = match w.shape {
+                // A rising arc.
+                0 => 0.4 * (core::f32::consts::FRAC_PI_2 * (u * 1.3).min(1.0)).sin(),
+                // Up-and-down arcs, a few a second.
+                1 => 0.25 * (core::f32::consts::PI * (age / 0.3).fract()).sin(),
+                // A held note with vibrato.
+                2 => 0.015 * (TAU * 6.0 * age).sin(),
+                // A wolf whistle: up, a gap, then up and down.
+                _ => {
+                    if u < 0.35 {
+                        0.35 * (u / 0.35)
+                    } else {
+                        0.35 * (core::f32::consts::PI * ((u - 0.45) / 0.55).clamp(0.0, 1.0)).sin() - 0.1
+                    }
+                }
+            };
+            let gap = if w.shape == 3 && (0.35..0.45).contains(&u) { 0.0 } else { 1.0 };
+            let env = (age / 0.02).min(1.0) * (w.left / 0.04).min(1.0) * gap;
+            let f = w.hz * (1.0 + bend);
+            w.phase = (w.phase + f * dt).fract();
+            let a = TAU * w.phase;
+            wy += (a.sin() + 0.06 * (2.0 * a).sin()) * env * w.amp;
+            w.left -= dt;
+        }
+        y = y * p.calls_level + wy * p.whistles_level * 0.35;
+        if p.claps_rate > 0.0 && p.claps_level > 0.0 {
+            let rate = p.claps_rate * (0.3 + 0.7 * ex) * (0.3 + 0.7 * size);
+            if self.rng.next_f32() < rate * dt {
+                let near = self.rng.next_f32();
+                self.clap_env = 0.15 + 0.85 * near * near;
+                self.clap_decay = (-1.0 / (self.rng.range(0.004, 0.011) * sr)).exp();
+                self.clap_bp.set(FilterMode::BandPass, self.rng.range(1000.0, 2400.0), 0.25, sr);
+            }
+            if self.clap_env > 1e-4 {
+                let n = self.noise.white() * self.clap_env;
+                y += (self.clap_bp.tick(n) * 3.0 + self.clap_hp.tick(n)) * p.claps_level;
+                self.clap_env *= self.clap_decay;
+            }
+        }
+        y
+    }
+}
+
+/// The hockey arena, fitted to recordings (tools/reference/hockey). Written out in full so that
+/// retuning the defaults can never move it; tests/crowd.rs checks it bit for bit.
+const ARENA: CrowdParams = CrowdParams {
+    formant_hz: 620.0,
+    formant_spread: 1.0,
+    syllable_hz: 3.6,
+    murmur_level: 0.7,
+    cheer_level: 0.75,
+    cheer_hz: 1250.0,
+    roar_level: 0.8,
+    gain: 1.0,
+    horns_rate: 0.0,
+    horns_level: 0.6,
+    cheer_dark: 1.0,
+    room: 0.6,
+    react_level: 0.8,
+    chant_bpm: 120.0,
+    voiced: 0.0,
+    talkers_hz: 150.0,
+    swell: 0.0,
+    roar_hz: 400.0,
+    low_cut: 20.0,
+    high_cut: 20000.0,
+    calls_rate: 0.0,
+    calls_level: 0.6,
+    calls_hz: 750.0,
+    laughter: 0.0,
+    whistles_rate: 0.0,
+    whistles_level: 0.5,
+    claps_rate: 0.0,
+    claps_level: 0.5,
+};
 
 /// Which eighth-notes of the bar the crowd claps on: clap, clap, clap-clap-clap.
 const CHANT_CLAPS: [bool; 8] = [true, false, true, false, true, true, true, false];
@@ -277,13 +641,14 @@ pub struct Crowd {
     shout_soft: f32,
     shout_bp: [Svf; 2],
     room: crate::blocks::Reverb,
+    extras: CrowdExtras,
 }
 
 impl Generator for Crowd {
     type P = CrowdParams;
     const NAME: &'static str = "crowd";
     const CATEGORY: &'static str = "ambient";
-    const DOC: &'static str = "Crowd walla from a few people to a stadium; excitement adds cheering and roar. Reactions for sport: groan, boo, a clapping chant, a goal swell.";
+    const DOC: &'static str = "Crowd walla from a few people to a stadium: people talking, laughing, whooping and whistling; excitement adds cheering, clapping and roar. Reactions for sport: groan, boo, a clapping chant, a goal swell.";
     const INPUTS: &'static [InputSpec] = &[
         InputSpec { name: "size", default: 0.5, doc: "A few voices to a packed arena" },
         InputSpec { name: "excitement", default: 0.1, doc: "Murmur to cheering roar" },
@@ -295,12 +660,32 @@ impl Generator for Crowd {
 
     fn presets() -> Vec<(&'static str, CrowdParams)> {
         vec![
-            ("Tavern", CrowdParams { formant_hz: 560.0, syllable_hz: 3.2, cheer_level: 0.3, roar_level: 0.1, ..Default::default() }),
-            ("Stadium", CrowdParams { formant_hz: 850.0, formant_spread: 1.2, cheer_level: 0.9, roar_level: 0.8, ..Default::default() }),
+            // A pub: talk with pitch and vowels (not hiss), laughter, a warm room. Tuned against
+            // recordings of pubs and taverns (tools/reference/crowd).
+            ("Tavern", CrowdParams {
+                formant_hz: 820.0, syllable_hz: 3.2, murmur_level: 0.385, cheer_level: 0.3, roar_level: 0.1, voiced: 0.85, calls_rate: 2.0, calls_level: 0.85,
+                laughter: 0.8, room: 0.25, swell: 0.35, low_cut: 60.0, high_cut: 20000.0, gain: 1.22, ..Default::default()
+            }),
+            // Heard from close by the stand, as a racing game passes a grandstand: a dense band from
+            // 500 Hz to 1.5 kHz that swells by itself, faint whistles and "woo"s, clapping as it
+            // gets excited, little below 300 Hz. Tuned against football crowd recordings.
+            ("Stadium", CrowdParams {
+                formant_hz: 720.0, formant_spread: 0.8, murmur_level: 0.67, cheer_level: 1.0, cheer_hz: 2000.0, roar_level: 0.8, roar_hz: 1000.0,
+                voiced: 0.2, swell: 1.0, low_cut: 300.0, high_cut: 10000.0, calls_rate: 5.0, calls_level: 0.4, laughter: 0.0,
+                whistles_rate: 14.0, whistles_level: 0.3, claps_rate: 25.0, claps_level: 0.5, gain: 0.95, ..Default::default()
+            }),
             // An indoor arena, tuned against recordings of hockey crowds: the cheer sits near
-            // 1 kHz, not up where it hisses, and the room slaps back.
-            ("Arena", CrowdParams { formant_hz: 620.0, formant_spread: 1.0, syllable_hz: 3.6, cheer_level: 0.75, cheer_hz: 1250.0, cheer_dark: 1.0, roar_level: 0.8, room: 0.6, ..Default::default() }),
-            ("Festival", CrowdParams { formant_hz: 760.0, formant_spread: 1.1, syllable_hz: 4.6, murmur_level: 0.8, cheer_level: 0.85, roar_level: 0.6, horns_rate: 14.0, horns_level: 0.6, ..Default::default() }),
+            // 1 kHz, not up where it hisses, and the room slaps back. Every value is spelled out:
+            // the hockey game ships with this one and it must not move when the defaults do.
+            ("Arena", ARENA),
+            // A rowdy outdoor festival: talk, "woo"s, whistles, scattered claps and air horns over
+            // the cheer. Tuned against open-air concert and street supporter recordings.
+            ("Festival", CrowdParams {
+                formant_hz: 760.0, formant_spread: 1.1, syllable_hz: 4.6, murmur_level: 0.45, cheer_level: 0.55, cheer_hz: 1600.0, roar_level: 0.45,
+                roar_hz: 800.0, horns_rate: 14.0, horns_level: 0.6, voiced: 0.6, calls_rate: 4.0, calls_level: 1.0, laughter: 0.0,
+                whistles_rate: 20.0, whistles_level: 0.7, claps_rate: 8.0, claps_level: 1.0, swell: 1.0, low_cut: 120.0, high_cut: 9000.0,
+                gain: 1.035, ..Default::default()
+            }),
         ]
     }
 
@@ -338,6 +723,7 @@ impl Generator for Crowd {
             shout_soft: 0.0,
             shout_bp: [Svf::default(); 2],
             room: crate::blocks::Reverb::new(sr),
+            extras: CrowdExtras::new(),
         }
     }
 
@@ -349,8 +735,16 @@ impl Generator for Crowd {
         // A goal: the roar builds for about a second, holds, and takes a few seconds to settle.
         let goal_secs = if x[5] > self.goal_env { 0.4 } else { 2.5 };
         self.goal_env += (x[5] - self.goal_env) * (1.0 - (-dt / goal_secs).exp());
-        let ex = x[1].max(self.goal_env);
+        let mut ex = x[1].max(self.goal_env);
+        // `murmur/swell`: the whole crowd rises and falls by itself over several seconds.
+        let mut swell_gain = 1.0;
+        if p.swell > 0.0 {
+            let s = self.extras.swell.advance(0.12, dt);
+            ex = (ex + p.swell * 0.25 * s).clamp(0.0, 1.0);
+            swell_gain = (p.swell * 0.9 * s).exp2();
+        }
         let mut amp = [0.0f32; VOICES];
+        let mut joined_all = [0.0f32; VOICES];
         for k in 0..VOICES {
             let spot = k as f32 / (VOICES - 1) as f32;
             let rate = p.syllable_hz * (0.7 + 0.6 * spot) * (1.0 + ex);
@@ -359,16 +753,37 @@ impl Generator for Crowd {
             // Voices join one by one as the crowd grows.
             let joined = (size * VOICES as f32 - k as f32 + 2.0).clamp(0.0, 1.0);
             amp[k] = talking * joined;
+            joined_all[k] = joined;
             let f = p.formant_hz * (p.formant_spread * (spot - 0.5) * 2.0 + 0.25 * self.pitch[k].advance(rate * 0.5, dt) + 0.4 * ex).exp2();
             self.voice[k].set(FilterMode::BandPass, f, 0.75, sr);
         }
         self.cheer.set(FilterMode::BandPass, p.cheer_hz, 0.4, sr);
-        self.roar.set(FilterMode::LowPass, 400.0, 0.1, sr);
+        self.roar.set(FilterMode::LowPass, p.roar_hz, 0.1, sr);
         let cheer_gain = p.cheer_level * ex * ex * (0.7 + 0.3 * self.cheer_swell.advance(0.6, dt)) * 0.8;
         let roar_gain = p.roar_level * ex * 2.0 * (1.0 + 0.8 * self.goal_env);
         let murmur_gain = p.murmur_level * 4.5 / (1.0 + 2.0 * size);
         let level = (0.4 + 0.6 * size) * p.gain;
         let horns = p.horns_rate > 0.0 && p.horns_level > 0.0;
+        let voiced = p.voiced > 0.0;
+        if voiced {
+            self.extras.talkers_block(p, ex, &joined_all, sr, dt);
+        }
+        let (cons_decay, tilt_coef) = ((-1.0 / (0.03 * sr)).exp(), hz_coef(p.talkers_hz * 5.0, sr));
+        let extras = p.calls_rate > 0.0 || p.whistles_rate > 0.0 || p.claps_rate > 0.0;
+        if extras {
+            self.extras.events_block(p, ex, size, sr, dt);
+        }
+        let low_cut = p.low_cut > 20.5;
+        if low_cut {
+            for f in self.extras.low_cut.iter_mut() {
+                f.set(FilterMode::HighPass, p.low_cut, 0.3, sr);
+            }
+        }
+        // Far away, the air takes the top off.
+        let high_cut = p.high_cut < 19_900.0;
+        if high_cut {
+            self.extras.high_cut.set(FilterMode::LowPass, p.high_cut, 0.1, sr);
+        }
         if horns {
             // A rowdy outdoor crowd: someone always has an air horn. More of them when excited.
             let start_p = p.horns_rate / 60.0 * (0.4 + 0.6 * ex) * (0.5 + 0.5 * size) * dt;
@@ -437,8 +852,14 @@ impl Generator for Crowd {
         for o in out.iter_mut() {
             let (w, pk) = (self.noise.white(), self.noise.pink());
             let mut y = 0.0;
-            for (voice, a) in self.voice.iter_mut().zip(amp) {
-                y += voice.tick(pk) * a;
+            if p.voiced < 1.0 {
+                for (voice, a) in self.voice.iter_mut().zip(amp) {
+                    y += voice.tick(pk) * a;
+                }
+            }
+            if voiced {
+                // An equal-power blend: `murmur/voiced` changes what the murmur is, not how loud.
+                y = y * (1.0 - p.voiced).sqrt() + self.extras.talk(p, ex, sr, cons_decay, tilt_coef) * p.voiced.sqrt();
             }
             let mut horn = 0.0;
             if horns {
@@ -458,6 +879,19 @@ impl Generator for Crowd {
             // `cheer/dark` swaps the cheer's white noise for pink: less top, as indoors.
             let cheer_in = w + (pk * 2.5 - w) * p.cheer_dark;
             *o = (y * murmur_gain + self.cheer.tick(cheer_in) * cheer_gain + self.roar.tick(self.brown.tick(w)) * roar_gain) * level + horn * p.gain;
+            if p.swell > 0.0 {
+                *o *= swell_gain;
+            }
+            if extras {
+                *o += self.extras.events(p, ex, size, sr) * level;
+            }
+            if low_cut {
+                let first = self.extras.low_cut[0].tick(*o);
+                *o = self.extras.low_cut[1].tick(first);
+            }
+            if high_cut {
+                *o = self.extras.high_cut.tick(*o);
+            }
             if reacting {
                 let rp = self.react_noise.pink();
                 let mut r = 0.0;

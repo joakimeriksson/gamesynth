@@ -312,6 +312,7 @@ fn combustion_follows_a_game_driven_rpm_within_30_ms() {
     let mut m = engine("V8 muscle");
     set(m.as_mut(), "engine/external_rpm", 1.0);
     set(m.as_mut(), "engine/roughness", 0.0);
+    set(m.as_mut(), "engine/fire_spread", 0.0);
     m.set_input_by_name("throttle", 0.6);
     m.set_input_by_name("load", 0.6);
     m.set_input_by_name("rpm", 1.0);
@@ -321,12 +322,12 @@ fn combustion_follows_a_game_driven_rpm_within_30_ms() {
     let high = dominant(&render(m.as_mut(), 0.25), 250.0, 600.0);
     assert!((high - 413.0).abs() < 25.0, "firing at full revs {high} Hz");
     assert!((m.rpm().unwrap() - 1.0).abs() < 0.01, "rpm() reports the revs");
-    // Upshift: revs drop to 0.4 (700 + 0.4 * 5500 = 2900 rpm, 193 Hz). After 30 ms it is there.
+    // Upshift: revs drop to 0.4 (900 + 0.4 * 5300 = 3020 rpm, 201 Hz). After 30 ms it is there.
     m.set_input_by_name("rpm", 0.4);
     render(m.as_mut(), 0.03);
     assert!((m.rpm().unwrap() - 0.4).abs() < 0.04, "after 30 ms revs are {}", m.rpm().unwrap());
     let low = dominant(&render(m.as_mut(), 0.25), 120.0, 300.0);
-    assert!((low - 193.0).abs() < 20.0, "firing after the shift {low} Hz");
+    assert!((low - 201.0).abs() < 20.0, "firing after the shift {low} Hz");
     // Without external rpm the same input does nothing: throttle drives the revs as before.
     let mut inert = engine("V8 muscle");
     inert.set_input_by_name("rpm", 1.0);
@@ -363,9 +364,9 @@ fn blower_whines_at_its_drive_ratio_and_boost_adds_drive() {
     m.snap();
     render(m.as_mut(), 0.2);
     let x = render(m.as_mut(), 0.3);
-    // 750 + 0.5 * 5750 = 3625 rpm -> 60.4 rev/s x 14 = 846 Hz.
-    let whine = dominant(&x, 700.0, 1000.0);
-    assert!((whine - 846.0).abs() < 20.0, "blower whine at {whine} Hz");
+    // 1500 + 0.5 * 5000 = 4000 rpm -> 66.7 rev/s x 14 = 933 Hz.
+    let whine = dominant(&x, 780.0, 1100.0);
+    assert!((whine - 933.0).abs() < 20.0, "blower whine at {whine} Hz");
     let level = |boost: f32| {
         let mut e = engine("Buggy flat-four");
         e.set_input_by_name("throttle", 0.8);

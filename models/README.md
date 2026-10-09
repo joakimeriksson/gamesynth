@@ -100,6 +100,7 @@ signals, plus `sr`, `pi`, `tau`, and `t` / `rnd` (time since the last trigger, p
 | `formant` | vowel (0), shift (1), q (1), `freqs`, `qs`, `gains`, `routing` = parallel \| series | voice and creature formants |
 | `pan` | pan (0), `channel` = left \| right | equal-power pan for stereo models |
 | `distance` | **distance**, rolloff (24), far_hz (1000), delay_ms (0), `max_ms` (200) | level drop, air low-pass, arrival delay |
+| `bubbles` | radius_mm (3), spread (1), rise (0.03), damping (1) | air bubbles in water, one per impulse in `in`: brooks, drips, boiling, splashes |
 
 Recipes: **crackle** = `dust → decay → mul(noise) → svf bandpass` (see `campfire.toml`), or
 better `powerdust → ad → mul(noise)` (`crackle.toml`); **drops** = `dust → resonators
@@ -107,7 +108,8 @@ route="random"` (`rain_on_tent.toml`); **engine inertia** = `slew()` on the thro
 (`jet_lite.toml`); **impact flare** = `slew(hit, 0.01, 0.6)` (`shield.toml`); **struck
 objects** = `pattern` or `powerdust → modal` (`wind_chimes.toml`); **calls and song** =
 `pattern → chirp` times `pattern → ad` (`songbird.toml`); **voices** = `saw → formant`
-(`creature_grunt.toml`).
+(`creature_grunt.toml`); **running water** = `powerdust → bubbles` plus band-passed
+pink noise for the wash.
 
 ## Building blocks
 
@@ -199,6 +201,20 @@ trigger restarts the phrase.
 ```toml
 { id = "knock", type = "pattern", rate = "lerp(2, 9, wind)", count = 3, gap = "lerp(4, 0.3, wind)", jitter = 0.8, variation = 0.9, run = "wind > 0.03" },
 { id = "beat", type = "pattern", rate = 8, gap = 0, euclid = [3, 8] },
+```
+
+**`bubbles`: water.** Every impulse in `in` releases an air bubble that rings at its Minnaert
+pitch, 3260 / `radius_mm` Hz (a 3 mm bubble sings near 1.1 kHz, a 1 cm one at 330 Hz), as loud
+as the impulse. Radii spread log-evenly over ±`spread` octaves around `radius_mm`, small ones
+more often. Each dies away at its own natural rate (big bubbles ring longer; `damping` scales
+it) and rises in pitch by `rise` (a fraction) over that natural ring. Recordings of brooks,
+drips and splashes measure as dense swarms of short pings at a nearly steady pitch, so keep
+`rise` small and drive it with many impulses (`powerdust`), not a few long chirps. Up to 16
+ring at once.
+
+```toml
+{ id = "drops", type = "powerdust", rate = "lerp(20, 600, flow)", skew = 2 },
+{ id = "brook", type = "bubbles", in = ["drops"], radius_mm = "lerp(2.5, 5, depth)", spread = 1.2 },
 ```
 
 **`impulse`.** One impulse of size `amp` on each one-shot trigger (the hit that starts an

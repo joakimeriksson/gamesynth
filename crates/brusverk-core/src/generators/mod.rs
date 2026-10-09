@@ -7,12 +7,15 @@ pub mod ambient;
 pub mod birdsong;
 pub mod foley;
 pub mod fx;
+pub mod machines;
 pub mod materials;
 pub mod nature;
 pub mod piston;
 pub mod sport;
 pub mod ui;
 pub mod vehicles;
+pub mod voice;
+pub mod water;
 pub mod wildlife;
 
 use crate::model::{Generator, Model, ModelDesc, Native};
@@ -119,4 +122,28 @@ registry!(
     wildlife::Frogs,
     wildlife::Leaves,
     wildlife::Thunder,
+    voice::Babble,
+    voice::Creature<voice::Growl>,
+    voice::Creature<voice::Roar>,
+    voice::Creature<voice::Hiss>,
+    voice::Creature<voice::Squeak>,
+    voice::Creature<voice::ChirpCall>,
+    voice::Creature<voice::Chatter>,
+    voice::Idle,
+    machines::Train,
+    machines::Conveyor,
+    machines::Press,
+    machines::Clock,
+    machines::Gears,
+    machines::MusicBox,
+    machines::Unlock,
+    machines::Pneumatic,
+    machines::Hydraulic,
+    machines::Elevator,
+    water::Splash,
+    water::Swim,
+    water::Boat,
+    water::Underwater,
+    water::Drip,
+    water::Pour,
 );

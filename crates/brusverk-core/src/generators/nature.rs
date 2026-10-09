@@ -481,17 +481,27 @@ mod fire_tests {
 // ---------------------------------------------------------------------------------------------
 
 model_params! {
-    /// Running water as a swarm of bubbles: each is a short sine chirp that rises in pitch.
+    /// Running water: a dense swarm of bubbles over a churning wash of noise, with sharp
+    /// splash ticks on top. Fitted to six close stream recordings (`target/refs/stream`): a
+    /// real stream is a granular hiss of countless short pings (median 12 to 15 ms, pitch
+    /// nearly steady) spread over 300 Hz to 5 kHz, with bigger bubbles lower, louder
+    /// and longer, and 7 to 35 broadband ticks a second that last about a millisecond.
     StreamParams / StreamParamId {
-        bubble_rate: "bubbles/per_second" = 340.0, exp(5.0, 1500.0);
+        bubble_rate: "bubbles/per_second" = 900.0, exp(5.0, 1500.0);
         bubble_hz: "bubbles/hz" = 1100.0, exp(200.0, 5000.0);
-        spread: "bubbles/spread_octaves" = 1.0, lin(0.0, 2.5);
-        rise: "bubbles/rise" = 0.35, UNIT;
-        decay_ms: "bubbles/decay_ms" = 9.0, lin(3.0, 120.0);
-        bubbles_level: "bubbles/level" = 0.7, UNIT;
-        wash_level: "wash/level" = 0.55, UNIT;
-        wash_hz: "wash/hz" = 1800.0, exp(300.0, 8000.0);
+        spread: "bubbles/spread_octaves" = 2.0, lin(0.0, 2.5);
+        rise: "bubbles/rise" = 0.02, UNIT;
+        decay_ms: "bubbles/decay_ms" = 4.0, lin(3.0, 120.0);
+        bubbles_level: "bubbles/level" = 0.48, UNIT;
+        wash_level: "wash/level" = 0.36, UNIT;
+        wash_hz: "wash/hz" = 6000.0, exp(300.0, 8000.0);
         gain: "master/gain" = 1.0, GAIN;
+        accent: "bubbles/accent" = 0.6, UNIT;
+        churn: "wash/churn" = 0.6, UNIT;
+        splash_level: "splash/level" = 0.48, UNIT;
+        splash_rate: "splash/per_second" = 20.0, exp(1.0, 300.0);
+        splash_hz: "splash/hz" = 3000.0, exp(1000.0, 12000.0);
+        size_law: "bubbles/size_law" = 1.0, UNIT;
     }
 }
 
@@ -502,43 +512,84 @@ struct Bubble {
     rise: f32,
     env: f32,
     decay: f32,
+    /// Onset: the share of the envelope still to come, falling to 0 (0 = an instant start).
+    att: f32,
+    att_decay: f32,
 }
 
+/// Voices for the old fixed-size bubbles (Dripping cave, Bubbling potion), and for the dense
+/// swarm of size-law bubbles.
 const BUBBLES: usize = 16;
+const SWARM: usize = 64;
+const SKEW: f32 = 1.6;
+const ATTACK_CYCLES: f32 = 1.0;
+
+/// Mean of `d^n` for the 0.3..1 amplitudes [`Dust`] hands out.
+fn dust_moment(n: f32) -> f32 {
+    (1.0 - 0.3f32.powf(n + 1.0)) / (0.7 * (n + 1.0))
+}
 
 pub struct Stream {
     sr: f32,
     noise: Noise,
     dust: Dust,
-    bubbles: [Bubble; BUBBLES],
+    bubbles: [Bubble; SWARM],
     next: usize,
     wash: Svf,
+    // Churn and splashes have their own random streams, so with them, accent and the size law
+    // off, the bubbles and wash are exactly as before (Dripping cave and Bubbling potion render
+    // bit-identical).
+    churn: SlowNoise,
+    swell: SlowNoise,
+    tick_noise: Noise,
+    tick_dust: Dust,
+    tick_env: f32,
+    tick_lp: OnePole,
+    tick_hp: OnePole,
 }
 
 impl Generator for Stream {
     type P = StreamParams;
     const NAME: &'static str = "stream";
     const CATEGORY: &'static str = "nature";
-    const DOC: &'static str = "Running water: trickle, brook or river, built from bubble chirps.";
+    const DOC: &'static str = "Running water: trickle, brook or river, built from a swarm of bubbles, a churning wash and splash ticks.";
     const INPUTS: &'static [InputSpec] = &[
         InputSpec { name: "flow", default: 0.5, doc: "Trickle to torrent" },
         InputSpec { name: "size", default: 0.3, doc: "Body of water: bigger means deeper, slower bubbles" },
     ];
 
     fn presets() -> Vec<(&'static str, StreamParams)> {
+        let old = StreamParams { accent: 0.0, churn: 0.0, splash_level: 0.0, size_law: 0.0, ..Default::default() };
         vec![
-            ("Dripping cave", StreamParams { bubble_rate: 9.0, bubble_hz: 1500.0, decay_ms: 60.0, wash_level: 0.05, rise: 0.8, bubbles_level: 1.0, ..Default::default() }),
-            ("River", StreamParams { bubble_rate: 900.0, bubble_hz: 700.0, wash_level: 0.9, wash_hz: 1200.0, ..Default::default() }),
-            ("Bubbling potion", StreamParams { bubble_rate: 40.0, bubble_hz: 420.0, spread: 0.6, rise: 0.9, decay_ms: 45.0, wash_level: 0.1, bubbles_level: 1.0, ..Default::default() }),
+            // Not streams, so not fitted to the stream recordings: they keep their old sound.
+            ("Dripping cave", StreamParams { bubble_rate: 9.0, bubble_hz: 1500.0, spread: 1.0, decay_ms: 60.0, wash_level: 0.025, wash_hz: 1800.0, rise: 0.8, bubbles_level: 0.5, ..old }),
+            // Bigger and lower than the default, close to a broad, full stream (OneTwo_BER's):
+            // loudest at 500 Hz to 2 kHz, a tenth of the energy above 2.5 kHz.
+            ("River", StreamParams { bubble_rate: 900.0, bubble_hz: 850.0, spread: 1.7, accent: 0.9, bubbles_level: 0.75, wash_level: 0.57, wash_hz: 3500.0, splash_level: 0.94, splash_rate: 15.0, splash_hz: 3000.0, ..Default::default() }),
+            ("Bubbling potion", StreamParams { bubble_rate: 40.0, bubble_hz: 420.0, spread: 0.6, rise: 0.9, decay_ms: 45.0, wash_level: 0.05, wash_hz: 1800.0, bubbles_level: 0.5, ..old }),
         ]
     }
 
     fn new(sr: f32) -> Self {
-        Stream { sr, noise: Noise::new(0x53_0001), dust: Dust::new(0x53_0002), bubbles: [Bubble::default(); BUBBLES], next: 0, wash: Svf::default() }
+        Stream {
+            sr,
+            noise: Noise::new(0x53_0001),
+            dust: Dust::new(0x53_0002),
+            bubbles: [Bubble::default(); SWARM],
+            next: 0,
+            wash: Svf::default(),
+            churn: SlowNoise::new(0x53_0003),
+            swell: SlowNoise::new(0x53_0004),
+            tick_noise: Noise::new(0x53_0005),
+            tick_dust: Dust::new(0x53_0006),
+            tick_env: 0.0,
+            tick_lp: OnePole::default(),
+            tick_hp: OnePole::default(),
+        }
     }
 
     fn block(&mut self, x: &[f32], p: &StreamParams, out: &mut [f32]) {
-        let sr = self.sr;
+        let (sr, dt) = (self.sr, 1.0 / self.sr);
         let (flow, size) = (x[0], x[1]);
         let bubble_p = p.bubble_rate * (0.1 + 0.9 * flow.powf(1.5)) / sr;
         let decay_samples = p.decay_ms * (1.0 + size) * 0.001 * sr;
@@ -546,18 +597,52 @@ impl Generator for Stream {
         let rise = (p.rise * 1.2 / (decay_samples * 2.0)).exp2();
         let centre = p.bubble_hz * (-1.5 * size).exp2();
         self.wash.set(FilterMode::BandPass, p.wash_hz * (-size).exp2(), 0.2, sr);
-        let (bubble_gain, wash_gain) = (p.bubbles_level * 0.45, p.wash_level * (0.3 + 0.7 * flow) * 2.4);
+        // Accent: a few loud bubbles among many quiet ones (amplitude raised to a power), at the
+        // same mean energy.
+        let accent_pow = 1.0 + 4.0 * p.accent;
+        let accent_norm = (dust_moment(2.0) / dust_moment(2.0 * accent_pow)).sqrt();
+        let (bubble_gain, wash_gain) = (p.bubbles_level * 0.9 * accent_norm, p.wash_level * (0.3 + 0.7 * flow) * 4.8);
+        // Size law: a bubble's pitch is set by its size (Minnaert), and a big bubble rings
+        // longer and louder than a small one, and small bubbles far outnumber big ones.
+        // At 0 every bubble has the same decay and loudness, as before.
+        let law = p.size_law;
+        let voices = if law > 0.0 { SWARM } else { BUBBLES };
+        let tick_p = p.splash_rate * (0.15 + 0.85 * flow.powf(1.5)) / sr;
+        let tick_gain = p.splash_level * (0.4 + 0.6 * flow) * 20.0;
+        let (tick_decay, tick_lp, tick_hp) = ((-1.0 / (0.0005 * sr)).exp(), hz_coef(p.splash_hz, sr), hz_coef(250.0, sr));
+        let (churn_hz, swell_hz) = (8.0 + 10.0 * flow, 0.8 + 0.8 * flow);
         for o in out.iter_mut() {
             let d = self.dust.tick(bubble_p);
             if d > 0.0 {
-                let f = centre * (self.dust.rng().next_bipolar() * p.spread).exp2();
-                self.bubbles[self.next] = Bubble { phase: 0.0, inc: f.min(sr * 0.4) / sr, rise, env: d, decay };
-                self.next = (self.next + 1) % BUBBLES;
+                let r = self.dust.rng().next_bipolar();
+                let f = if law > 0.0 {
+                    // Many more small bubbles than big ones (a power law in size): per octave the
+                    // count grows 2^skew times towards the top.
+                    let skew = SKEW * law;
+                    let span = (2.0 * skew * p.spread).exp2() - 1.0;
+                    centre * ((1.0 + 0.5 * (r + 1.0) * span).log2() / skew - p.spread).exp2()
+                } else {
+                    centre * (r * p.spread).exp2()
+                };
+                let mut bubble = Bubble { phase: 0.0, inc: f.min(sr * 0.4) / sr, rise, env: d.powf(accent_pow), decay, att: 0.0, att_decay: 0.0 };
+                if law > 0.0 {
+                    let big = centre / f;
+                    let ds = decay_samples * big.powf(0.6 * law);
+                    bubble.decay = (-1.0 / ds).exp();
+                    bubble.rise = (p.rise * 1.2 / (ds * 2.0)).exp2();
+                    bubble.env *= big.powf(0.3 * law);
+                    // A bubble swells into its note over about a cycle rather than clicking on.
+                    bubble.att = 1.0;
+                    bubble.att_decay = (-bubble.inc / ATTACK_CYCLES).exp();
+                }
+                self.bubbles[self.next] = bubble;
+                self.next = (self.next + 1) % voices;
             }
             let mut y = 0.0;
-            for b in self.bubbles.iter_mut() {
+            for b in self.bubbles[..voices].iter_mut() {
                 if b.env > 1e-4 {
-                    y += (b.phase * TAU).sin() * b.env;
+                    y += (b.phase * TAU).sin() * b.env * (1.0 - b.att);
+                    b.att *= b.att_decay;
                     b.phase += b.inc;
                     if b.phase >= 1.0 {
                         b.phase -= 1.0;
@@ -566,7 +651,65 @@ impl Generator for Stream {
                     b.env *= b.decay;
                 }
             }
-            *o = (y * bubble_gain + self.wash.tick(self.noise.pink()) * wash_gain) * p.gain;
+            let mut wash = self.wash.tick(self.noise.pink()) * wash_gain;
+            if p.churn > 0.0 || p.splash_level > 0.0 {
+                // Churn: the water slops about, so the wash and the splashes come and go.
+                let m = 1.3 * self.churn.advance(churn_hz, dt) + 0.25 * self.swell.advance(swell_hz, dt);
+                let lump = (p.churn * m).exp2();
+                wash *= lump;
+                // Splash ticks: a drop or a lip of water slapping, a broadband click about a
+                // millisecond long, mostly quiet with the odd loud one.
+                let s = self.tick_dust.tick(tick_p * lump);
+                if s > 0.0 {
+                    self.tick_env += s * s * s;
+                }
+                if self.tick_env > 1e-5 {
+                    let n = self.tick_lp.lp(self.tick_noise.white(), tick_lp);
+                    wash += self.tick_hp.hp(n, tick_hp) * self.tick_env * tick_gain;
+                    self.tick_env *= tick_decay;
+                }
+            }
+            *o = (y * bubble_gain + wash) * p.gain;
+        }
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use crate::filter::{FilterMode, Svf};
+    use crate::generators;
+    use crate::render::rms;
+
+    /// Share of energy above about 2.5 kHz, and the crest of the 10 ms envelope (dB, p99/median).
+    fn measure(preset: &str, flow: f32) -> (f32, f32) {
+        let sr = 48000.0;
+        let mut m = generators::create("stream", sr).unwrap();
+        let i = m.desc().preset_index(preset).unwrap();
+        m.load_preset(i);
+        m.set_input(0, flow);
+        m.snap();
+        let mut buf = vec![0.0; 48000 * 6];
+        m.render_mono(&mut buf);
+        let buf = &buf[48000..];
+        let (mut hp, mut hp2) = (Svf::default(), Svf::default());
+        hp.set(FilterMode::HighPass, 2500.0, 0.3, sr);
+        hp2.set(FilterMode::HighPass, 2500.0, 0.3, sr);
+        let high: Vec<f32> = buf.iter().map(|&x| hp2.tick(hp.tick(x))).collect();
+        let share = (rms(&high) / rms(buf)).powi(2);
+        let mut env: Vec<f32> = buf.chunks(480).map(rms).collect();
+        env.sort_by(|a, b| a.total_cmp(b));
+        let crest = 20.0 * (env[env.len() * 99 / 100] / env[env.len() / 2]).log10();
+        (share, crest)
+    }
+
+    #[test]
+    fn streams_are_bright_and_lumpy_like_recordings() {
+        // Real streams have 9 to 67 % of their energy above 2.5 kHz and a 10 ms crest of 5 to
+        // 11 dB; before the retune ours had 1 to 2 % and 4 to 5.5 dB.
+        for (preset, min_share, min_crest) in [("Default", 0.10, 5.0), ("River", 0.04, 4.5)] {
+            let (share, crest) = measure(preset, 0.5);
+            assert!(share > min_share, "{preset}: only {:.1} % above 2.5 kHz", share * 100.0);
+            assert!(crest > min_crest, "{preset}: 10 ms crest {crest:.1} dB is too smooth");
         }
     }
 }
