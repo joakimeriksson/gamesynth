@@ -3,10 +3,11 @@
 //! Every sound here was measured against CC0 field recordings (Freesound, kept in
 //! `target/refs/wildlife` with their sources) before it was built:
 //!
-//! * **Birds** sing *phrases*: tonal syllables of 20-150 ms that sweep at 10-40 kHz per
-//!   second, often repeated as trills of 5-20 per second, grouped into a song of 1-3 s that the
-//!   bird repeats with small variations, then a pause of one to several seconds. In a forest
-//!   every note leaves a reverberant tail. Most energy is at 2-6 kHz.
+//! * **Birds** are real species: `birds` draws its singers from the `bird` generator's songbook
+//!   (`generators/birdsong`), songs transcribed syllable by syllable from CC0 recordings of each
+//!   species (blackbird, robin, chaffinch, great tit, cuckoo, doves, crow, sparrow, skylark,
+//!   gull, woodpecker; tawny owl and nightingale at night). In a forest every note leaves a
+//!   reverberant tail.
 //! * **Crickets** chirp at a 4.2-4.3 kHz carrier; each chirp is 3-5 pulses at 20-30 per second,
 //!   and the chirp rate follows the temperature (Dolbear's law). A field of them drifts in and
 //!   out of step. **Cicadas** are a buzz of tymbal clicks through a 5-6 kHz resonance that swells
@@ -24,6 +25,7 @@
 //! is the mono render, sample for sample.
 
 use crate::blocks::{hz_coef, mix_seed, Brown, Dust, OnePole, Reverb, SlowNoise, BLOCK};
+use crate::generators::birdsong::{Control, Singer};
 use crate::dsp::balance;
 use crate::filter::{FilterMode, Svf};
 use crate::math::{soft_clip, Rng, TAU};
@@ -142,21 +144,29 @@ fn rest_between(rng: &mut Rng, lo: f32, hi: f32) -> f32 {
 // ---------------------------------------------------------------------------------------------
 
 model_params! {
-    /// Birds: a pool of singers, each with a small repertoire of songs built from swept tonal
-    /// syllables (trills, slurs, whistles), repeated with variation and separated by pauses. The
-    /// species weights choose what the pool is made of; `night/*` are the voices of the night.
+    /// Birds: a chorus of real species, each singer a [`Singer`] of the `bird` generator (songs
+    /// transcribed from recordings), drawn from the pool by the species weights and placed at its
+    /// own distance and side. `species/tropical` brings two invented voices (no recordings
+    /// behind them); `night/*` are the voices of the night.
     BirdsParams / BirdsParamId {
         voices: "chorus/voices" = 10.0, int(1, 16);
         gaps: "chorus/gaps" = 0.5, UNIT;
         pitch: "song/pitch" = 1.0, exp(0.5, 2.0);
         tempo: "song/tempo" = 1.0, exp(0.5, 2.0);
         variety: "song/variety" = 0.5, UNIT;
-        warbler: "species/warbler" = 0.8, UNIT;
-        thrush: "species/thrush" = 0.6, UNIT;
-        whistler: "species/whistler" = 0.4, UNIT;
-        trill: "species/trill" = 0.5, UNIT;
-        tit: "species/tit" = 0.5, UNIT;
-        dove: "species/dove" = 0.1, UNIT;
+        blackbird: "species/blackbird" = 0.8, UNIT;
+        robin: "species/robin" = 0.7, UNIT;
+        chaffinch: "species/chaffinch" = 0.7, UNIT;
+        great_tit: "species/great_tit" = 0.6, UNIT;
+        cuckoo: "species/cuckoo" = 0.15, UNIT;
+        wood_pigeon: "species/wood_pigeon" = 0.3, UNIT;
+        collared_dove: "species/collared_dove" = 0.15, UNIT;
+        crow: "species/crow" = 0.15, UNIT;
+        sparrow: "species/house_sparrow" = 0.25, UNIT;
+        skylark: "species/skylark" = 0.0, UNIT;
+        gull: "species/herring_gull" = 0.0, UNIT;
+        woodpecker: "species/woodpecker" = 0.1, UNIT;
+        tropical: "species/tropical" = 0.0, UNIT;
         owl: "night/owl" = 0.7, UNIT;
         nightingale: "night/nightingale" = 0.6, UNIT;
         distance: "space/distance" = 0.5, UNIT;
@@ -167,533 +177,107 @@ model_params! {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Bird {
-    Warbler,
-    Thrush,
-    Whistler,
-    Trill,
-    Tit,
-    Dove,
-    Owl,
-    Nightingale,
-}
+/// The day species of the pool, in weight order; `species/tropical` is shared by the last two.
+const DAY: [usize; 14] = [0, 1, 2, 3, 4, 5, 6, 7, 9, 12, 10, 13, 14, 15];
+const OWL: usize = 8;
+const NIGHTINGALE: usize = 11;
+/// The chorus mixes its singers at this level (a close bird alone peaks near -8 dBFS).
+const CHORUS: f32 = 0.55;
 
-const DAY_BIRDS: [Bird; 6] = [Bird::Warbler, Bird::Thrush, Bird::Whistler, Bird::Trill, Bird::Tit, Bird::Dove];
-
-/// One syllable: a tone whose pitch glides o0 -> o1 (-> o2 after `turn`), in octaves relative to
-/// 1 kHz, with optional vibrato/buzz (`fm` octaves at `fm_hz`) and a few harmonics.
-#[derive(Clone, Copy, Debug, Default)]
-struct Syl {
-    dur: f32,
-    o0: f32,
-    o1: f32,
-    o2: f32,
-    turn: f32,
-    fm_hz: f32,
-    fm: f32,
-    att: f32,
-    rel: f32,
-    h2: f32,
-    h3: f32,
-    amp: f32,
-}
-
-#[inline]
-fn oct(hz: f32) -> f32 {
-    (hz * 0.001).log2()
-}
-
-impl Syl {
-    /// A plain glide from `hz0` to `hz1`.
-    fn glide(dur: f32, hz0: f32, hz1: f32) -> Self {
-        Syl { dur, o0: oct(hz0), o1: oct(hz1), o2: oct(hz1), turn: 1.0, att: 0.12, rel: 0.3, amp: 1.0, ..Default::default() }
-    }
-
-    /// Up (or down) to `hz1` at `turn`, then on to `hz2`.
-    fn bend(dur: f32, hz0: f32, hz1: f32, hz2: f32, turn: f32) -> Self {
-        Syl { o2: oct(hz2), turn, ..Syl::glide(dur, hz0, hz1) }
-    }
-
-    #[inline]
-    fn octave(&self, u: f32, t: f32) -> f32 {
-        let base = if u < self.turn {
-            self.o0 + (self.o1 - self.o0) * (u / self.turn.max(1e-3))
-        } else {
-            self.o1 + (self.o2 - self.o1) * ((u - self.turn) / (1.0 - self.turn).max(1e-3))
-        };
-        if self.fm > 0.0 {
-            base + self.fm * (TAU * self.fm_hz * t).sin()
-        } else {
-            base
-        }
-    }
-
-    #[inline]
-    fn env(&self, u: f32) -> f32 {
-        if !(0.0..1.0).contains(&u) {
-            return 0.0;
-        }
-        smooth01(u / self.att.max(1e-3)) * smooth01((1.0 - u) / self.rel.max(1e-3))
+impl BirdsParams {
+    fn weights(&self) -> [f32; 14] {
+        let t = self.tropical * 0.5;
+        [self.blackbird, self.robin, self.chaffinch, self.great_tit, self.cuckoo, self.wood_pigeon, self.collared_dove, self.crow, self.sparrow, self.skylark, self.gull, self.woodpecker, t, t]
     }
 }
 
-/// A syllable repeated `reps` times, `period` seconds apart, drifting `drift` octaves and
-/// growing by `cresc` per repeat, then `pause` seconds before the next group.
-#[derive(Clone, Copy, Debug, Default)]
-struct Group {
-    syl: Syl,
-    reps: u8,
-    period: f32,
-    drift: f32,
-    cresc: f32,
-    pause: f32,
-}
-
-const GROUPS: usize = 6;
-
-/// A song: up to six groups, the whole sequence sung `loops` times (thrushes repeat motifs).
-#[derive(Clone, Copy, Debug, Default)]
-struct Song {
-    g: [Group; GROUPS],
-    n: u8,
-    loops: u8,
-}
-
-impl Song {
-    fn push(&mut self, g: Group) {
-        if (self.n as usize) < GROUPS {
-            self.g[self.n as usize] = g;
-            self.n += 1;
-        }
-    }
-}
-
-fn group(syl: Syl, reps: u8, gap: f32) -> Group {
-    Group { syl, reps: reps.max(1), period: syl.dur + gap, drift: 0.0, cresc: 1.0, pause: 0.0 }
-}
-
-/// Make up a song for `bird`. The same seed always gives the same song, so a bird repeats it.
-fn compose(bird: Bird, rng: &mut Rng) -> Song {
-    let mut s = Song { loops: 1, ..Default::default() };
-    let reps = |rng: &mut Rng, lo: u8, hi: u8| lo + (rng.next_f32() * (hi - lo + 1) as f32) as u8;
-    match bird {
-        // Chaffinch-like: two or three trills that step down in pitch, then a flourish.
-        Bird::Warbler => {
-            let n = 2 + rng.chance(0.5) as usize;
-            let mut c = rng.range(4300.0, 5600.0);
-            for k in 0..n {
-                let dur = rng.range(0.035, 0.06);
-                let syl = if rng.chance(0.75) { Syl::glide(dur, c * 1.25, c * 0.78) } else { Syl::bend(dur, c * 0.8, c * 1.2, c * 1.05, 0.7) };
-                let mut g = group(Syl { amp: 1.0 - 0.1 * k as f32, h2: 0.04, ..syl }, reps(rng, 3, 6), rng.range(0.04, 0.075));
-                g.drift = rng.range(-0.02, 0.0);
-                g.pause = rng.range(0.0, 0.05);
-                s.push(g);
-                c *= rng.range(0.76, 0.9);
-            }
-            let dur = rng.range(0.12, 0.22);
-            s.push(group(Syl { att: 0.08, h2: 0.04, ..Syl::bend(dur, c * 1.1, c * 1.5, c * 0.6, rng.range(0.25, 0.5)) }, 1, 0.05));
-        }
-        // Song-thrush-like: a motif of two to four different syllables, sung two to four times.
-        Bird::Thrush => {
-            let n = 2 + (rng.next_f32() * 3.0) as usize;
-            for k in 0..n {
-                let f = rng.range(1800.0, 4800.0);
-                let dur = rng.range(0.04, 0.15);
-                let syl = match (rng.next_f32() * 4.0) as u32 {
-                    0 => Syl::glide(dur, f * 1.4, f * 0.75),
-                    1 => Syl::glide(dur, f * 0.7, f * 1.3),
-                    2 => Syl::bend(dur, f * 0.8, f * 1.35, f * 0.9, rng.range(0.3, 0.7)),
-                    _ => Syl { fm_hz: rng.range(25.0, 60.0), fm: rng.range(0.04, 0.12), ..Syl::glide(dur, f, f * 0.95) },
-                };
-                let mut g = group(Syl { h2: 0.05, ..syl }, 1, rng.range(0.03, 0.07));
-                if k == n - 1 {
-                    g.pause = rng.range(0.1, 0.22);
-                }
-                s.push(g);
-            }
-            s.loops = reps(rng, 2, 4);
-        }
-        // Oriole/pewee-like: one to three slow, pure, curving whistles.
-        Bird::Whistler => {
-            let f = rng.range(1400.0, 2600.0);
-            for _ in 0..1 + (rng.next_f32() * 3.0) as usize {
-                let dur = rng.range(0.22, 0.5);
-                let syl = Syl::bend(dur, f * rng.range(0.85, 1.0), f * rng.range(1.2, 1.6), f * rng.range(1.0, 1.4), rng.range(0.4, 0.75));
-                s.push(group(Syl { att: 0.25, rel: 0.3, h2: 0.06, ..syl }, 1, rng.range(0.08, 0.25)));
-            }
-        }
-        // Wren/sparrow-like: fast trills of short identical sweeps.
-        Bird::Trill => {
-            let mut f = rng.range(2800.0, 5200.0);
-            for _ in 0..1 + rng.chance(0.5) as usize {
-                let dur = rng.range(0.02, 0.045);
-                let span = rng.range(0.4, 0.9).exp2();
-                let syl = if rng.chance(0.5) { Syl::glide(dur, f / span.sqrt(), f * span.sqrt()) } else { Syl::glide(dur, f * span.sqrt(), f / span.sqrt()) };
-                s.push(group(Syl { att: 0.15, rel: 0.4, ..syl }, reps(rng, 8, 20), rng.range(0.025, 0.06)));
-                f *= rng.range(0.72, 0.9);
-            }
-        }
-        // Great-tit-like "tea-cher tea-cher", or a short series of high "tsip" calls.
-        Bird::Tit => {
-            if rng.chance(0.65) {
-                let a = rng.range(4500.0, 6200.0);
-                let b = a * rng.range(0.55, 0.7);
-                let (da, db) = (rng.range(0.06, 0.09), rng.range(0.06, 0.09));
-                s.push(group(Syl::glide(da, a * 1.05, a * 0.95), 1, 0.02));
-                let mut g = group(Syl::glide(db, b * 1.1, b * 0.95), 1, rng.range(0.05, 0.08));
-                g.pause = 0.0;
-                s.push(g);
-                s.loops = reps(rng, 3, 6);
-            } else {
-                let f = rng.range(5500.0, 7200.0);
-                let dur = rng.range(0.02, 0.04);
-                s.push(group(Syl::glide(dur, f * 1.1, f * 0.85), reps(rng, 2, 5), rng.range(0.12, 0.3)));
-            }
-        }
-        // Woodpigeon-like: soft low coos, "coo-COO-coo, coo-coo".
-        Bird::Dove => {
-            let f = rng.range(430.0, 560.0);
-            let n = 3 + (rng.next_f32() * 3.0) as usize;
-            for k in 0..n {
-                let long = k == 1 || k == n - 1;
-                let dur = if long { rng.range(0.4, 0.6) } else { rng.range(0.2, 0.3) };
-                let syl = Syl::bend(dur, f * 0.97, f * 1.03, f * 0.92, 0.35);
-                let mut g = group(Syl { att: 0.3, rel: 0.45, h2: 0.25, h3: 0.08, amp: if k == 1 { 1.0 } else { 0.75 }, ..syl }, 1, rng.range(0.1, 0.2));
-                if k == 2 {
-                    g.pause = rng.range(0.15, 0.35);
-                }
-                s.push(g);
-            }
-        }
-        // Tawny-owl-like: "hooo ... hu, hu-hu-hu-hoooooo".
-        Bird::Owl => {
-            let f = rng.range(380.0, 460.0);
-            let hoot = |dur: f32| Syl { att: 0.2, rel: 0.3, h2: 0.25, h3: 0.05, ..Syl::bend(dur, f * 0.96, f * 1.02, f * 0.9, 0.3) };
-            s.push(Group { pause: rng.range(2.0, 3.5), ..group(hoot(0.55), 1, 0.0) });
-            s.push(group(hoot(0.1), 1, 0.15));
-            s.push(group(hoot(0.07), 3, 0.08));
-            s.push(group(Syl { fm_hz: rng.range(10.0, 16.0), fm: 0.02, ..hoot(0.9) }, 1, 0.0));
-        }
-        // Nightingale-like: crescendo whistles, then trills and buzzy "jug"s.
-        Bird::Nightingale => {
-            let n = 2 + rng.chance(0.5) as usize;
-            for k in 0..n {
-                let choice = if k == 0 && rng.chance(0.6) { 0 } else { 1 + (rng.next_f32() * 3.0) as u32 };
-                let g = match choice {
-                    0 => {
-                        let f = rng.range(1500.0, 2500.0);
-                        let dur = rng.range(0.15, 0.25);
-                        Group { cresc: 1.25, ..group(Syl { att: 0.2, amp: 0.5, h2: 0.05, ..Syl::glide(dur, f, f * 1.08) }, reps(rng, 3, 6), rng.range(0.12, 0.2)) }
-                    }
-                    1 => {
-                        let dur = rng.range(0.012, 0.025);
-                        let (a, b) = (rng.range(1800.0, 2600.0), rng.range(4500.0, 6500.0));
-                        let syl = if rng.chance(0.5) { Syl::glide(dur, a, b) } else { Syl::glide(dur, b, a) };
-                        group(syl, reps(rng, 8, 20), rng.range(0.025, 0.04))
-                    }
-                    2 => {
-                        let f = rng.range(1200.0, 2000.0);
-                        group(Syl { fm_hz: rng.range(90.0, 140.0), fm: 0.25, h2: 0.2, ..Syl::glide(rng.range(0.05, 0.08), f, f * 0.9) }, reps(rng, 3, 6), rng.range(0.04, 0.06))
-                    }
-                    _ => {
-                        let f = rng.range(2000.0, 3500.0);
-                        group(Syl::bend(rng.range(0.1, 0.2), f, f * 1.5, f * 0.6, 0.4), 1, 0.05)
-                    }
-                };
-                s.push(Group { pause: rng.range(0.02, 0.08), ..g });
-            }
-        }
-    }
-    s
-}
-
-impl Bird {
-    /// Rest between phrases in seconds (lo, hi) at full activity.
-    fn rest(self) -> (f32, f32) {
-        match self {
-            Bird::Warbler => (2.5, 7.0),
-            Bird::Thrush => (0.6, 2.5),
-            Bird::Whistler => (2.0, 6.0),
-            Bird::Trill => (2.5, 7.0),
-            Bird::Tit => (1.5, 6.0),
-            Bird::Dove => (6.0, 14.0),
-            Bird::Owl => (12.0, 30.0),
-            Bird::Nightingale => (1.0, 3.5),
-        }
-    }
-
-    /// Chance of switching to another song of the repertoire at a new phrase (at variety 0.5).
-    fn switch(self) -> f32 {
-        match self {
-            Bird::Thrush | Bird::Nightingale => 0.7,
-            Bird::Warbler | Bird::Trill => 0.2,
-            _ => 0.3,
-        }
-    }
-
-    /// Loudness relative to the others (a dove is quiet, a wren or nightingale is loud).
-    fn level(self) -> f32 {
-        match self {
-            Bird::Dove => 0.3,
-            Bird::Owl => 1.4,
-            Bird::Tit => 0.75,
-            Bird::Nightingale => 2.0,
-            Bird::Trill => 0.95,
-            _ => 1.0,
-        }
-    }
-}
-
-const SONGS: usize = 3;
-
-struct BirdVoice {
-    bird: Bird,
+/// One bird of the chorus: its singer, place and air.
+struct Perch {
+    singer: Singer,
     /// Fixed 0..1 draw that picks the species from the weights.
     pick: f32,
     spot: Spot,
-    rng: Rng,
-    songs: [Song; SONGS],
-    song: usize,
-    awake: bool,
-    singing: bool,
-    rest: f32,
-    group: usize,
-    rep: u8,
-    reps: u8,
-    lap: u8,
-    next_on: f32,
-    /// This bird's own voice, in octaves, and this phrase's variation.
-    base_pitch: f32,
-    pitch: f32,
-    tempo: f32,
-    syl: Syl,
-    t: f32,
-    on: bool,
-    phase: f32,
     lp: OnePole,
     ear: Ear,
-    level: f32,
 }
 
-impl BirdVoice {
-    fn new(seed: u32, bird: Bird, pick: f32, spot: Spot) -> Self {
-        let mut rng = Rng::new(mix_seed(seed));
-        let base_pitch = 0.1 * rng.next_bipolar();
-        let rest = rng.range(0.0, 2.5);
-        let mut v = BirdVoice {
-            bird,
-            pick,
-            spot,
-            rng,
-            songs: [Song::default(); SONGS],
-            song: 0,
-            awake: false,
-            singing: false,
-            rest,
-            group: 0,
-            rep: 0,
-            reps: 0,
-            lap: 0,
-            next_on: 0.0,
-            base_pitch,
-            pitch: 0.0,
-            tempo: 1.0,
-            syl: Syl::default(),
-            t: 0.0,
-            on: false,
-            phase: 0.0,
-            lp: OnePole::default(),
-            ear: Ear::default(),
-            level: 1.0,
-        };
-        v.assign(bird);
-        v
-    }
-
-    fn assign(&mut self, bird: Bird) {
-        self.bird = bird;
-        for k in 0..SONGS {
-            self.songs[k] = compose(bird, &mut self.rng);
-        }
-        self.song = 0;
-    }
-
-    fn start_phrase(&mut self, variety: f32) {
-        if self.rng.chance(self.bird.switch() * (0.3 + 1.4 * variety)) {
-            self.song = (self.rng.next_f32() * SONGS as f32) as usize % SONGS;
-        }
-        self.pitch = self.base_pitch + variety * 0.05 * self.rng.next_bipolar();
-        self.tempo = 1.0 + variety * 0.1 * self.rng.next_bipolar();
-        self.singing = true;
-        self.group = 0;
-        self.lap = 0;
-        self.next_on = 0.0;
-        self.begin_group(variety);
-    }
-
-    fn begin_group(&mut self, variety: f32) {
-        self.rep = 0;
-        let g = &self.songs[self.song].g[self.group];
-        let jitter = if g.reps >= 4 { (variety * 1.6 * self.rng.next_bipolar()).round() as i32 } else { 0 };
-        self.reps = (g.reps as i32 + jitter).max(1) as u8;
-    }
-
-    /// Advance the phrase by `dt` seconds; starts syllables when they are due.
-    fn step(&mut self, dt: f32, variety: f32, tempo: f32, rest_scale: f32) {
-        if !self.singing {
-            if self.on {
-                return;
-            }
-            self.rest -= dt;
-            if self.rest <= 0.0 {
-                if self.awake {
-                    self.start_phrase(variety);
-                } else {
-                    self.rest = self.rng.range(0.3, 1.5);
-                }
-            }
-            return;
-        }
-        self.next_on -= dt;
-        if self.next_on > 0.0 || self.on {
-            return;
-        }
-        let song = self.songs[self.song];
-        let g = song.g[self.group];
-        let r = self.rep as f32;
-        let micro = variety * 0.012 * self.rng.next_bipolar();
-        let shift = self.pitch + g.drift * r + micro;
-        self.syl = Syl { o0: g.syl.o0 + shift, o1: g.syl.o1 + shift, o2: g.syl.o2 + shift, amp: g.syl.amp * g.cresc.powf(r), ..g.syl };
-        self.t = 0.0;
-        self.on = true;
-        let mut wait = g.period * self.tempo / tempo;
-        self.rep += 1;
-        if self.rep >= self.reps {
-            wait += g.pause / tempo;
-            self.group += 1;
-            if self.group >= song.n as usize {
-                self.group = 0;
-                self.lap += 1;
-            }
-            // Birds cut songs short now and then, and stop when they fall asleep.
-            let truncate = self.group > 0 && self.rng.chance(0.08 * variety);
-            if self.lap >= song.loops || truncate || !self.awake {
-                self.singing = false;
-                let (lo, hi) = self.bird.rest();
-                self.rest = rest_between(&mut self.rng, lo, hi) * rest_scale;
-                return;
-            }
-            self.begin_group(variety);
-        }
-        self.next_on = wait;
+impl Perch {
+    fn new(species: usize, seed: u32, pick: f32, spot: Spot, sr: f32) -> Self {
+        Perch { singer: Singer::new(species, seed, sr), pick, spot, lp: OnePole::default(), ear: Ear::default() }
     }
 }
 
 pub struct Birds {
     sr: f32,
-    day: [BirdVoice; 16],
-    night: [BirdVoice; 2],
+    day: [Perch; 16],
+    night: [Perch; 2],
     reverb: Reverb,
-    weights: [f32; 6],
 }
 
-const NIGHT_OWL: usize = 0;
-
 impl Birds {
-    fn species_for(weights: &[f32; 6], pick: f32) -> Option<Bird> {
+    fn species_for(weights: &[f32; 14], pick: f32) -> Option<usize> {
         let total: f32 = weights.iter().sum();
         if total <= 0.0 {
             return None;
         }
         let mut acc = 0.0;
-        for (w, b) in weights.iter().zip(DAY_BIRDS) {
+        for (w, s) in weights.iter().zip(DAY) {
             acc += w / total;
-            if pick < acc {
-                return Some(b);
+            if pick < acc && *w > 0.0 {
+                return Some(s);
             }
         }
-        Some(DAY_BIRDS[5])
+        weights.iter().zip(DAY).rev().find(|(w, _)| **w > 0.0).map(|(_, s)| s)
     }
 
     fn render(&mut self, x: &[f32], p: &BirdsParams, width: f32, left: &mut [f32], right: &mut [f32]) {
         let (sr, n) = (self.sr, left.len());
-        let dt = n as f32 / sr;
         left.iter_mut().chain(right.iter_mut()).for_each(|s| *s = 0.0);
         let hour = x[1] * 24.0;
         // The dawn chorus peaks between 5 and 7, the day is quieter, there is a smaller evening
         // chorus, and at night only the night birds sing.
         let day = x[0] * table(&[(3.5, 0.0), (4.5, 0.5), (5.5, 1.0), (7.0, 1.0), (9.5, 0.5), (12.0, 0.35), (16.5, 0.35), (18.5, 0.6), (20.0, 0.5), (21.5, 0.0)], hour);
         let night = x[0] * table(&[(0.0, 1.0), (3.5, 0.8), (4.8, 0.3), (5.5, 0.0), (20.0, 0.0), (21.0, 0.6), (22.0, 1.0), (24.0, 1.0)], hour);
-        let weights = [p.warbler, p.thrush, p.whistler, p.trill, p.tit, p.dove];
-        if weights != self.weights {
-            self.weights = weights;
-        }
-        let voices = p.voices.clamp(1.0, 16.0);
-        let awake = voices * day;
+        let weights = p.weights();
+        let awake = p.voices.clamp(1.0, 16.0) * day;
         // A busier chorus sings with shorter pauses; `chorus/gaps` scales all pauses.
-        let rest_scale = (0.35 + 1.3 * p.gaps) * (2.2 - 1.4 * day.max(night));
-        let tempo = p.tempo;
-        let pitch = p.pitch.log2();
+        // (Real species already rest 3-11 s, so a quiet hour stretches them less than it did.)
+        let rest_scale = (0.35 + 1.3 * p.gaps) * (1.8 - 1.25 * day.max(night));
+        let control = |awake: bool| Control { awake, rest_scale, excitement: 0.0, pitch: p.pitch, tempo: p.tempo, variety: p.variety };
         let space = p.reverb * 1.2;
         let mut send = [0.0f32; BLOCK];
-        let rt = p.rt60;
-        for (k, v) in self.day.iter_mut().enumerate() {
-            let want = Self::species_for(&self.weights, v.pick);
-            v.awake = (k as f32) < awake && want.is_some();
-            if let Some(b) = want {
-                if b != v.bird && !v.singing && !v.on {
-                    v.assign(b);
+        let night_on = [night * p.owl > 0.05, night * p.nightingale > 0.05];
+        // Night singers carry: an owl's hoot and a nightingale's song fill the dark woods.
+        let night_level = [1.6 * p.owl, 2.0 * p.nightingale];
+        for (k, perch) in self.day.iter_mut().chain(self.night.iter_mut()).enumerate() {
+            let (on, level) = if k < 16 {
+                let want = Self::species_for(&weights, perch.pick);
+                if let Some(s) = want {
+                    if s != perch.singer.species() && !perch.singer.is_busy() {
+                        perch.singer.set_species(s);
+                    }
                 }
-            }
-            v.level = v.bird.level();
-        }
-        self.night[NIGHT_OWL].awake = night * p.owl > 0.05;
-        self.night[NIGHT_OWL].level = Bird::Owl.level() * p.owl;
-        self.night[1].awake = night * p.nightingale > 0.05;
-        self.night[1].level = Bird::Nightingale.level() * p.nightingale;
-        for v in self.day.iter_mut().chain(self.night.iter_mut()) {
-            v.step(dt, p.variety, tempo, rest_scale);
-            if !v.on {
+                ((k as f32) < awake && want.is_some(), 1.0)
+            } else {
+                (night_on[k - 16], night_level[k - 16])
+            };
+            let mut dry = [0.0f32; BLOCK];
+            perch.singer.render(&mut dry[..n], &control(on));
+            if !perch.singer.is_busy() && dry[..n].iter().all(|s| *s == 0.0) {
                 continue;
             }
-            let d = v.spot.effective(p.distance);
+            let d = perch.spot.effective(p.distance);
             let (g, lp, sendk) = distance_cues(d, 16000.0, 3500.0, sr);
-            let at = place(v.spot.pan * width, sr);
-            let syl = v.syl;
-            let (t0, t1) = (v.t, v.t + dt);
-            let (u0, u1) = (t0 / syl.dur, t1 / syl.dur);
-            let f0 = (1000.0 * (syl.octave(u0, t0) + pitch).exp2()).min(sr * 0.45);
-            let f1 = (1000.0 * (syl.octave(u1.min(1.0), t1) + pitch).exp2()).min(sr * 0.45);
-            let amp = 0.2 * syl.amp * v.level * g;
-            let (a0, a1) = (syl.env(u0) * amp, syl.env(u1) * amp);
-            let (mut inc, dinc) = (f0 / sr, (f1 - f0) / sr / n as f32);
-            let (mut a, da) = (a0, (a1 - a0) / n as f32);
-            let (h2, h3) = (syl.h2, syl.h3);
-            let send_gain = sendk * space;
+            let at = place(perch.spot.pan * width, sr);
+            let (g, send_gain) = (g * level * CHORUS, sendk * space);
             for i in 0..n {
-                v.phase += inc;
-                if v.phase >= 1.0 {
-                    v.phase -= 1.0;
-                }
-                inc += dinc;
-                a += da;
-                let ph = v.phase * TAU;
-                let mut s = ph.sin();
-                if h2 > 0.0 {
-                    s += h2 * (2.0 * ph).sin() + h3 * (3.0 * ph).sin();
-                }
-                let y = v.lp.lp(s * a, lp);
-                v.ear.mix(y, at, &mut left[i], &mut right[i]);
+                let y = perch.lp.lp(dry[i] * g, lp);
+                perch.ear.mix(y, at, &mut left[i], &mut right[i]);
                 send[i] += y * send_gain;
-            }
-            v.t = t1;
-            if u1 >= 1.0 {
-                v.on = false;
             }
         }
         // The forest answers every note.
-        let gain = p.gain;
+        let (gain, rt) = (p.gain, p.rt60);
         for i in 0..n {
             let (m, s) = self.reverb.tick_stereo(send[i], rt, 0.45);
             left[i] = (left[i] + m + s * width) * gain;
@@ -706,7 +290,7 @@ impl Generator for Birds {
     type P = BirdsParams;
     const NAME: &'static str = "birds";
     const CATEGORY: &'static str = "nature";
-    const DOC: &'static str = "Songbirds: a chorus of singers with their own songs, repeated with variation and pauses; dawn chorus, day, dusk and night birds.";
+    const DOC: &'static str = "Songbirds: a chorus of real species (blackbird, robin, chaffinch, great tit, cuckoo, doves…) singing transcribed songs with variation and pauses; dawn chorus, day, dusk, and owls and nightingales at night.";
     const INPUTS: &'static [InputSpec] = &[
         InputSpec { name: "activity", default: 0.5, doc: "How many birds sing and how often: none to a full chorus" },
         InputSpec { name: "time_of_day", default: 0.3, doc: "0 = midnight, 0.25 = 06:00 (dawn chorus), 0.5 = noon, 0.75 = 18:00, 1 = midnight. Night brings owls and nightingales" },
@@ -714,34 +298,40 @@ impl Generator for Birds {
     const INPUT_SMOOTH_SECS: f32 = 0.3;
 
     fn presets() -> Vec<(&'static str, BirdsParams)> {
+        let none = BirdsParams { blackbird: 0.0, robin: 0.0, chaffinch: 0.0, great_tit: 0.0, cuckoo: 0.0, wood_pigeon: 0.0, collared_dove: 0.0, crow: 0.0, sparrow: 0.0, skylark: 0.0, gull: 0.0, woodpecker: 0.0, tropical: 0.0, ..Default::default() };
         vec![
             ("Dawn chorus", BirdsParams { voices: 16.0, gaps: 0.3, distance: 0.55, reverb: 0.45, ..Default::default() }),
-            ("Garden", BirdsParams { voices: 6.0, warbler: 0.3, thrush: 0.8, whistler: 0.2, trill: 0.3, tit: 0.8, dove: 0.6, distance: 0.3, reverb: 0.15, rt60: 0.8, ..Default::default() }),
-            ("Meadow", BirdsParams { voices: 8.0, warbler: 0.5, thrush: 0.2, whistler: 0.1, trill: 0.9, tit: 0.3, dove: 0.0, distance: 0.6, reverb: 0.06, rt60: 0.5, ..Default::default() }),
-            ("Tropical", BirdsParams { voices: 12.0, warbler: 0.2, thrush: 0.5, whistler: 1.0, trill: 0.6, tit: 0.3, dove: 0.3, pitch: 0.85, reverb: 0.55, rt60: 2.2, ..Default::default() }),
+            ("Garden", BirdsParams { voices: 7.0, blackbird: 1.0, robin: 0.8, great_tit: 0.8, chaffinch: 0.5, collared_dove: 0.5, wood_pigeon: 0.5, sparrow: 0.7, crow: 0.1, distance: 0.3, reverb: 0.15, rt60: 0.8, ..none }),
+            ("Meadow", BirdsParams { voices: 8.0, skylark: 1.0, chaffinch: 0.25, cuckoo: 0.3, crow: 0.2, wood_pigeon: 0.15, great_tit: 0.1, distance: 0.6, reverb: 0.06, rt60: 0.5, ..none }),
+            // Invented voices: there are no tropical recordings behind this preset.
+            ("Tropical", BirdsParams { voices: 12.0, tropical: 1.0, cuckoo: 0.1, wood_pigeon: 0.15, pitch: 0.95, reverb: 0.55, rt60: 2.2, ..none }),
             ("Night woods", BirdsParams { voices: 4.0, owl: 1.0, nightingale: 0.8, gaps: 0.6, reverb: 0.55, rt60: 1.8, ..Default::default() }),
         ]
     }
 
+    fn snap(&mut self, x: &[f32], _p: &BirdsParams) {
+        // A scene that starts mid-chorus: the birds that are awake start singing soon.
+        if x[0] > 0.2 {
+            self.day.iter_mut().chain(self.night.iter_mut()).for_each(|b| b.singer.hurry(2.0));
+        }
+    }
+
     fn new(sr: f32) -> Self {
         let mut rng = Rng::new(0x5B_0001);
-        let weights = {
-            let d = BirdsParams::default();
-            [d.warbler, d.thrush, d.whistler, d.trill, d.tit, d.dove]
-        };
+        let weights = BirdsParams::default().weights();
         let day = core::array::from_fn(|k| {
             // Golden-ratio picks spread the species evenly over the pool.
             let pick = (0.37 + 0.618_034 * k as f32).fract();
             // The first few are the near birds; the rest fill the distance.
             let spot = if k < 3 { Spot::random(&mut rng, 0.0, 0.35) } else { Spot::random(&mut rng, 0.25, 1.0) };
-            let bird = Birds::species_for(&weights, pick).unwrap_or(Bird::Warbler);
-            BirdVoice::new(0x5B_0100 + k as u32, bird, pick, spot)
+            let species = Birds::species_for(&weights, pick).unwrap_or(0);
+            Perch::new(species, 0x5B_0100 + k as u32, pick, spot, sr)
         });
         let night = [
-            BirdVoice::new(0x5B_0200, Bird::Owl, 0.0, Spot { dist: 0.55, pan: -0.5 }),
-            BirdVoice::new(0x5B_0201, Bird::Nightingale, 0.0, Spot { dist: 0.25, pan: 0.35 }),
+            Perch::new(OWL, 0x5B_0200, 0.0, Spot { dist: 0.55, pan: -0.5 }, sr),
+            Perch::new(NIGHTINGALE, 0x5B_0201, 0.0, Spot { dist: 0.25, pan: 0.35 }, sr),
         ];
-        Birds { sr, day, night, reverb: Reverb::new(sr), weights }
+        Birds { sr, day, night, reverb: Reverb::new(sr) }
     }
 
     fn block(&mut self, x: &[f32], p: &BirdsParams, out: &mut [f32]) {

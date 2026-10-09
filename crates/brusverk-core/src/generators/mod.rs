@@ -4,6 +4,7 @@
 //! [`Model`] so bindings can treat native and file-defined models identically.
 
 pub mod ambient;
+pub mod birdsong;
 pub mod foley;
 pub mod fx;
 pub mod materials;
@@ -112,6 +113,7 @@ registry!(
     ui::Ui<ui::Countdown>,
     ui::Ui<ui::Go>,
     ui::Ui<ui::Fanfare>,
+    birdsong::Bird,
     wildlife::Birds,
     wildlife::Insects,
     wildlife::Frogs,
