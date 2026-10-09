@@ -4,11 +4,15 @@
 //! [`Model`] so bindings can treat native and file-defined models identically.
 
 pub mod ambient;
+pub mod foley;
 pub mod fx;
+pub mod materials;
 pub mod nature;
 pub mod piston;
 pub mod sport;
+pub mod ui;
 pub mod vehicles;
+pub mod wildlife;
 
 use crate::model::{Generator, Model, ModelDesc, Native};
 
@@ -86,4 +90,31 @@ registry!(
     fx::OneShot<fx::Buzzer>,
     fx::OneShot<fx::OrganCharge>,
     fx::OneShot<fx::OrganLetsGo>,
+    materials::Strike,
+    materials::Roll,
+    foley::Footstep,
+    ui::Ui<ui::Hover>,
+    ui::Ui<ui::Click>,
+    ui::Ui<ui::ToggleOn>,
+    ui::Ui<ui::ToggleOff>,
+    ui::Ui<ui::Confirm>,
+    ui::Ui<ui::Cancel>,
+    ui::Ui<ui::Error>,
+    ui::Ui<ui::Notify>,
+    ui::Ui<ui::Open>,
+    ui::Ui<ui::Close>,
+    ui::Ui<ui::Slider>,
+    ui::Ui<ui::Typing>,
+    ui::Ui<ui::Coin>,
+    ui::Ui<ui::Collect>,
+    ui::Ui<ui::Combo>,
+    ui::Ui<ui::LevelUp>,
+    ui::Ui<ui::Countdown>,
+    ui::Ui<ui::Go>,
+    ui::Ui<ui::Fanfare>,
+    wildlife::Birds,
+    wildlife::Insects,
+    wildlife::Frogs,
+    wildlife::Leaves,
+    wildlife::Thunder,
 );
